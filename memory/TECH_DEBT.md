@@ -1209,7 +1209,24 @@ Evidence from this cycle accumulates further on the attack class shape codified 
     - B2: a failure still shows `Alert("Error", msg)` and no toast.
     - k40 `leads/index` checks 2/2.
   - **tsc:** 650 → **649** (this TS2304 left the baseline). Lint: only the pre-existing unused `bulkStatusTarget` warning (left alone).
-- **TD-96-mobile-toast-sweep (candidate, P2 mobile) · 20 sister sites with the identical undefined `showToast` bug.**
+- **TD-96-mobile-toast-sweep (P2 mobile) — SHIPPED (Oct-2026, closed).** Fixes all 20 files and 21 call sites with the undefined `showToast` from the `4a8d04429` Alert→Toast rollout (2026-09-13).
+  - **Commits:**
+    - `247ababd4` batch a, 7 files: more ×2, reviews/recent, reviews/requests/[id], settings/offline-diagnostics, admin/chemicals ×2, admin/diagnostics/errors, admin/seo/otto/[id].
+    - `52e5bfd0b` batch b, 7 files: customer/new, estimator/settings, profit-report, reports/aeo-digest, reports/weekly-digest, settings/business-card, settings/ringcentral.
+    - `921b1122b` batch c, 4 files + test: soshie/BrandBrainTab (IngestModal), customers/CustomerMultiContactEditor, customers/SendServiceRecordsLinkModal, sync/ManualSyncButton.
+    - `leads/index.tsx` was already fixed by TD-96-mobile-bulk-toast.
+  - Each file gets +2 LOC: the `useToast` import plus `const { showToast } = useToast();` as the first statement of the enclosing component.
+  - **Regression guard** `__tests__/td96-mobile-toast-sweep.test.ts`:
+    - Every `app/` + `src/` file that calls `showToast(` must declare it (useToast destructure, prop, param, local or import).
+    - The dry-run before batch c flagged exactly the 4 remaining files of 90 callers: 0 false positives.
+    - The 19 swept files must wire `useToast()`.
+  - **Checks:**
+    - Targeted jest (`--findRelatedTests`) per batch showed no new failures against the `/root/jest-baselines/` list.
+    - eslint: 0 errors.
+    - **tsc 649 → 640 → 629** (−20), 0 remaining `showToast` / `useToast` errors.
+    - Edit-to-commit windows were 8 s, 6 s and 11 s.
+  - The original candidate text follows.
+- **TD-96-mobile-toast-sweep (original candidate text) · 20 sister sites with the identical undefined `showToast` bug.**
   - **Origin:** all 20 trace to the same Alert→Toast rollout commit, `4a8d04429` (2026-09-13). It replaced `Alert.alert` with `showToast(...)` without wiring `useToast()`. `ToastProvider` is mounted at the root (`app/_layout.tsx:176`).
   - **Sites** (tsc TS2304, file:line):
     - `app/(app)/more.tsx:293,314`
@@ -1749,3 +1766,17 @@ Combining the chemical cost isolated-probe recon + the TD-90 time-lag catch surf
   - (b) commit first, then tsc, and fix forward if the count rises;
   - (c) accept the risk.
   - Recommendation: (b) for tiny diffs (≤ 10 LOC), since the targeted jest runs already gate behaviour.
+
+### Lessons · TD-61 strike #20 sub-pattern + commit-first-then-tsc protocol (Oct-2026)
+
+- **Strike #20 sub-pattern — cross-track chat-text hijack.**
+  - `00fb0f679` took its title from the **web** track's receipt text ("## `td-lessons-doc-5-amend` — Ship Receipt") but committed **mobile** files.
+  - So the rogue cron pulls chat text from either track's orchestrator channel, and an edit window on either track can be stamped with the other track's text.
+  - Severity stays in the #17 edit-time-sweep class (content intact, attribution wrong). The mitigation is unchanged: short edit-to-commit cycles.
+- **Commit-first-then-tsc protocol (operator-approved Oct-2026).**
+  1. Applies only to ≤ 10 LOC of production edits per commit (test LOC excluded), and to sweep batches that touch many files with ≤ 2–3 LOC each.
+  2. Targeted jest **must** run before the commit. It is the behaviour lock.
+  3. The tsc baseline check runs **after** the commit. If the count rises by more than 0, a fix-forward commit must land within 5 minutes.
+  4. Not for backend refactors, FE commits over 10 LOC of production code, or anything touching a cross-platform contract (backend API shape, shared types). Those keep full tests and tsc before committing.
+  5. Commits that use it carry a `[tsc-post-commit per protocol]` footer.
+  - **First use:** the TD-96-mobile-toast-sweep batches a / b / c, with windows of 8 s, 6 s and 11 s against about 2–3 minutes previously. Post-commit tsc came in exactly at the predicted 640 and 629. No cron sweep hit any batch.

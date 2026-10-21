@@ -2252,3 +2252,14 @@
 - **Recon delta**: 20 sister sites with the identical bug, all from `4a8d04429`. Logged as TD-96-mobile-toast-sweep (P2), not fixed (scope guard).
 - **Files modified**: mobile/app/leads/index.tsx, mobile/__tests__/td96-mobile-bulk-toast.test.tsx (new)
 - **Web files referenced**: none (mobile-only bug)
+
+## Iteration 170 — TD-96-mobile-toast-sweep: wire useToast in the 20 files with an undefined showToast
+- **Commits**: `247ababd4` (a, 7 files) · `52e5bfd0b` (b, 7 files) · `921b1122b` (c, 4 files + regression test) · `td96-mobile-toast-sweep-doc` (this doc)
+- **Date**: 2026-10-21
+- **Changes**: +2 LOC per file (import + hook). These all came from the 4a8d04429 Alert→Toast rollout; success paths had shown false errors or thrown ReferenceErrors.
+- **Regression guard**: `__tests__/td96-mobile-toast-sweep.test.ts`. Every showToast caller must declare it; 0 false positives across 90 callers. The 19 swept files must wire useToast.
+- **Checks**: targeted jest per batch, no new failures vs the baseline; eslint 0 errors; tsc 649 → 640 → 629, 0 toast errors.
+- **Protocol**: first use of commit-first-then-tsc (`[tsc-post-commit per protocol]`); windows of 8 s / 6 s / 11 s; no cron sweeps.
+- **Ops**: fixer script `/root/toast_fix.py`; tsc snapshots `/root/jest-baselines/tsc_after_{A,C}.txt`.
+- **Files modified**: the 18 listed in TECH_DEBT plus mobile/__tests__/td96-mobile-toast-sweep.test.ts (new)
+- **Web files referenced**: none (mobile-only bug)
