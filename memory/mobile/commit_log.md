@@ -2093,3 +2093,17 @@
 - **Changes**: no code changes. Re-ran the Phase 3 checks at a34885fca: Jest 45/45, API lifecycle as all 3 roles, Expo-web offline → reconnect → finalize → PDF E2E. PRD §5 has a new re-verified line.
 - **Files modified**: memory/PRD.md, memory/mobile/commit_log.md
 - **Web files referenced**: none (no templates web/BE commits since 77affb86c)
+
+## Iteration 160 — TD-96-mobile lead-detail action buttons (web parity)
+- **Commits**: `37b3e7fc4` (audit) · `d0a4f7c41` (b1 compose) · `1e722bd10` (b2 quote + panel) · `td96-mobile-a-doc` (this doc)
+- **Date**: 2026-10-21
+- **Changes**:
+  - Lead detail now has a "Reach out" card, shown regardless of lead status:
+    - Send SMS / Send Email for admin, super_admin and manager. Each is disabled when phone/email is missing.
+    - Create Quote with a count badge, admin and super_admin only.
+  - New `LeadComposeSheet`, a port of web `LeadComposeModal` (GSM 160/1600, consent override).
+  - New `LeadLinkedQuotesPanel` for admins. It is always fetched (TD-96-g2 workaround) and shows "+N more" instead of the dead View all (TD-96-g1).
+  - `quote/new` shows the lead's name.
+- **Tests**: td96-mobile-lead-compose 9 + td96-mobile-lead-actions 15 = 24/24. Full jest 42 failing suites (= baseline; `phase40-customer-profile-visual-grouping` flaked once and passed on rerun). tsc 651 (= baseline).
+- **Files modified**: mobile/app/leads/[id].tsx, mobile/app/quote/new.tsx, mobile/src/components/leads/{LeadComposeSheet,LeadLinkedQuotesPanel}.tsx (new), mobile/__tests__/td96-mobile-lead-{compose,actions}.test.tsx (new)
+- **Web files referenced**: frontend/src/pages/leads/LeadDetail.jsx, frontend/src/pages/leads/LeadComposeModal.jsx, frontend/src/pages/quotes/QuoteInvoiceNew.jsx, frontend/src/pages/quotes/QuotesList.jsx

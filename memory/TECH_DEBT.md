@@ -558,12 +558,67 @@ Pattern tracker. Updated as subsequent audits produce useful calibration data.
 - **Related operational pattern:** For both TD-98/99 and TD-100, the "right" disposition was NOT full merge but either (a) dead-code reap + canonical state record (TD-98/99) OR (b) doc-only close + sub-primitive deferral (TD-100). Audit-first discipline + operator trust in "do nothing beyond document" has protected against speculative-refactor regret in both cases.
 
 
-## TD-96-mobile (candidate) · Mobile parity for the 3 lead-detail action buttons
+## TD-96-mobile · Mobile parity for the lead-detail action buttons — SHIPPED (Oct-2026)
 
-- **Current state:** Web `LeadDetail.jsx` ships `lead-detail-send-sms` (manager+), `lead-detail-send-email` (manager+), and `lead-create-quote` (admin only) buttons. Mobile `/app/mobile/` has no equivalent lead-detail action cluster.
-- **Why deferred:** `/app/mobile/` edits are explicitly banned during the TD-6x/TD-7x/TD-8x/TD-9x audit sprint pattern. Audit does not inspect or modify mobile this phase.
-- **When to ship:** Next mobile parity cycle (groups with TD-81 / TD-82 / TD-84 style parity audits). Backend endpoints are shared (`POST /leads/{lid}/send-sms`, `POST /leads/{lid}/send-email`, `POST /quotes` with `recipient_type=lead`), so the mobile effort is UI-only.
-- **Priority:** P2 (candidate, not scheduled).
+Audit: `memory/mobile/td96_mobile_audit.md` (`37b3e7fc4`). Operator decisions: D1 new `LeadComposeSheet` · D2 include panel, always-load for admins, "+N more" instead of View all · D3 quote-form lead name · D4 ~21 jest cases, reap deferred · owner: no mobile support (backend-authoritative).
+
+- **Commits:** `d0a4f7c41` `td96-mobile-b1-fe` (compose path) · `1e722bd10` `td96-mobile-b2-fe` (quote + panel path) · this doc commit `td96-mobile-a-doc`. b1/b2 were split so each commit is reviewable on its own; the doc landed last so it can record the real hashes and results.
+- **What shipped (mobile only, no BE/web edits):**
+  - `app/leads/[id].tsx`:
+    - New "Reach out" card (`lead-outreach-card`), outside the closed-status `canAct` gate (web parity).
+    - `lead-detail-send-sms` / `lead-detail-send-email` tiles. Gate is `isAdminPlus` (admin/super_admin/manager). Each is disabled when phone/email is missing.
+    - `lead-create-quote` with the `lead-create-quote-count` badge. Gate is `isStrictAdmin` (admin/super_admin). Navigates to `/quote/new?recipient_type=lead&recipient_id=<id>`.
+    - `LeadLinkedQuotesPanel` mounted for the same admin gate.
+  - `src/components/leads/LeadComposeSheet.tsx`: 1:1 port of web `LeadComposeModal.jsx`. GSM counter warns at 160 and caps at 1600. Subject ≤ 200. `sms_ok` / `email_ok === false` requires an override toggle. Errors map `ApiError.detail` (string, or a `{message}` dict).
+  - `src/components/leads/LeadLinkedQuotesPanel.tsx`: `GET /leads/{id}/quotes?limit=10`. Rows show title, `$total`, `· reparented` and a status pill, and open `/quote/<id>`. Fail-open.
+    - Always fetched for admins; this works around TD-96-g2, see the inline TODO.
+    - Shows a non-link `+N more` hint instead of web's dead View all (TD-96-g1).
+  - `app/quote/new.tsx`: lead-recipient name is hydrated via `GET /leads/{id}` (web `QuoteInvoiceNew.jsx:147` parity).
+- **Tests:** `__tests__/td96-mobile-lead-compose.test.tsx` (9) + `__tests__/td96-mobile-lead-actions.test.tsx` (15) = **24/24**. tsc stays at the 651 baseline (0 errors in touched files). eslint clean.
+- **Live (Expo web, admin, lead `1f1eefb2…`):** outreach tiles, Create Quote badge "2", panel with 2 rows (quote + invoice). The SMS counter warns at 170 chars. Create Quote opens `quote/new`, whose recipient shows "LEAD · Preview Lead0001".
+- **Not verified live:** manager role (no manager creds; covered by jest). Actual SMS/email send was not fired live, to avoid outbound messages; payloads are covered by jest.
+- **Priority:** closed.
+
+
+## TD-96-g1 (candidate) · Lead "View all" quotes link lands on an unfiltered list (web)
+
+- **Current state:** web `LeadDetail.jsx:771` "View all" navigates to `/quotes?lead=<id>`. Neither web `QuotesList.jsx` (reads `q`, `status`, `customer_id`, `has_declined`, `view` only) nor BE `list_quotes` (`routers/quotes.py:262-325`, no `lead` / `recipient_id` param) reads `lead`, so the user lands on the full unfiltered quotes list.
+- **Fix:** FE filter wiring OR BE query support (e.g. a `lead_id` param matching the `/leads/{id}/quotes` `$or` on `recipient_id` + `converted_from_lead_id`). Operator picks during that ticket's audit.
+- **Mobile follow-up:** once filterable, swap the mobile `lead-linked-quotes-more` hint for a real View all link.
+- **Priority:** P2 (candidate, web).
+
+
+## TD-96-g2 (candidate) · Linked-quotes panel hides after lead conversion (web)
+
+- **Current state:** `quotes_count` (`routers/leads.py:300`) counts only `recipient_type="lead"`. After close-won reparent, quotes carry `converted_from_lead_id` instead, so `quotes_count` drops to 0. The web lazy-fetch gate (`LeadDetail.jsx:282`, `quotes_count > 0`) then skips `GET /leads/{id}/quotes`, and the panel (plus its `· reparented` marker) hides.
+- **Verification:** there are no converted-lead examples in the preview DB (0 docs with `converted_from_lead_id`), so this is unverified live but follows directly from the code paths.
+- **Fix:** a separate `linked_quotes_count` field (same `$or` filter as `/leads/{id}/quotes`) OR a change to the panel-visibility condition.
+- **Mobile follow-up:** mobile always fetches for admins (TODO in `LeadLinkedQuotesPanel.tsx`). Once g2 lands, gate on the corrected count to skip the extra GET.
+- **Priority:** P2 (candidate, web).
+
+
+## TD-96-mobile-reap (candidate) · Dead lead popups in mobile `leads/index.tsx`
+
+- **Current state:** `app/leads/index.tsx:242-330` (`lead-detail-sheet` + `convert-sheet` "⚡ Convert to Job / Quote", with state at L57-62 and handlers at L115-169) cannot be reached. `setSel` is only ever called with `null`, and row press routes to `/leads/[id]`.
+- **Warning:** these popups call the deprecated legacy `POST /leads/{id}/convert-to-quote` / `convert-to-job` shortcuts (convert-first, not the Phase-2 lead-recipient contract) and **must not be reused**.
+- **Fix:** delete the two sheets plus their state and handlers (~-90 LOC) in its own atomic commit. Kept out of the TD-96-mobile ship to keep that narrow.
+- **Priority:** P3 (candidate, mobile).
+
+
+## TD-96-mobile-owner-gate (candidate) · Align the web lead gates with backend truth (remove `owner`)
+
+- **Current state:**
+  - Web `LeadDetail.jsx:210-211` includes `owner` in both `isAdmin` and `canCompose`.
+  - BE `GET /leads/{id}` and `GET /leads/{id}/quotes` use `_INBOUND_MANAGER_ROLES={admin,super_admin,manager}` (`routers/leads.py:87`), so owner 403s before any button matters.
+  - Mobile mirrors the backend (no owner).
+- **Fix:** tighten the web role lists to remove `owner` (web → backend alignment). **No backend change to add owner**; that would be permission-model scope creep.
+- **Priority:** P3 (candidate, web).
+
+
+## TD-96-mobile-status / TD-96-mobile-timeline (candidates, raised in audit §9)
+
+- **-status:** `app/leads/[id].tsx` status tiles compare and PATCH title-case statuses (`"New"`, `"Contacted"`, `"Quoted"`, `"On Hold"`, `"Archived"`). Preview data is all snake_case, so the Contacted/Quoted tiles never render (confirmed live on lead `1f1eefb2…`, status `new`). P3, mobile.
+- **-timeline:** mobile has no lead communication timeline (`GET /leads/{id}/communications`), so a successful compose only toasts. Web refreshes its comm timeline. P3, mobile.
 
 
 ## TD-97 · Lead auto-convert on quote accept — PRE-SHIPPED (Feb-2026 reconciliation)
