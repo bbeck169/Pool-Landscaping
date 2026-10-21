@@ -47,7 +47,6 @@ import HardDeleteModal from "@/components/hard_delete/HardDeleteModal";
 import ResolveDuplicateDialog
   from "@/components/customers/ResolveDuplicateDialog";
 import PaymentMethodTiles from "@/components/customers/PaymentMethodTiles";
-import CommunicationTimeline from "@/components/customers/CommunicationTimeline";
 import { MergeHistoryPanel } from "@/components/customers/MergeHistoryPanel";
 import CustomerFullTimeline from "@/components/customers/CustomerFullTimeline";
 import CustomerServiceNotesCards from "@/components/customers/CustomerServiceNotesCards";
