@@ -14,6 +14,17 @@ import PdfInvoiceUploadSidePanel from "@/components/invoices/PdfInvoiceUploadSid
 import CustomerFilterBar from "@/components/customers/CustomerFilterBar";
 import NavyFilterBar from "@/components/ui/NavyFilterBar";
 import { formatRelativeFromIso } from "@/lib/relativeTime";
+// TD-94 · Feb-2026 — Admin Invoices list `Import #<N>` title
+// swap.  Imported-invoice titles are replaced with the first
+// line item's title/description at display time; falls back to
+// the original stored title (`Import #<N>`) for operator
+// audit-trail traceability when no line items are available.
+// See `memory/td94_admin_invoice_title_audit.md` for the
+// two-surface split rationale (admin main list falls back to
+// `Import #<N>`; portal / customer tile uses the sibling
+// `resolvePortalInvoiceTitle` which falls back to neutral
+// `"Invoice"`).
+import { resolveImportedInvoiceTitleFromLineItem } from "@/lib/portalInvoiceTitle";
 // QUOTES-SUMMARY · Feb-2026 — shared summary card extracted from
 // this page's former inline helper into ``components/SummaryTile.jsx``
 // so QuotesList (and future admin surfaces) can render matching
@@ -963,7 +974,7 @@ export default function InvoicesList() {
                     />
                   </td>
                   <td className="px-3 py-3 font-mono text-xs" style={{ color: colors.onSurface }} data-testid={`invoice-number-${r.id}`} onClick={() => navigate(`/invoices/${r.id}`)}>{r.invoice_number || "—"}</td>
-                  <td className="px-3 py-3 font-semibold" style={{ color: colors.onSurface }} onClick={() => navigate(`/invoices/${r.id}`)}>{r.title}</td>
+                  <td className="px-3 py-3 font-semibold" style={{ color: colors.onSurface }} onClick={() => navigate(`/invoices/${r.id}`)} data-testid={`invoice-row-title-${r.id}`}>{resolveImportedInvoiceTitleFromLineItem(r)}</td>
                   <td className="px-3 py-3 hidden md:table-cell" style={{ color: colors.onSurfaceSecondary }} onClick={() => navigate(`/invoices/${r.id}`)} data-testid={`invoice-row-customer-${r.id}`}><CustomerLink customerId={r.customer_id} name={formatCustomerName(r)} /></td>
                   <td className="px-3 py-3 hidden lg:table-cell" style={{ color: colors.onSurfaceSecondary }} onClick={() => navigate(`/invoices/${r.id}`)}>{r.due_date || "—"}</td>
                   <td className="px-3 py-3 text-right font-semibold" style={{ color: colors.onSurface }} onClick={() => navigate(`/invoices/${r.id}`)}>{money(r.total)}</td>

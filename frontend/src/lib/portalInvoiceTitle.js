@@ -133,3 +133,68 @@ export function formatInvoiceCreatedDate(invoice) {
   const yyyy = String(d.getFullYear());
   return `Created ${mm}/${dd}/${yyyy}`;
 }
+
+
+// ═════════════════════════════════════════════════════════════════
+// TD-94 · Feb-2026 — Admin Invoices list `Import #<N>` resolver.
+// ═════════════════════════════════════════════════════════════════
+//
+// Deliberately a SEPARATE 2-branch resolver, not a reuse of the
+// 4-branch ``resolvePortalInvoiceTitle`` above.  The admin main
+// Invoices list (``pages/invoices/InvoicesList.jsx``) and the
+// portal / customer-adjacent surfaces (``pages/portal/PortalPages``
+// + ``components/customers/CustomerInvoiceList``) have
+// deliberately different fallback terminals:
+//
+//   * **Portal / customer tile** — ends on neutral ``"Invoice"``.
+//     Customer-facing UX; ``Import #<N>`` must never leak.
+//   * **Admin main Invoices list** (THIS resolver) — ends on the
+//     original stored ``Import #<N>`` title.  Operators need the
+//     audit-trail traceability back to the import run; a neutral
+//     ``"Invoice"`` would hide the signal.
+//
+// Both resolvers share the single ``isImportedPlaceholderTitle``
+// predicate above — "don't let two helpers drift" applies to the
+// detection logic (one predicate), not the fallback chains (which
+// are intentionally distinct per operator approval on TD-94).  A
+// future reader should NOT consolidate the two resolvers into one
+// without re-reading TD-94's audit §4 (``memory/td94_admin_invoice_title_audit.md``).
+//
+// Spec matches operator's "first line item name only, else
+// existing title" ask exactly.  Scope:
+//
+//   1. Non-imported invoice → returns ``invoice.title`` unchanged.
+//   2. Imported invoice (``isImportedPlaceholderTitle === true``):
+//        a. If ``line_items[0].title`` or
+//           ``line_items[0].description`` is a non-empty trimmed
+//           string → return it.
+//        b. Else → fall back to the original stored title
+//           (``Import #<N>``).  Traceability preserved.
+//   3. Null / non-object input → returns empty string.
+//
+// Display-time only.  Does NOT mutate the invoice.  TD-72 BE
+// migration (deferred prod) rewrites stored titles so this
+// resolver becomes a no-op for already-migrated rows (the title
+// no longer matches the predicate's regex and passes through
+// unchanged).
+
+/**
+ * Admin-list resolver — swaps ``Import #<N>`` for the first line
+ * item's title/description, else falls back to the stored
+ * ``Import #<N>`` for operator traceability.
+ *
+ * @param {object} invoice
+ * @returns {string}
+ */
+export function resolveImportedInvoiceTitleFromLineItem(invoice) {
+  if (!invoice || typeof invoice !== "object") return "";
+  const originalTitle = invoice.title == null ? "" : String(invoice.title);
+  if (!isImportedPlaceholderTitle(invoice)) return originalTitle;
+  const items = Array.isArray(invoice.line_items) ? invoice.line_items : [];
+  if (items.length > 0 && items[0] && typeof items[0] === "object") {
+    const li = String(items[0].title || items[0].description || "").trim();
+    if (li) return li;
+  }
+  return originalTitle; // fall back to Import #N for admin traceability
+}
+
