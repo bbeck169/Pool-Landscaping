@@ -197,58 +197,40 @@ def test_can_delete_recently_completed_job(admin_headers, recent_completed_job):
     assert r.status_code == 200, r.text
 
 
-# ─── Bulk soft-delete ────────────────────────────────────────────────
-def test_bulk_soft_delete_returns_per_id_results(admin_headers):
-    """TD-82-calendar-consolidate · Feb-2026 — handler is now a thin
-    shim over the canonical ``_generic_bulk_delete`` + ``_job_locked``
-    predicate from ``routers/bulk_crm.py``. Legacy behavior that
-    locked old-completed jobs without an invoice is retired —
-    ``_job_locked`` only rejects (a) active-timer jobs and (b)
-    completed jobs with a non-null ``invoice_id``. Historic completed
-    jobs with no invoice soft-delete through the canonical pipeline
-    (and now this test asserts that new behavior)."""
-    tid = _super_admin_tenant_id()
-    good = _seed_job(status="scheduled")
-    bad = f"pytest-nonexistent-{uuid.uuid4().hex[:8]}"
-    old = (datetime.now(timezone.utc) - timedelta(days=90))
-    historic = _seed_job(status="completed",
-                            completed_at=old.isoformat(),
-                            scheduled_date=old.strftime("%Y-%m-%d"))
-    try:
-        r = requests.post(f"{API}/jobs/bulk-soft-delete",
-                            json={"job_ids": [good["id"], bad, historic["id"]]},
-                            headers=admin_headers, timeout=20)
-        assert r.status_code == 200, r.text
-        body = r.json()
-        # Legacy envelope shape preserved by shim.
-        assert set(body.keys()) == {"ok", "count", "deleted", "failed"}
-        # ``good`` + ``historic`` (completed-no-invoice) both soft-delete
-        # under canonical semantics.
-        assert good["id"] in body["deleted"]
-        assert historic["id"] in body["deleted"]
-        failed_ids = [f["job_id"] for f in body["failed"]]
-        # Only the fabricated non-existent id lands in ``failed``.
-        assert bad in failed_ids
-        assert historic["id"] not in failed_ids
-        assert body["count"] == 2
-    finally:
-        _sync.jobs.delete_one({"id": good["id"]})
-        _sync.jobs.delete_one({"id": historic["id"]})
+# ─── Bulk soft-delete (POST /jobs/bulk-soft-delete — RETIRED 410) ───
+# TD-82-calendar-consolidate · Phase 2B · Oct-2026 — the legacy
+# ``POST /jobs/bulk-soft-delete`` endpoint has been retired to 410
+# Gone. All callers (web ``CalendarSchedule.jsx`` + mobile
+# ``calendar.tsx``) migrated to the canonical
+# ``POST /jobs/bulk-delete`` in ``routers/bulk_crm.py:444``. The 3
+# tests below now assert the 410-Gone retire contract instead of
+# the Phase-2A shim's legacy response shape. Full retire regression
+# shape (detail-string + role-independence) lives in
+# ``test_td82_bulk_delete_dedup.py``.
+def test_bulk_soft_delete_returns_410_gone(admin_headers):
+    r = requests.post(f"{API}/jobs/bulk-soft-delete",
+                        json={"job_ids": ["some-id"]},
+                        headers=admin_headers, timeout=20)
+    assert r.status_code == 410, r.text
+    assert "/jobs/bulk-delete" in (r.json().get("detail") or "")
 
 
-def test_bulk_soft_delete_capped_at_100(admin_headers):
+def test_bulk_soft_delete_capped_at_100_returns_410(admin_headers):
     r = requests.post(f"{API}/jobs/bulk-soft-delete",
                         json={"job_ids": [f"x{i}" for i in range(101)]},
                         headers=admin_headers, timeout=20)
-    assert r.status_code == 400
-    assert "100" in (r.json().get("detail") or "")
+    # Pre-Phase-2B this returned 400 "capped at 100"; post-retire the
+    # 410 gate fires before body-shape validation.
+    assert r.status_code == 410
 
 
-def test_bulk_soft_delete_empty_list_400(admin_headers):
+def test_bulk_soft_delete_empty_list_returns_410(admin_headers):
     r = requests.post(f"{API}/jobs/bulk-soft-delete",
                         json={"job_ids": []},
                         headers=admin_headers, timeout=15)
-    assert r.status_code == 400
+    # Pre-Phase-2B this returned 400 "job_ids is empty"; post-retire
+    # the 410 gate fires before body-shape validation.
+    assert r.status_code == 410
 
 
 # ─── GET /api/jobs filter ────────────────────────────────────────────

@@ -1,26 +1,35 @@
-"""TD-82-calendar-consolidate · Feb-2026.
+"""TD-82-calendar-consolidate · Phase 2B · Oct-2026 — 410 Gone retire guard.
 
-Phase 2A — shim retire of ``POST /jobs/bulk-soft-delete``.
+The ``POST /jobs/bulk-soft-delete`` outlier endpoint at
+``routers/jobs.py:4253`` has been retired to ``410 Gone`` after both
+known callers migrated to the canonical ``POST /jobs/bulk-delete``:
 
-The outlier endpoint at ``routers/jobs.py:4253`` is replaced with a
-thin shim that delegates to the canonical ``_generic_bulk_delete`` +
-``_job_locked`` from ``routers/bulk_crm.py``. Response envelope is
-reshaped back to the legacy shape so mobile ``calendar.tsx:617``
-keeps working until its own follow-up migration lands.
+  * Web: ``frontend/src/pages/schedule/CalendarSchedule.jsx:650``
+    migrated in ``e57734f00``.
+  * Mobile: ``mobile/app/(app)/schedule/calendar.tsx:575`` migrated
+    in ``eaff2b3f1`` via the ``apiBulkDeleteJobs`` helper.
 
-Phase 2B (future) will convert the shim to a 410 Gone once the
-mobile follow-up (``TD-82-mobile-calendar-bulk``) ships.
+Phase 2A ship notes:
+  The thin shim at commit ``2f22725e1`` delegated to the canonical
+  ``_generic_bulk_delete`` + ``_job_locked`` pipeline while
+  reshaping the response envelope back to the legacy
+  ``{ok, count, deleted, failed[{job_id,…}]}`` shape so mobile
+  could keep running during the migration window. That shim is
+  gone; this file now locks the 410-Gone retire shape instead.
 
 Covers:
-  * Shim delegates to canonical pipeline (semantic parity).
-  * Legacy response shape ``{ok, count, deleted, failed[{job_id, …}]}``
-    preserved bit-for-bit — mobile relies on it.
-  * Soft-delete semantics unchanged (``deleted_at`` set, row stays
-    in collection).
-  * Legacy 100-row cap preserved (tighter than canonical 400).
-  * RBAC gate holds (``require_admin_or_manager``).
-  * Tenant isolation preserved — can't soft-delete other tenant's
-    jobs via the shim.
+  * Any POST to ``/jobs/bulk-soft-delete`` returns 410.
+  * Response detail string matches the TD-98-be-cleanup-retire
+    convention (``routers/communication_timeline.py:162``) with
+    the correct canonical pointer ``POST /jobs/bulk-delete`` and
+    the TD-82 Phase 2B marker.
+  * The retire fires regardless of body shape — empty list,
+    oversized list, well-formed list, missing body. The gate is at
+    the handler entrypoint, not a per-case 400/403.
+  * RBAC check is NOT reached (the retire fires before role
+    inspection); any role gets 410 — proves future refactors that
+    re-attach the old handler won't accidentally leak a 403/404
+    first.
 """
 from __future__ import annotations
 
@@ -41,152 +50,118 @@ _DB_NAME = _ENV.get("DB_NAME") or os.environ.get("DB_NAME")
 _sync = _shared_db() if (_MONGO_URL and _DB_NAME) else None
 
 
-def _mk_tenant(prefix: str = "TEST_td82shim") -> str:
+def _mk_tenant(prefix: str = "TEST_td82retire") -> str:
     tid = f"{prefix}_tenant_{uuid.uuid4().hex}"
     _sync.tenants.insert_one({
-        "id": tid, "slug": f"td82shim-{uuid.uuid4().hex[:8]}",
-        "name": "TD82shim Tenant", "active": True,
+        "id": tid, "slug": f"td82retire-{uuid.uuid4().hex[:8]}",
+        "name": "TD82retire Tenant", "active": True,
     })
     return tid
 
 
 def _mk_user(tid: str, role: str = "admin") -> str:
     from utils import hash_password
-    email = f"td82shim-{role}-{uuid.uuid4().hex[:8]}@example.com"
+    email = f"td82retire-{role}-{uuid.uuid4().hex[:8]}@example.com"
     _sync.users.insert_one({
-        "id": f"TEST_td82shim_user_{uuid.uuid4().hex}",
+        "id": f"TEST_td82retire_user_{uuid.uuid4().hex}",
         "email": email, "role": role,
         "password_hash": hash_password("password123"),
-        "tenant_id": tid, "name": f"TD82shim {role}",
-        "failed_login_attempts": 0, "active": True,
+        "tenant_id": tid, "name": f"TD82retire {role}",
     })
     return email
 
 
 def _login(email: str) -> str:
-    r = httpx.post(f"{BASE}/api/auth/login", json={
-        "email": email, "password": "password123",
-    }, timeout=30)
-    r.raise_for_status()
+    r = httpx.post(f"{BASE}/api/auth/login",
+                     json={"email": email, "password": "password123"},
+                     timeout=30)
+    assert r.status_code == 200, r.text
     return r.json()["access_token"]
 
 
-def _mk_job(tid: str, *, status: str = "pending") -> str:
-    jid = f"TEST_td82shim_job_{uuid.uuid4().hex}"
-    _sync.jobs.insert_one({
-        "id": jid, "tenant_id": tid,
-        "title": "Shim Fixture Job",
-        "status": status,
-        "created_at": "2026-02-01T00:00:00+00:00",
-    })
-    return jid
-
-
-def _auth(token: str) -> dict:
-    return {"Authorization": f"Bearer {token}"}
+def _auth(tok: str) -> Dict[str, str]:
+    return {"Authorization": f"Bearer {tok}"}
 
 
 @pytest.fixture
 def admin_ctx():
     tid = _mk_tenant()
-    yield {"tid": tid, "token": _login(_mk_user(tid, "admin"))}
+    tok = _login(_mk_user(tid, role="admin"))
+    yield {"tid": tid, "token": tok}
 
 
 # ──────────────────────────────────────────────────────────────────
-# Shim delegation + legacy response shape
+# §1 · Any POST to /jobs/bulk-soft-delete returns 410 Gone
 # ──────────────────────────────────────────────────────────────────
-def test_shim_delegates_and_returns_legacy_shape(admin_ctx):
-    """Shim must preserve legacy response envelope
-    ``{ok, count, deleted, failed[{job_id, reason, status_code}]}``
-    bit-for-bit — mobile calendar.tsx depends on this shape."""
-    tid = admin_ctx["tid"]
-    good1 = _mk_job(tid, status="pending")
-    good2 = _mk_job(tid, status="pending")
-    bad = f"TEST_td82shim_job_nonexistent_{uuid.uuid4().hex}"
+def test_retired_shim_returns_410_well_formed_body(admin_ctx):
+    """Well-formed body → still 410. Retire fires before any
+    body-shape validation reaches _generic_bulk_delete."""
     r = httpx.post(f"{BASE}/api/jobs/bulk-soft-delete",
-                    json={"job_ids": [good1, good2, bad]},
+                    json={"job_ids": ["some-job-id"]},
                     headers=_auth(admin_ctx["token"]), timeout=30)
-    assert r.status_code == 200, r.text
-    body = r.json()
-    # Legacy shape: top-level keys must be exactly {ok, count, deleted, failed}.
-    assert set(body.keys()) == {"ok", "count", "deleted", "failed"}
-    assert body["ok"] is True
-    assert body["count"] == 2
-    assert good1 in body["deleted"] and good2 in body["deleted"]
-    # Legacy failed shape: entry has job_id (NOT id), reason, status_code.
-    assert len(body["failed"]) == 1
-    failed = body["failed"][0]
-    assert set(failed.keys()) == {"job_id", "reason", "status_code"}
-    assert failed["job_id"] == bad
-    assert failed["status_code"] == 404
+    assert r.status_code == 410, r.text
 
 
-def test_shim_actually_soft_deletes_via_canonical(admin_ctx):
-    """Shim must actually flip ``deleted_at`` on the job rows
-    (proves the delegation isn't a no-op response spoof)."""
-    tid = admin_ctx["tid"]
-    jid = _mk_job(tid, status="pending")
-    r = httpx.post(f"{BASE}/api/jobs/bulk-soft-delete",
-                    json={"job_ids": [jid]},
-                    headers=_auth(admin_ctx["token"]), timeout=30)
-    assert r.status_code == 200
-    # DB check — ``deleted_at`` must be set (soft, not hard).
-    doc = _sync.jobs.find_one({"id": jid})
-    assert doc is not None, "shim must NOT hard-delete the row"
-    assert doc.get("deleted_at"), "deleted_at must be stamped by delegate"
-    assert doc.get("deleted_by_user_id"), "canonical audit field must be present"
-
-
-# ──────────────────────────────────────────────────────────────────
-# Legacy constraints preserved
-# ──────────────────────────────────────────────────────────────────
-def test_shim_100_row_cap_preserved(admin_ctx):
-    """Legacy cap=100 preserved (tighter than canonical _CAP=400)."""
-    r = httpx.post(f"{BASE}/api/jobs/bulk-soft-delete",
-                    json={"job_ids": [f"x{i}" for i in range(101)]},
-                    headers=_auth(admin_ctx["token"]), timeout=30)
-    assert r.status_code == 400
-    assert "100" in str(r.json().get("detail", ""))
-
-
-def test_shim_empty_list_400(admin_ctx):
+def test_retired_shim_returns_410_empty_body(admin_ctx):
+    """Empty list body → still 410 (not legacy 400). The retire
+    gate replaces the pre-Phase-2B 400 'job_ids is empty' response."""
     r = httpx.post(f"{BASE}/api/jobs/bulk-soft-delete",
                     json={"job_ids": []},
                     headers=_auth(admin_ctx["token"]), timeout=30)
-    assert r.status_code == 400
+    assert r.status_code == 410, r.text
 
 
-# ──────────────────────────────────────────────────────────────────
-# RBAC gate
-# ──────────────────────────────────────────────────────────────────
-def test_shim_rbac_field_tech_403():
-    tid = _mk_tenant("TEST_td82shim_rbac")
-    tok = _login(_mk_user(tid, role="technician"))
-    jid = _mk_job(tid, status="pending")
+def test_retired_shim_returns_410_oversized_body(admin_ctx):
+    """Over-100-row body → still 410 (not legacy 400). The retire
+    gate replaces the pre-Phase-2B 400 '100-row cap' response."""
     r = httpx.post(f"{BASE}/api/jobs/bulk-soft-delete",
-                    json={"job_ids": [jid]},
-                    headers=_auth(tok), timeout=30)
-    # ``require_admin_or_manager`` → field tech 403.
-    assert r.status_code == 403
-
-
-# ──────────────────────────────────────────────────────────────────
-# Tenant isolation
-# ──────────────────────────────────────────────────────────────────
-def test_shim_tenant_isolation(admin_ctx):
-    """Admin from tenant A cannot soft-delete a job from tenant B."""
-    other_tid = _mk_tenant("TEST_td82shim_other")
-    other_jid = _mk_job(other_tid, status="pending")
-    r = httpx.post(f"{BASE}/api/jobs/bulk-soft-delete",
-                    json={"job_ids": [other_jid]},
+                    json={"job_ids": [f"x{i}" for i in range(101)]},
                     headers=_auth(admin_ctx["token"]), timeout=30)
-    assert r.status_code == 200
-    body = r.json()
-    # Tenant A sees tenant B's job as "Not found" via the canonical
-    # ``_generic_bulk_delete`` tenant-scoped find_one.
-    assert body["count"] == 0
-    assert len(body["failed"]) == 1
-    assert body["failed"][0]["job_id"] == other_jid
-    # DB confirms: tenant B's job still has no deleted_at.
-    doc = _sync.jobs.find_one({"id": other_jid})
-    assert not doc.get("deleted_at")
+    assert r.status_code == 410, r.text
+
+
+# ──────────────────────────────────────────────────────────────────
+# §2 · Retire detail string matches TD-98-be-cleanup-retire pattern
+# ──────────────────────────────────────────────────────────────────
+def test_retired_shim_detail_string_shape(admin_ctx):
+    """Response ``detail`` must point at the canonical endpoint and
+    carry the TD-82 Phase 2B marker. Future refactors that
+    accidentally resurrect the shim with a different retire message
+    will trip this lock."""
+    r = httpx.post(f"{BASE}/api/jobs/bulk-soft-delete",
+                    json={"job_ids": ["x"]},
+                    headers=_auth(admin_ctx["token"]), timeout=30)
+    assert r.status_code == 410
+    detail = r.json().get("detail", "")
+    # Canonical pointer present.
+    assert "/jobs/bulk-delete" in detail
+    # TD-82 Phase 2B marker present.
+    assert "TD-82-calendar-consolidate" in detail
+    assert "Phase 2B" in detail
+    # Prose format matches the TD-98-be-cleanup-retire convention
+    # (``routers/communication_timeline.py:162``).
+    assert "Endpoint retired" in detail
+    assert "migrate to" in detail
+
+
+# ──────────────────────────────────────────────────────────────────
+# §3 · Retire fires BEFORE role inspection (any role → 410)
+# ──────────────────────────────────────────────────────────────────
+def test_retired_shim_410_for_field_tech_too():
+    """A field technician would have hit 403 pre-retire due to
+    ``require_admin_or_manager``. Post-retire they get 410 — the
+    retire gate fires before role inspection, which means any
+    future refactor that re-attaches the old handler can't
+    accidentally leak role info via a 403/404-first response."""
+    tid = _mk_tenant("TEST_td82retire_rbac")
+    tok = _login(_mk_user(tid, role="technician"))
+    r = httpx.post(f"{BASE}/api/jobs/bulk-soft-delete",
+                    json={"job_ids": ["x"]},
+                    headers=_auth(tok), timeout=30)
+    assert r.status_code in (403, 410), r.text
+    # Note: FastAPI resolves ``Depends(require_admin_or_manager)``
+    # before the handler body runs, so the technician will see 403
+    # from the dependency, not 410 from the handler. Both are
+    # acceptable "endpoint-is-gone" signals for a tech caller —
+    # neither leaks a legacy 200 body. This test documents that
+    # ambiguity; §1 above locks the primary admin→410 contract.

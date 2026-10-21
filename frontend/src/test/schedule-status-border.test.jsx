@@ -249,15 +249,21 @@ describe("Schedule · multi-select bulk soft-delete", () => {
     });
   });
 
-  it("delete flow POSTs /jobs/bulk-soft-delete with the selected ids", async () => {
+  it("delete flow POSTs the canonical /jobs/bulk-delete with the selected ids", async () => {
+    // TD-82-calendar-consolidate · Phase 2B · Oct-2026 — the legacy
+    // ``/jobs/bulk-soft-delete`` endpoint has been retired to 410
+    // Gone. ``CalendarSchedule.jsx:650`` migrated to the canonical
+    // ``/jobs/bulk-delete`` with ``{ ids }`` body in ``e57734f00``.
+    // Full canonical regression lives in
+    // ``CalendarSchedule.bulkDeleteCanonical.test.jsx``.
     apiGetMock.mockImplementation((path) => {
       if (path.startsWith("/jobs")) return Promise.resolve(jobsFixture);
       if (path === "/technicians") return Promise.resolve([]);
       return Promise.resolve([]);
     });
     apiPostMock.mockImplementation((path) => {
-      if (path === "/jobs/bulk-soft-delete") {
-        return Promise.resolve({ ok: true, count: 2,
+      if (path === "/jobs/bulk-delete") {
+        return Promise.resolve({ ok: true, deleted_count: 2,
                                    deleted: ["job-a","job-b"], failed: [] });
       }
       return Promise.resolve({});
@@ -272,14 +278,17 @@ describe("Schedule · multi-select bulk soft-delete", () => {
     fireEvent.click(screen.getByTestId("grid-bulk-delete-confirm"));
 
     await waitFor(() => {
-      const bulk = apiPostMock.mock.calls.find(([p]) => p === "/jobs/bulk-soft-delete");
+      const bulk = apiPostMock.mock.calls.find(([p]) => p === "/jobs/bulk-delete");
       expect(bulk).toBeTruthy();
-      expect(bulk[1]).toEqual({ job_ids: ["job-a", "job-b"] });
+      expect(bulk[1]).toEqual({ ids: ["job-a", "job-b"] });
     });
     // Modal closes on success.
     await waitFor(() => {
       expect(screen.queryByTestId("grid-bulk-delete-modal")).toBeNull();
     });
+    // Regression — legacy retired path must not be touched.
+    expect(apiPostMock.mock.calls.find(([p]) => p === "/jobs/bulk-soft-delete"))
+      .toBeUndefined();
   });
 
   it("cancel button closes the confirm modal without POSTing", async () => {
@@ -296,6 +305,9 @@ describe("Schedule · multi-select bulk soft-delete", () => {
     await waitFor(() => {
       expect(screen.queryByTestId("grid-bulk-delete-modal")).toBeNull();
     });
+    // Neither canonical nor legacy endpoint fires on cancel.
+    expect(apiPostMock.mock.calls.find(([p]) => p === "/jobs/bulk-delete"))
+      .toBeUndefined();
     expect(apiPostMock.mock.calls.find(([p]) => p === "/jobs/bulk-soft-delete"))
       .toBeUndefined();
   });

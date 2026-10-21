@@ -4255,56 +4255,31 @@ async def soft_delete_job(jid: str,
 async def bulk_soft_delete_jobs(body: BulkSoftDeleteIn,
                                   user: dict = Depends(require_admin_or_manager),
                                   tenant: dict = Depends(get_current_tenant)):
-    """TD-82-calendar-consolidate · Feb-2026 — THIN SHIM.
+    """TD-82-calendar-consolidate · Phase 2B · Oct-2026 — RETIRED.
 
-    Historical endpoint retained ONLY so mobile ``app/calendar.tsx``
-    keeps working during the two-phase retire. All delete work
-    delegates to the canonical ``POST /jobs/bulk-delete`` handler
-    in ``routers/bulk_crm.py:444`` via its shared
-    ``_generic_bulk_delete`` helper + ``_job_locked`` lock-reason
-    predicate. Nothing in this shim performs its own soft-delete
-    logic any more — any divergence between the two code paths is
-    now impossible.
+    All known callers have migrated to the canonical
+    ``POST /jobs/bulk-delete`` endpoint
+    (``routers/bulk_crm.py:444``):
+      * Web: ``frontend/src/pages/schedule/CalendarSchedule.jsx:650``
+        migrated in ``e57734f00``.
+      * Mobile: ``mobile/app/(app)/schedule/calendar.tsx:575`` migrated
+        in ``eaff2b3f1`` via the ``apiBulkDeleteJobs`` helper.
 
-    Response envelope is reshaped BIT-FOR-BIT back to the legacy
-    shape ``{ok, count, deleted, failed[{job_id,reason,status_code}]}``
-    so that existing callers (mobile ``calendar.tsx:617`` + legacy
-    pytest harnesses) see no change.
-
-    Legacy constraints preserved:
-      * 100-row cap (tighter than the shared ``_CAP=400`` ceiling).
-      * ``job_ids``-named body field.
-      * ``failed[].job_id`` key (not canonical ``failed[].id``).
-      * ``count`` key (not canonical ``deleted_count``).
-
-    TODO(TD-82-mobile-calendar-bulk): convert to 410 Gone once
-    mobile migrates. Phase 2B dispatched by operator after mobile
-    follow-up ticket closes.
+    The Phase 2A shim (``2f22725e1``) delegated to the canonical
+    ``_generic_bulk_delete`` + ``_job_locked`` pipeline while
+    reshaping the response envelope to the legacy
+    ``{ok, count, deleted, failed[{job_id,…}]}`` shape so mobile
+    could keep running during the migration window. That window is
+    now closed — Phase 2B retires the shim to ``410 Gone`` per the
+    TD-98-be-cleanup-retire convention
+    (``routers/communication_timeline.py:162``) · same
+    ``raise HTTPException(410, "<string>")`` prose pattern.
     """
-    from routers.bulk_crm import _generic_bulk_delete, _job_locked
-
-    ids = list(body.job_ids or [])
-    if not ids:
-        raise HTTPException(400, "job_ids is empty")
-    if len(ids) > 100:
-        raise HTTPException(400, "bulk soft-delete capped at 100 rows per call")
-
-    canonical = await _generic_bulk_delete(
-        "jobs", "job.soft_delete", ids, user, tenant, _job_locked,
+    raise HTTPException(
+        410,
+        "Endpoint retired · migrate to POST /jobs/bulk-delete · "
+        "see TD-82-calendar-consolidate Phase 2B",
     )
-    # Reshape canonical ``{ok, deleted_count, deleted, failed[{id,...}]}``
-    # back to legacy ``{ok, count, deleted, failed[{job_id,...}]}``.
-    legacy_failed = [
-        {"job_id": f.get("id"), "reason": f.get("reason"),
-         "status_code": f.get("status_code")}
-        for f in canonical.get("failed", [])
-    ]
-    return {
-        "ok": canonical.get("ok", True),
-        "count": canonical.get("deleted_count", 0),
-        "deleted": canonical.get("deleted", []),
-        "failed": legacy_failed,
-    }
 
 
 # ═════════════════════════════════════════════════════════════════════════
