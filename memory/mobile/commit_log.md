@@ -2263,3 +2263,14 @@
 - **Ops**: fixer script `/root/toast_fix.py`; tsc snapshots `/root/jest-baselines/tsc_after_{A,C}.txt`.
 - **Files modified**: the 18 listed in TECH_DEBT plus mobile/__tests__/td96-mobile-toast-sweep.test.ts (new)
 - **Web files referenced**: none (mobile-only bug)
+
+## Iteration 171 — TD-96-mobile-status: web-parity status grid on lead detail (S3)
+- **Commits**: `24deb0a8f` (td96-mobile-status-fe) · `td96-mobile-status-doc` (this doc)
+- **Date**: 2026-10-21
+- **Root cause**: hypothesis C. The tiles compared and PATCHed title-case statuses, but the data and the BE enum are snake_case (`new/contacted/quoted/closed_won/closed_lost`), so Contacted/Quoted never rendered. Recon ruled out A (BE missing field), B (wrong field), D (role-gating) and E (deliberate hiding).
+- **Changes**: replaced the conditional Contacted/Quoted tiles and the On Hold/Archive tiles with `STATUS_TILES`, a new/contacted/quoted grid that disables the current status. Close Won/Lost kept. The toast uses the display label. Prod +10/−9 LOC.
+- **Adjacent catches**: Archive → BE maps `"Archived"` to `"new"` (silent reset), On Hold → aliased to contacted, raw toast label, plus the BE twin bug TD-96-be-status-stamps (raised, not fixed).
+- **Checks**: new `__tests__/td96-mobile-status.test.tsx` 4/4; leads suites 32/32; tsc 629 (unchanged, checked post-commit per protocol); live screenshots on a new lead and a contacted lead. Hygiene precheck clean (0 material drift) before shipping.
+- **Ops note**: scope-reality tracker says this is the 6th consecutive mobile recon that caught bugs. Batch it into td-lessons-doc-7 once there are 2-3 more data points.
+- **Files modified**: mobile/app/leads/[id].tsx, mobile/__tests__/td96-mobile-status.test.tsx (new)
+- **Web files referenced**: frontend/src/pages/leads/LeadDetail.jsx (STATUS_ORDER grid, L25-36 / L299-310 / L705-730); backend/routers/leads.py (read-only: `_CANONICAL_STATUSES`, `_STATUS_ALIASES`, `_normalize_status`, L540-542)

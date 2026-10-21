@@ -1273,7 +1273,17 @@ Evidence from this cycle accumulates further on the attack class shape codified 
 
 ## TD-96-mobile-status / TD-96-mobile-timeline (candidates, raised in audit §9)
 
-- **-status:** `app/leads/[id].tsx` status tiles compare and PATCH title-case statuses (`"New"`, `"Contacted"`, `"Quoted"`, `"On Hold"`, `"Archived"`). Preview data is all snake_case, so the Contacted/Quoted tiles never render (confirmed live on lead `1f1eefb2…`, status `new`). P3, mobile.
+- **-status: CLOSED (`24deb0a8f`, td96-mobile-status-fe, S3 web parity).** Original note: `app/leads/[id].tsx` status tiles compare and PATCH title-case statuses (`"New"`, `"Contacted"`, `"Quoted"`, `"On Hold"`, `"Archived"`). Preview data is all snake_case, so the Contacted/Quoted tiles never render (confirmed live on lead `1f1eefb2…`, status `new`). P3, mobile.
+  - **Fix:** the tiles are now a 3-tile grid of `new` / `contacted` / `quoted` (`STATUS_TILES`). This mirrors web's `LeadDetail.jsx` STATUS_ORDER minus the `closed_*` values. PATCH sends snake_case, the tile for the current status is disabled, and moving back to New is allowed. Close Won and Close Lost are kept. The Archive and On Hold tiles are removed: web has neither, and there is no manual archive endpoint. The toast now uses the display label. Prod change +10/−9.
+  - **Adjacent bugs found in recon and closed by the same ship:** (1) Archive PATCHed `"Archived"`, which BE `_normalize_status` maps to `"new"`, silently resetting contacted/quoted leads to New with a misleading timeline entry; (2) On Hold was silently aliased to `contacted`; (3) the toast printed the raw value.
+  - **Verification:** regression test `__tests__/td96-mobile-status.test.tsx` 4/4. Leads jest 4 suites, 32/32. tsc 629, unchanged, checked post-commit per protocol. Live probe on `ff623042…` (new) and `17d00c64…` (contacted): 3 tiles render, the current one is `aria-disabled`, and 0 On Hold / Archive tiles.
+  - **Scope guard:** `leads/index.tsx` and `d2d/dispo.ts` title-case keys are display-only label/colour maps. They were left untouched.
+
+## TD-96-be-status-stamps (candidate, P3 backend, web/BE track)
+
+`routers/leads.py:540-542` compares the already-lowercased status against the title-case strings `'Contacted'` / `'Quoted'`. Those branches never execute, so the `contacted_at` and `quoted_at` timestamps are never set. This matters for lifecycle analytics and reporting. The fix is ~5 LOC backend (change the comparison to lowercase) plus a regression test asserting the timestamps populate. P3 backend; blocked on nothing.
+
+**Twin-bug origin:** this is the same bug class as TD-96-mobile-status (title-case vs snake_case). Both were left behind by the Phase 34 · Task CC status-enum standardization. That refactor made `_normalize_status` lowercase every write but did not update the downstream title-case comparisons: here on the BE, and in the mobile `leads/[id].tsx` tiles (fixed in `24deb0a8f`). Raised during the TD-96-mobile-status recon. NOT fixed in the mobile ship (scope guard: mobile-only track).
 - **-timeline:** mobile has no lead communication timeline (`GET /leads/{id}/communications`), so a successful compose only toasts. Web refreshes its comm timeline. P3, mobile.
 
 
