@@ -146,8 +146,20 @@ export default function QuotesList() {
   // trigger a refresh without duplicating the querystring assembly.
   // TD-96-g1 · Feb-2026 — ``lead_id`` forwarded when ``?lead=<lid>``
   // is on the URL (set by the LeadDetail "View all" link).
+  // TD-96-g1-invoices · Feb-2026 — when the lead filter is active
+  // AND the lifecycle view is ``all``, we DROP the ``doc_type=quote``
+  // scope so the BE returns both quote-shaped and invoice-shaped
+  // reparented docs (D1(ii) EXPAND fork). The BE side mirrors the
+  // same relaxation at ``routers/quotes.py:434``. Lifecycle views
+  // (open / accepted / converted / declined) still send
+  // ``doc_type=quote`` because those lifecycle statuses only live
+  // on quote-shaped docs. Standalone "All" tab without ``?lead=``
+  // also stays quote-only — mental model there is "all quotes",
+  // not "all docs".
   const fetchRows = useCallback(() => {
-    const qs = new URLSearchParams({ doc_type: "quote", view });
+    const qs = new URLSearchParams({ view });
+    const _mixedShapes = Boolean(leadFilter) && view === "all";
+    if (!_mixedShapes) qs.set("doc_type", "quote");
     if (customerFilter) qs.set("customer_id", customerFilter);
     if (leadFilter) qs.set("lead_id", leadFilter);
     return api
@@ -635,7 +647,17 @@ export default function QuotesList() {
               {filtered.map((r) => (
                 <tr
                   key={r.id}
-                  onClick={() => navigate(`/quotes/${r.id}`)}
+                  // TD-96-g1-invoices · Feb-2026 — invoice-shaped
+                  // rows surface in the lead_id+view=all mixed-list
+                  // path; route them to ``/invoices/${id}`` so the
+                  // detail page matches the row's doc_type. Quote-
+                  // shaped rows keep the pre-existing ``/quotes/${id}``
+                  // route unchanged.
+                  onClick={() => navigate(
+                    r.doc_type === "invoice"
+                      ? `/invoices/${r.id}`
+                      : `/quotes/${r.id}`,
+                  )}
                   className="cursor-pointer hover:bg-zinc-50"
                   style={{ borderTop: `1px solid ${colors.divider}` }}
                   data-testid={`quote-row-${r.id}`}
