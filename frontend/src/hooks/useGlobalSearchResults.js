@@ -58,6 +58,11 @@ const DEFAULT_LIMIT = 5;
 // when the query hasn't reached the backend-fetch threshold.
 const _EMPTY_BUCKETS = Object.freeze({
   customers: [], jobs: [], invoices: [], quotes: [], leads: [],
+  // TD-search-technicians-bucket · Feb-2026 — technicians bucket
+  // sourced from the shared ``services/technicians_core.py`` roster
+  // helper (union of ``db.technicians`` + ``db.users`` role in
+  // ASSIGNABLE_ROLES). Hit shape matches the other buckets.
+  technicians: [],
 });
 
 
@@ -90,11 +95,12 @@ export function useGlobalSearchResults(query, { limit = DEFAULT_LIMIT } = {}) {
         .then((data) => {
           if (cancelled) return;
           setBuckets({
-            customers: Array.isArray(data?.customers) ? data.customers : [],
-            jobs:      Array.isArray(data?.jobs)      ? data.jobs      : [],
-            invoices:  Array.isArray(data?.invoices)  ? data.invoices  : [],
-            quotes:    Array.isArray(data?.quotes)    ? data.quotes    : [],
-            leads:     Array.isArray(data?.leads)     ? data.leads     : [],
+            customers:   Array.isArray(data?.customers)   ? data.customers   : [],
+            jobs:        Array.isArray(data?.jobs)        ? data.jobs        : [],
+            invoices:    Array.isArray(data?.invoices)    ? data.invoices    : [],
+            quotes:      Array.isArray(data?.quotes)      ? data.quotes      : [],
+            leads:       Array.isArray(data?.leads)       ? data.leads       : [],
+            technicians: Array.isArray(data?.technicians) ? data.technicians : [],
           });
           setError(null);
         })
@@ -127,11 +133,12 @@ export function useGlobalSearchResults(query, { limit = DEFAULT_LIMIT } = {}) {
 
   return {
     pages,
-    customers: buckets.customers,
-    jobs:      buckets.jobs,
-    invoices:  buckets.invoices,
-    quotes:    buckets.quotes,
-    leads:     buckets.leads,
+    customers:   buckets.customers,
+    jobs:        buckets.jobs,
+    invoices:    buckets.invoices,
+    quotes:      buckets.quotes,
+    leads:       buckets.leads,
+    technicians: buckets.technicians,
     documents,
     loading,
     error,

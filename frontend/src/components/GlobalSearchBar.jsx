@@ -67,13 +67,17 @@ function _detectMac() {
 
 // Route mapping for the five backend entities + pages.  Kept as a
 // single map so the commit handler is a one-liner switch.
+// TD-search-technicians-bucket · Feb-2026 — adds ``technician`` row
+// routing. NOTE: the web route is SINGULAR ``/technician/:id``
+// (``App.js:1510``), not plural; mobile has no equivalent route yet.
 const ROUTE_FOR_KIND = {
-  page:     (rec) => rec?.path || null,
-  customer: (rec) => (rec?.id ? `/customers/${rec.id}` : null),
-  job:      (rec) => (rec?.id ? `/jobs/${rec.id}` : null),
-  invoice:  (rec) => (rec?.id ? `/invoices/${rec.id}` : null),
-  quote:    (rec) => (rec?.id ? `/quotes/${rec.id}` : null),
-  lead:     (rec) => (rec?.id ? `/leads/${rec.id}` : null),
+  page:       (rec) => rec?.path || null,
+  customer:   (rec) => (rec?.id ? `/customers/${rec.id}` : null),
+  job:        (rec) => (rec?.id ? `/jobs/${rec.id}` : null),
+  invoice:    (rec) => (rec?.id ? `/invoices/${rec.id}` : null),
+  quote:      (rec) => (rec?.id ? `/quotes/${rec.id}` : null),
+  lead:       (rec) => (rec?.id ? `/leads/${rec.id}` : null),
+  technician: (rec) => (rec?.id ? `/technician/${rec.id}` : null),
 };
 
 
@@ -95,7 +99,7 @@ export default function GlobalSearchBar() {
   const kbdHint = isMac ? "\u2318K" : "Ctrl+K";
 
   const {
-    pages, customers, jobs, invoices, quotes, leads, loading,
+    pages, customers, jobs, invoices, quotes, leads, technicians, loading,
   } = useGlobalSearchResults(query);
 
   // Flat row list drives keyboard navigation.  Order mirrors the
@@ -108,8 +112,9 @@ export default function GlobalSearchBar() {
     invoices.forEach((rec) => rows.push({ kind: "invoice", rec }));
     quotes.forEach((rec) => rows.push({ kind: "quote", rec }));
     leads.forEach((rec) => rows.push({ kind: "lead", rec }));
+    technicians.forEach((rec) => rows.push({ kind: "technician", rec }));
     return rows;
-  }, [pages, customers, jobs, invoices, quotes, leads]);
+  }, [pages, customers, jobs, invoices, quotes, leads, technicians]);
 
   // Reset highlight on query change so late-arriving backend hits
   // don't jump the cursor mid-typing.
@@ -172,12 +177,13 @@ export default function GlobalSearchBar() {
 
   // Section offsets for the flat highlight index.
   let running = 0;
-  const pagesStart = running;      running += pages.length;
-  const customersStart = running;  running += customers.length;
-  const jobsStart = running;       running += jobs.length;
-  const invoicesStart = running;   running += invoices.length;
-  const quotesStart = running;     running += quotes.length;
-  const leadsStart = running;      running += leads.length;
+  const pagesStart = running;        running += pages.length;
+  const customersStart = running;    running += customers.length;
+  const jobsStart = running;         running += jobs.length;
+  const invoicesStart = running;     running += invoices.length;
+  const quotesStart = running;       running += quotes.length;
+  const leadsStart = running;        running += leads.length;
+  const techniciansStart = running;  running += technicians.length;
 
   return (
     <div
@@ -246,7 +252,7 @@ export default function GlobalSearchBar() {
           onChange={(e) => setQuery(e.target.value)}
           onFocus={() => { if (query.trim()) setOpen(true); }}
           onKeyDown={onKeyDown}
-          placeholder="Search customers, jobs, invoices, quotes, leads…"
+          placeholder="Search customers, jobs, invoices, quotes, leads, technicians…"
           aria-label="Universal search"
           className="flex-1 min-w-0 bg-transparent outline-none text-sm font-medium"
           style={{ color: HERO_FG, caretColor: HERO_FG }}
@@ -325,6 +331,11 @@ export default function GlobalSearchBar() {
           />
           <Section
             label="Leads" kind="lead" rows={leads} start={leadsStart}
+            highlight={highlight} setHighlight={setHighlight} commit={commit}
+          />
+          <Section
+            label="Technicians" kind="technician" rows={technicians}
+            start={techniciansStart}
             highlight={highlight} setHighlight={setHighlight} commit={commit}
           />
 

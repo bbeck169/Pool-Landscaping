@@ -93,7 +93,7 @@ describe("GlobalSearchBar · white-pill styling", () => {
     const input = screen.getByTestId("global-search-bar-input");
     expect(input).toHaveAttribute(
       "placeholder",
-      "Search customers, jobs, invoices, quotes, leads…",
+      "Search customers, jobs, invoices, quotes, leads, technicians…",
     );
     // Fully rounded pill (``rounded-full``) on the wrapper — not
     // ``rounded-xl`` (that was the pre-restyle shape).
@@ -290,5 +290,104 @@ describe("GlobalSearchBar · mobile responsive", () => {
     // Post-click the ``hidden sm:flex`` is swapped for ``flex``.
     expect(hero.className).toMatch(/(^|\s)flex(\s|$)/);
     expect(hero.className).not.toMatch(/hidden sm:flex/);
+  });
+});
+
+
+
+// ══════════════════════════════════════════════════════════════════
+// 8) TD-search-technicians-bucket · Feb-2026 — technicians group
+// ══════════════════════════════════════════════════════════════════
+describe("GlobalSearchBar · technicians bucket", () => {
+  it("renders a Technicians section with the correct primary + secondary + testid shape", async () => {
+    vi.useRealTimers();
+    _mockResults({
+      customers: [], jobs: [], invoices: [], quotes: [], leads: [],
+      technicians: [
+        { id: "t1", primary: "Miguel Rivera",
+          secondary: "technician · (555) 123-4567" },
+      ],
+    });
+    _renderBar();
+    fireEvent.change(screen.getByTestId("global-search-bar-input"), {
+      target: { value: "miguel" },
+    });
+    await waitFor(() => {
+      expect(
+        screen.getByTestId("global-search-bar-section-technician"),
+      ).toBeInTheDocument();
+    });
+    expect(screen.getByText("Miguel Rivera")).toBeInTheDocument();
+    expect(
+      screen.getByText("technician · (555) 123-4567"),
+    ).toBeInTheDocument();
+  });
+
+  it("row click navigates to the SINGULAR /technician/:id route", async () => {
+    vi.useRealTimers();
+    _mockResults({
+      customers: [], jobs: [], invoices: [], quotes: [], leads: [],
+      technicians: [
+        { id: "tech-abc-123", primary: "Jane Tech",
+          secondary: "landscaper · 555-0100" },
+      ],
+    });
+    _renderBar();
+    fireEvent.change(screen.getByTestId("global-search-bar-input"), {
+      target: { value: "jane" },
+    });
+    await waitFor(() => screen.getByTestId("global-search-bar-result-0"));
+    const row = screen.getByTestId("global-search-bar-result-0");
+    expect(row.getAttribute("data-kind")).toBe("technician");
+    fireEvent.mouseDown(row);
+    // SINGULAR path per App.js:1510 — critical for row click to resolve.
+    expect(_navigateSpy).toHaveBeenCalledWith("/technician/tech-abc-123");
+    // Guard against plural regression.
+    expect(_navigateSpy).not.toHaveBeenCalledWith("/technicians/tech-abc-123");
+  });
+
+  it("Technicians section does NOT render when the bucket is empty (bail at Section)", async () => {
+    vi.useRealTimers();
+    _mockResults({
+      customers: [{ id: "c1", primary: "C", secondary: "" }],
+      jobs: [], invoices: [], quotes: [], leads: [],
+      technicians: [],
+    });
+    _renderBar();
+    fireEvent.change(screen.getByTestId("global-search-bar-input"), {
+      target: { value: "cc" },
+    });
+    await waitFor(() =>
+      screen.getByTestId("global-search-bar-section-customer"),
+    );
+    // Section component bails on empty rows — testid must be absent.
+    expect(
+      screen.queryByTestId("global-search-bar-section-technician"),
+    ).toBeNull();
+  });
+
+  it("keyboard navigation reaches technicians rows after leads (section order)", async () => {
+    vi.useRealTimers();
+    _mockResults({
+      customers: [], jobs: [], invoices: [], quotes: [],
+      leads: [{ id: "l1", primary: "LeadOne", secondary: "" }],
+      technicians: [{ id: "t1", primary: "TechOne",
+                       secondary: "technician · " }],
+    });
+    _renderBar();
+    const input = screen.getByTestId("global-search-bar-input");
+    fireEvent.change(input, { target: { value: "o" } });
+    // Need ≥2 chars to clear the MIN_BACKEND_CHARS gate.
+    fireEvent.change(input, { target: { value: "on" } });
+    await waitFor(() => screen.getByTestId("global-search-bar-result-1"));
+    // Row 0 = LeadOne, Row 1 = TechOne (technicians section comes last).
+    const row1 = screen.getByTestId("global-search-bar-result-1");
+    expect(row1.getAttribute("data-kind")).toBe("technician");
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    await waitFor(() => {
+      expect(row1.getAttribute("data-active")).toBe("true");
+    });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(_navigateSpy).toHaveBeenCalledWith("/technician/t1");
   });
 });
