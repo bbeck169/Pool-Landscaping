@@ -95,6 +95,45 @@ export function summarizeBulkChargeResult(input) {
   return counts;
 }
 
+// TD-95 · Feb-2026 — Status enum priority chain for column sort.
+//
+// Backing field `r.status` is an enum including the 7 values below.
+// Mapping lifecycle-ordered so asc click surfaces `draft` first +
+// desc click surfaces `past_due` first — the latter deliberately
+// terminal so operators get the TD-93 Overdue-tile action-item
+// surface on a single desc click (operator-approved on TD-95
+// Phase-1 audit · decision #2).  Unknown statuses sort at the end
+// via `?? 999`.
+//
+// Future reorderings are a one-line edit — a leading comment above
+// this const should reference the TD-95 audit so a future reader
+// doesn't drift unintentionally.
+const _STATUS_RANK = Object.freeze({
+  draft:    0,
+  sent:     1,
+  viewed:   2,
+  accepted: 3,
+  partial:  4,
+  paid:     5,
+  past_due: 6,
+});
+
+// TD-95 · Feb-2026 — Viewed-column sort key resolver.
+//
+// The Viewed column renders a triple-field value
+// (`first_viewed_at` + `last_viewed_at` + `view_count`).  Sort
+// keys on `last_viewed_at || first_viewed_at || ""` so "most
+// recently viewed first" under desc click; empty string sorts
+// before any ISO date lex-wise, so unviewed rows cluster at the
+// top under asc and at the bottom under desc.  `view_count` is
+// secondary metadata only — operators do NOT want sort-by-count
+// per TD-95 Phase-1 audit · decision #1.
+function _viewedSortValue(r) {
+  return r.last_viewed_at || r.first_viewed_at || "";
+}
+
+
+
 export default function InvoicesList() {
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
@@ -176,7 +215,47 @@ export default function InvoicesList() {
     setParams(s, { replace: true });
     setSelected(new Set());
   };
-  const [sort, _setSort] = useState({ col: null, dir: null }); // dir: asc|desc|null
+  // TD-95 · Feb-2026 — Invoices list column header sort.
+  //
+  // The dormant scaffolding (sort state + `_SortableTh` component
+  // + `getVal` dispatch) was already present pre-TD-95; this
+  // ticket wires it up for 7 operator-listed columns and lifts
+  // the state into URL params so sort is shareable + preserved
+  // through browser back/forward.
+  //
+  // URL contract:
+  //   * `?sort=<col>&sort_dir=<asc|desc>` — both required; either
+  //     missing → treat as default (no sort active, server-side
+  //     `created_at desc` fallback).
+  //   * Omitted entirely in the default state.
+  //
+  // Status + Viewed sort keys are deliberate — see `_STATUS_RANK`
+  // + `_viewedSortValue` module helpers at the top of the file.
+  //
+  // Click cycle is 2-state (`inactive → asc → desc → asc → desc
+  // → ...`) per operator decision #5 (TD-95 brief).  No 3rd-click
+  // clear.
+  const [sort, _setSortState] = useState(() => {
+    const col = params.get("sort") || null;
+    const dir = params.get("sort_dir") || null;
+    if (!col || (dir !== "asc" && dir !== "desc")) {
+      return { col: null, dir: null };
+    }
+    return { col, dir };
+  });
+  const setSort = (nextSort) => {
+    _setSortState(nextSort);
+    const s = new URLSearchParams(params);
+    if (nextSort.col && nextSort.dir) {
+      s.set("sort", nextSort.col);
+      s.set("sort_dir", nextSort.dir);
+    } else {
+      s.delete("sort");
+      s.delete("sort_dir");
+    }
+    setParams(s, { replace: true });
+    setSelected(new Set());
+  };
 
   // INVOICES-TILES-CLICKABLE · Feb-2026 — URL-persisted tile filter.
   // Values: "collected" | "outstanding" | "overdue" | "aging-current"
@@ -386,9 +465,16 @@ export default function InvoicesList() {
     if (sort.col && sort.dir) {
       const getVal = (r) => {
         switch (sort.col) {
-          case "due_date": return r.due_date || "";
-          case "total": return Number(r.total || 0);
-          case "customer_name": return String(r.customer_name || "").toLowerCase();
+          // TD-95 · Feb-2026 — operator-listed columns.
+          case "invoice_number": return Number(r.invoice_number || 0);
+          case "title":          return String(r.title || "").toLowerCase();
+          case "customer_name":  return String(r.customer_name || "").toLowerCase();
+          case "due_date":       return r.due_date || "";
+          case "total":          return Number(r.total || 0);
+          case "viewed":         return _viewedSortValue(r);
+          case "status":         return _STATUS_RANK[r.status] ?? 999;
+          // Legacy bulk-pay sort col (pre-TD-95); preserved for
+          // regression parity.
           case "has_payment_method": return r.has_payment_method ? 1 : 0;
           default: return "";
         }
@@ -939,17 +1025,19 @@ export default function InvoicesList() {
                     className="cursor-pointer"
                   />
                 </th>
-                <th className="text-left px-3 py-2 font-semibold" style={{ color: colors.onSurfaceSecondary }}>Invoice #</th>
-                <th className="text-left px-3 py-2 font-semibold" style={{ color: colors.onSurfaceSecondary }}>Invoice</th>
-                <th className="text-left px-3 py-2 font-semibold hidden md:table-cell" style={{ color: colors.onSurfaceSecondary }}>Customer</th>
-                <th className="text-left px-3 py-2 font-semibold hidden lg:table-cell" style={{ color: colors.onSurfaceSecondary }}>Due</th>
-                <th className="text-right px-3 py-2 font-semibold" style={{ color: colors.onSurfaceSecondary }}>Amount</th>
+                <_SortableTh label="Invoice #" col="invoice_number" sort={sort} setSort={setSort} />
+                <_SortableTh label="Invoice"   col="title"          sort={sort} setSort={setSort} />
+                <_SortableTh label="Customer"  col="customer_name"  sort={sort} setSort={setSort} className="hidden md:table-cell" />
+                <_SortableTh label="Due"       col="due_date"       sort={sort} setSort={setSort} className="hidden lg:table-cell" />
+                <_SortableTh label="Amount"    col="total"          sort={sort} setSort={setSort} align="right" />
                 {/* Phase K47 · Feb-2026 — "Viewed" indicator column
                     shows a small eye icon + relative "Nd ago" for
                     any invoice with ``first_viewed_at`` populated.
-                    Empty for invoices that have never been opened. */}
-                <th className="text-left px-3 py-2 font-semibold hidden lg:table-cell" style={{ color: colors.onSurfaceSecondary }}>Viewed</th>
-                <th className="text-right px-3 py-2 font-semibold" style={{ color: colors.onSurfaceSecondary }}>Status</th>
+                    Empty for invoices that have never been opened.
+                    TD-95 · Feb-2026 — sort key resolves via
+                    `_viewedSortValue` (last_viewed_at || first_viewed_at). */}
+                <_SortableTh label="Viewed"    col="viewed"         sort={sort} setSort={setSort} className="hidden lg:table-cell" />
+                <_SortableTh label="Status"    col="status"         sort={sort} setSort={setSort} align="right" />
               </tr>
             </thead>
             <tbody>
@@ -1224,10 +1312,15 @@ export default function InvoicesList() {
 function _SortableTh({ label, col, sort, setSort, align = "left", className = "" }) {
   const active = sort.col === col;
   const dir = active ? sort.dir : null;
+  // TD-95 · Feb-2026 — 2-state click cycle (operator decision #5).
+  // Inactive → asc, asc → desc, desc → asc.  No 3rd-click clear;
+  // to unsort, user picks a different column or manually strips
+  // the URL ?sort= + ?sort_dir= params.  Simpler UX, less to
+  // explain.
   const cycle = () => {
     if (!active) setSort({ col, dir: "asc" });
     else if (dir === "asc") setSort({ col, dir: "desc" });
-    else setSort({ col: null, dir: null });
+    else setSort({ col, dir: "asc" });
   };
   return (
     <th
