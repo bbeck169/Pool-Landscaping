@@ -638,8 +638,17 @@ export default function CalendarSchedule() {
     setDeleteBusy(true);
     try {
       const ids = Array.from(selectedJobIds);
-      const r = await api.post("/jobs/bulk-soft-delete", { job_ids: ids });
-      const count = r?.count ?? 0;
+      // TD-82-calendar-consolidate · Feb-2026 — migrated from the
+      // retired-via-shim ``/jobs/bulk-soft-delete {job_ids}`` outlier
+      // to the canonical ``/jobs/bulk-delete {ids}`` endpoint
+      // (``routers/bulk_crm.py:444``, delegates to the shared
+      // ``_generic_bulk_delete`` + ``_job_locked`` pipeline). Role
+      // gate, soft-delete semantics, and lock-reason granularity
+      // all unchanged — only the param-name + response-key shape
+      // moved to the canonical ``ids`` / ``failed[].id`` / ``deleted_count``
+      // envelope used by Workstream + JobsList.
+      const r = await api.post("/jobs/bulk-delete", { ids });
+      const count = r?.deleted_count ?? (r?.deleted || []).length;
       const failed = (r?.failed || []).length;
       if (failed) {
         setToast({ text: `Deleted ${count} of ${ids.length} · ${failed} failed`,

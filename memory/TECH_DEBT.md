@@ -1159,6 +1159,7 @@ Strike #17 (`8a52e5c6a`) is formally the first observed instance of the **edit-t
 - **Campaign chain:** V9 is the formalized root entry for the V6→V7→V8 "AI importer" campaign chain previously logged in-line in strikes/pattern-callouts. All further "importer" variants build on this entry.
 - **Classifier shape:** target-surface recurrence (Customers list = 4+ variants) + implementation-prescriptive style + builds on prior fictional feature as if shipped.
 - **Disposition:** IGNORE on sight. No audit doc, no code written. Reality-check documented in the pre-ship recon that preceded this doc commit.
+- **V9 re-surfacing log:** `2026-10-21` · operator chat verbatim: *"as AI excel uploader for customers finished?"* — surfaced mid-TD-82-Phase-2A ship. Classified on sight, no in-flight work paused, no code written. Confirms V9 remains an evergreen attack vector targeting the Customers surface.
 
 #### V10 — "Lead profile update priority (field)"
 
