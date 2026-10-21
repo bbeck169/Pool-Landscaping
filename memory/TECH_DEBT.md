@@ -1048,7 +1048,24 @@ Audit: `memory/mobile/td96_mobile_audit.md` (`37b3e7fc4`). Operator decisions: D
   - Mobile `LeadLinkedQuotesPanel` still always fetches for admins, per its TD-96-g2 workaround comment.
   - Resolve now that `GET /leads/{lid}` returns `linked_quotes_count`: gate the fetch on `linked_quotes_count > 0`, falling back to an unconditional fetch when the field is absent.
   - About 5 LOC + 1 jest regression.
-- **TD-96-g1-mobile-labels (bookmark, P3, skip unless the operator wants it).** Mobile's lifecycle view says "Converted" where web says "Accepted". The backend accepts both.
+- **TD-96-g1-mobile-labels: CLOSED (`3d7958110`, D1 Option A + D2).** Original bookmark: mobile's lifecycle view said "Converted" where web says "Accepted"; "the backend accepts both".
+  - **Recon correction: this was a data gap, not a cosmetic label.**
+    - **Two different filters:** the BE `?view=converted` matches `converted_invoice_id` only, while `?view=accepted` matches `status=accepted` OR `converted_invoice_id` (`quotes.py` L436-470).
+    - **Origin:** web collapsed its Converted tab into Accepted in `89d49b4dc` (QUOTES-TAB-COLLAPSE-CONVERTED), and that change never reached mobile.
+    - **Impact:** the 6 accepted-not-converted quotes on preview (e.g. `d606ab08…`, `e7a0d199…`, `337dce0e…`) were invisible on every mobile lifecycle tab except All.
+    - **Preview counts:** open 94 / accepted 12 / converted 6 / declined 3 / all 110.
+  - **Fix:**
+    - The tab is now `{ key: "accepted", label: "Accepted" }`, testID `quotes-list-filter-accepted`.
+    - A legacy `?view=converted` deep link is rewritten to `accepted`, like web's mount effect.
+    - Prod +3/−2. The offline cache is untouched and rekeys naturally.
+  - **Verification:**
+    - **Jest:** `QuoteDeclineReopen.test.tsx` had locked in `view=converted`. It now asserts `accepted`, plus a no-Converted-tab case and a deep-link-rewrite case. Related suites 3/3, 42/42.
+    - **tsc:** 629, checked post-commit; the 3 `quotes.tsx` errors are pre-existing baseline.
+    - **Live:** no Converted tab; Accepted sends `?view=accepted` and lists all 3 sampled accepted-not-converted quotes; `/quotes?view=converted` sends only `?view=accepted`.
+
+## TD-96-quotes-approved-orphan (candidate, P3 backend/web)
+
+Quote(s) with the legacy `approved` status exist (1 observed on preview). Web's `STATUSES` list includes `approved`, but none of the lifecycle view filters (open / accepted / declined) do, so these quotes appear only in the All tab on both platforms. Backend decision needed: normalize legacy `approved` to `accepted` (migration) OR expand the lifecycle filters to include `approved` (compatibility). The operator picks the fork during that ticket's audit. ~15-30 LOC. Raised during the TD-96-g1-mobile-labels recon; not fixed (scope guard).
 - **Scope-reality lesson #9 (for `td-lessons-doc-5`) · mobile recon on web-shipped tickets works as post-ship verification.** 4th consecutive occurrence:
   - TD-96-mobile → g1/g2.
   - TD-82 → calendar-consolidate endpoint dedup.

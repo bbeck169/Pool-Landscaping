@@ -2285,3 +2285,14 @@
 - **Ops note**: scope-reality tracker says this is the 7th consecutive mobile recon that surfaced gaps (no lead message history; compose onSent not wired; real endpoint role gate is admin/super_admin/manager/owner with tech 403). Batch into td-lessons-doc-7.
 - **Files modified**: mobile/src/components/leads/LeadCommunicationTimeline.tsx (new), mobile/app/leads/[id].tsx, mobile/src/components/leads/LeadComposeSheet.tsx, mobile/__tests__/td96-mobile-timeline.test.tsx (new), mobile/__tests__/td96-mobile-timeline-wiring.test.tsx (new), mobile/__tests__/td96-mobile-lead-actions.test.tsx
 - **Web files referenced**: frontend/src/pages/leads/LeadDetail.jsx (L205-275 loader, L612-660 card, L816-870 CommTimelineItem), frontend/src/pages/leads/LeadComposeModal.jsx (onSent L62), frontend/src/components/communications/CommunicationDetailModal.jsx (deferred); backend/routers/lead_communications.py L73-78 + L343-480 (read-only)
+
+## Iteration 173 — TD-96-g1-mobile-labels: quotes lifecycle tab converted → accepted (web parity + data gap)
+- **Commits**: `3d7958110` (td96-g1-mobile-labels-fe) · `td96-g1-mobile-labels-doc` (this doc)
+- **Date**: 2026-10-21
+- **Root cause**: web's QUOTES-TAB-COLLAPSE-CONVERTED (`89d49b4dc`) never reached mobile. Mobile's `?view=converted` (converted_invoice_id only) hid the 6 accepted-not-converted quotes on preview from every lifecycle tab except All.
+- **Changes**: `VIEW_FILTERS` converted → `{ key: "accepted", label: "Accepted" }`; legacy `?view=converted` deep link rewritten to accepted. Prod +3/−2.
+- **Checks**: QuoteDeclineReopen updated (accepted assertions, plus no-Converted-tab and deep-link-rewrite cases); related suites 3/3, 42/42; tsc 629 post-commit (unchanged; 3 pre-existing quotes.tsx baseline errors); live probe confirmed the Accepted tab lists the 3 sampled quotes and the deep-link rewrite works. Hygiene drift = exactly the 2 expected files.
+- **Candidates raised**: TD-96-quotes-approved-orphan (P3 BE/web).
+- **Ops note**: scope-reality tracker says this is the 8th consecutive mobile recon catching real bugs (here the bookmark undersold it: "cosmetic label" turned out to be a data gap). Batch into td-lessons-doc-7.
+- **Files modified**: mobile/app/(app)/quotes.tsx, mobile/__tests__/QuoteDeclineReopen.test.tsx
+- **Web files referenced**: frontend/src/pages/quotes/QuotesList.jsx (L20-46 LIFECYCLE_VIEWS/LABELS, L112-138 converted→accepted rewrite); backend/routers/quotes.py L406-470 (read-only)
