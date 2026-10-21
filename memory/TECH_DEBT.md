@@ -556,6 +556,42 @@ Pattern tracker. Updated as subsequent audits produce useful calibration data.
 - **Scope-reality recurrence (occurrence #2):** TD-100 candidate note said "two compose modals, dedupe them" → audit found **three divergent impls** (lead-extracted, customer-inlined 637 LOC, prospects-inlined ~100 LOC). TD-100 shipped close-out + three P3 sub-primitive candidates deferred.
 - **Operational calibration bullet:** Operator's candidate notes have consistently under-estimated repo divergence by ~1 impl across TD-98/99 + TD-100 (two consecutive audits). Future audits should default-hypothesise "one more impl than the candidate note describes" during reconnaissance. No change to the audit cadence itself; just better recon priors.
 - **Related operational pattern:** For both TD-98/99 and TD-100, the "right" disposition was NOT full merge but either (a) dead-code reap + canonical state record (TD-98/99) OR (b) doc-only close + sub-primitive deferral (TD-100). Audit-first discipline + operator trust in "do nothing beyond document" has protected against speculative-refactor regret in both cases.
+- **Scope-reality recurrence (occurrence #3):** TD-81 (Feb-2026). Operator framing: "pure admin-dashboard web ticket, zero mobile overlap, unparking the parked audit queue." Repo reality: parked **MOBILE write-mode parity audit** with existing Phase-1 doc at `memory/td81_mobile_revenue_drilldown_audit.md` (dated 2026-02-18) carrying verdict *"STOP · scope exceeds the 300-LOC roll-through budget by a large multiple. Mobile write-mode port requires a dedicated Expo-specialist dispatch."* Right disposition: delegate to the mobile track (`e1_expo_frontend_dev`), do NOT write a redundant web audit. Detection method: pre-write grep on `memory/` surfaced the existing audit doc before any commit was made. Shipped under `td-lessons-doc` as audit-process reinforcement — no code written for TD-81 on the web side.
+
+### Pre-audit protocol — CODIFIED MANDATORY STEP (Feb-2026)
+
+Before writing any Phase-1 audit doc, execute:
+
+```
+grep -rE "TD-<N>|td-<n>|td<n>" memory/
+grep -rE "TD-<N>|td-<n>|td<n>" /app/frontend/src /app/backend
+```
+
+(where `<N>` / `<n>` is the ticket number variant).
+
+If an existing audit doc OR a TECH_DEBT.md entry OR a referencing file surfaces:
+
+1. **STOP.** Do NOT begin drafting new audit content.
+2. Read the existing doc fully (not just title/verdict).
+3. Report state to the operator with:
+   - Existing audit doc path + date + verdict (if any).
+   - Scope-match assessment (does the existing doc cover what the operator's framing describes, or is this a scope-reality delta?).
+   - Recommended disposition options (delegate / rename / supplement / redo).
+4. Await operator pick before writing a single character of new audit content.
+
+Applies to all audit tickets, web and mobile, with no exemptions. Protects against:
+
+- Redundant audit cycles against already-covered scope.
+- Scope-reality framing-vs-repo deltas (now 3 consecutive occurrences).
+- Ticket-number collision between web and mobile tracks sharing the TD-xx namespace.
+
+### Pattern strength callout (Feb-2026)
+
+Three consecutive scope-reality deltas (TD-98/99 "3 impls not 2" + TD-100 "3 impls not 2 recurs" + TD-81 "parked mobile audit not web ticket") strengthen the operational calibration bullet:
+
+- **Default stance during recon**: hypothesise framing miss; do NOT trust candidate-note scope at face value.
+- **First-move during recon**: grep. Then read. Then propose. Never write audit content before this sequence completes.
+- **Rate of occurrence**: 3 of the last 4 audits (TD-98/99, TD-100, TD-81) carried framing-vs-reality deltas large enough to change the ticket's disposition. One in four did not (TD-98/99-xref — operator's framing matched reality). Working assumption going forward: ~75% of audits require framing correction before Phase-1 writes are safe.
 
 
 ## TD-96-mobile · Mobile parity for the lead-detail action buttons — SHIPPED (Oct-2026)
