@@ -23,8 +23,8 @@ export function pct(part: number, total: number): string {
   return `${((part / total) * 100).toFixed(1)}%`;
 }
 
-/** Fetch ``path?start&end`` whenever the range changes; ignores stale responses. */
-export function useRangedFetch(path: string, range?: { start: string; end: string } | null) {
+/** Fetch ``path?start&end`` whenever the range (or optional ``reloadKey``) changes; ignores stale responses. */
+export function useRangedFetch(path: string, range?: { start: string; end: string } | null, reloadKey: number = 0) {
   const [data, setData] = useState<any>(null);
   const [err, setErr] = useState("");
   useEffect(() => {
@@ -35,7 +35,7 @@ export function useRangedFetch(path: string, range?: { start: string; end: strin
       .then((r: any) => { if (alive) setData(r || { items: [], total: 0 }); })
       .catch((e: any) => { if (alive) setErr(e?.message || "Failed to load."); });
     return () => { alive = false; };
-  }, [path, range?.start, range?.end]);
+  }, [path, range?.start, range?.end, reloadKey]);
   return { data, err };
 }
 

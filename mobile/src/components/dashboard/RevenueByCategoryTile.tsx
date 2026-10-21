@@ -4,8 +4,9 @@
  * ?start&end, refetched when the shared range changes. Same copy, states
  * and testIDs as web; ``displayCategoryLabel`` keeps web's "never render a
  * UUID as a label" contract. Dashboard parity · legend drill button (›)
- * opens the read-only `IncomeDrillDownSheet` (web DashboardDrillDownModal
- * variant="income-by-category", category = display label like web);
+ * opens the `IncomeDrillDownSheet` (web DashboardDrillDownModal
+ * variant="income-by-category", category = display label like web; TD-81
+ * adds per-row Business Unit re-classify → tile refetch on close);
  * tapping the row itself still highlights the segment.
  */
 import React, { useState } from "react";
@@ -23,7 +24,9 @@ export function displayCategoryLabel(item: any): string {
 }
 
 export default function RevenueByCategoryTile({ range }: { range?: { start: string; end: string } | null }) {
-  const { data, err } = useRangedFetch("/admin/dashboard/revenue-by-category", range);
+  // TD-81 · bump after a BU re-classify so bucket totals refetch on sheet close.
+  const [reloadKey, setReloadKey] = useState(0);
+  const { data, err } = useRangedFetch("/admin/dashboard/revenue-by-category", range, reloadKey);
   const [drillCategory, setDrillCategory] = useState<string | null>(null);
   const items = (data?.items || []).map((it: any, i: number) => {
     const label = displayCategoryLabel(it);
@@ -48,7 +51,7 @@ export default function RevenueByCategoryTile({ range }: { range?: { start: stri
       ) : (
         <DonutChart items={items} total={Number(data.total || 0)} prefix="revenue-cat" onDrill={(it) => setDrillCategory(it.label)} />
       )}
-      <IncomeDrillDownSheet category={drillCategory} range={range} onClose={() => setDrillCategory(null)} />
+      <IncomeDrillDownSheet category={drillCategory} range={range} onClose={() => setDrillCategory(null)} onEdited={() => setReloadKey((k) => k + 1)} />
     </View>
   );
 }
