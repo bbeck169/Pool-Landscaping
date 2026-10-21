@@ -16,11 +16,13 @@ type Props = {
   selectedId?: string;
   onSelect: (cat: IncomeCategory) => void;
   onClose: () => void;
+  /** TD-84 b2 — reused for the Uncategorized report's Income / Service pickers. */
+  title?: string;
 };
 
-export default function BusinessUnitPickerSheet({ visible, categories, selectedId, onSelect, onClose }: Props) {
+export default function BusinessUnitPickerSheet({ visible, categories, selectedId, onSelect, onClose, title = "Re-classify Business Unit" }: Props) {
   return (
-    <Sheet visible={visible} onClose={onClose} title="Re-classify Business Unit" testID="bu-picker-sheet">
+    <Sheet visible={visible} onClose={onClose} title={title} testID="bu-picker-sheet">
       {categories.length === 0 ? (
         <Text style={s.empty} testID="bu-picker-empty">No business units available.</Text>
       ) : (

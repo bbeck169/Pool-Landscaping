@@ -23,6 +23,7 @@ import RevenueDateRangeFilter, { type RevenueRange } from "@/src/components/dash
 import RevenueByCategoryTile from "@/src/components/dashboard/RevenueByCategoryTile";
 import IncomeByServiceCategoryTile from "@/src/components/dashboard/IncomeByServiceCategoryTile";
 import ServiceCategoryTileRow from "@/src/components/dashboard/ServiceCategoryTileRow";
+import UncategorizedBanner from "@/src/components/dashboard/UncategorizedBanner";
 import AppTextInput from "@/src/components/ui/AppTextInput";
 import MassMessagingCard from "@/src/components/dashboard/MassMessagingCard";
 import DashboardActionCards from "@/src/components/dashboard/DashboardActionCards";
@@ -161,6 +162,8 @@ export default function Dashboard() {
               <Text style={styles.revenueTitle}>Revenue insights</Text>
               <RevenueDateRangeFilter onChange={setRevenueRange} />
             </View>
+            {/* TD-84 b2 · web `uncategorized-banner` (count > 0) above the donuts. */}
+            <UncategorizedBanner />
             <RevenueByCategoryTile range={revenueRange} />
             <IncomeByServiceCategoryTile range={revenueRange} />
           </View>
