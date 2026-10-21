@@ -2243,3 +2243,12 @@
   - Bookmarks: TD-mobile-tech-search, TD-90-search-address-gaps.
 - **Files modified**: mobile/app/leads/index.tsx
 - **Web files referenced**: frontend/src/pages/leads/LeadsDashboardPage.jsx (live `/convert` caller); backend/routers/leads.py, backend/routers/global_search.py (read-only)
+
+## Iteration 169 — TD-96-mobile-bulk-toast: wire useToast in leads list (+ 20 sister sites flagged)
+- **Commits**: `00fb0f679` (cron sweep, TD-61 strike #20; content = the intended td96-mobile-bulk-toast-fe) · `td96-mobile-bulk-toast-doc` (this doc)
+- **Date**: 2026-10-21
+- **Changes**: `app/leads/index.tsx` gets `useToast()`, so a successful bulk status change shows a toast, exits select mode and reloads (it used to show a false "Error · showToast is not defined").
+- **Tests**: td96-mobile-bulk-toast 2/2 (B1 success, B2 failure); k40 leads/index 2/2; tsc 650 → 649.
+- **Recon delta**: 20 sister sites with the identical bug, all from `4a8d04429`. Logged as TD-96-mobile-toast-sweep (P2), not fixed (scope guard).
+- **Files modified**: mobile/app/leads/index.tsx, mobile/__tests__/td96-mobile-bulk-toast.test.tsx (new)
+- **Web files referenced**: none (mobile-only bug)

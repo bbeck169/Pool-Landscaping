@@ -1202,7 +1202,39 @@ Evidence from this cycle accumulates further on the attack class shape codified 
 - **TD-96-mobile-reap-be (candidate, P3 backend).** The `/convert-to-job` and `/convert-to-quote` backend routes (`routers/leads.py:953`, `:994`) have no callers after `TD-96-mobile-reap-fe` ships; grep across web `frontend/src` and mobile found none.
   - `/leads/{id}/convert` (`:911`) is still live: web `LeadsDashboardPage.jsx:1138` and mobile `d2d/index.tsx:139`. So only the 2 unused routes are reap candidates.
   - About −50 LOC of backend deletion.
-- **TD-96-mobile-bulk-toast (candidate, P2 mobile, found during reap recon; pre-existing since `4a8d04429` 2026-09-13).**
+- **TD-96-mobile-bulk-toast (P2 mobile) — SHIPPED in `00fb0f679` (Oct-2026, closed).** That commit is a cron sweep (TD-61 strike #20). Its content is exactly the intended `td96-mobile-bulk-toast-fe`: 2 files, +72.
+  - **Fix:** `app/leads/index.tsx` now imports `useToast` and calls `const { showToast } = useToast();` (+4 LOC).
+  - **Tests:** `__tests__/td96-mobile-bulk-toast.test.tsx`.
+    - B1: a successful bulk status change shows the toast "2 leads set to contacted.", raises **no** `Alert`, exits select mode and reloads the list.
+    - B2: a failure still shows `Alert("Error", msg)` and no toast.
+    - k40 `leads/index` checks 2/2.
+  - **tsc:** 650 → **649** (this TS2304 left the baseline). Lint: only the pre-existing unused `bulkStatusTarget` warning (left alone).
+- **TD-96-mobile-toast-sweep (candidate, P2 mobile) · 20 sister sites with the identical undefined `showToast` bug.**
+  - **Origin:** all 20 trace to the same Alert→Toast rollout commit, `4a8d04429` (2026-09-13). It replaced `Alert.alert` with `showToast(...)` without wiring `useToast()`. `ToastProvider` is mounted at the root (`app/_layout.tsx:176`).
+  - **Sites** (tsc TS2304, file:line):
+    - `app/(app)/more.tsx:293,314`
+    - `app/(app)/reviews/recent.tsx:45`
+    - `app/(app)/reviews/requests/[id].tsx:30`
+    - `app/(app)/settings/offline-diagnostics.tsx:75`
+    - `app/admin/chemicals.tsx:107,110`
+    - `app/admin/diagnostics/errors.tsx:93`
+    - `app/admin/seo/otto/[id].tsx:51`
+    - `app/customer/new.tsx:86`
+    - `app/estimator/settings.tsx:32`
+    - `app/profit-report.tsx:147`
+    - `app/reports/aeo-digest.tsx:52`
+    - `app/reports/weekly-digest.tsx:65`
+    - `app/settings/business-card.tsx:53`
+    - `app/settings/ringcentral.tsx:81`
+    - `app/soshie/BrandBrainTab.tsx:64`
+    - `src/components/customers/CustomerMultiContactEditor.tsx:85`
+    - `src/components/customers/SendServiceRecordsLinkModal.tsx:169`
+    - `src/components/sync/ManualSyncButton.tsx:38`
+  - **Effect:** wherever the call sits on a success path (e.g. "Review updated", "Request resent to the customer.", "Cache rebuilt from server."), the action succeeds and then throws. The user sees a false error, or an unhandled ReferenceError if no catch surrounds it. Calls inside a `catch` / `.catch` mask the real error with a ReferenceError.
+  - **Fix:** about 2 LOC per file (import + hook). Components need the hook inside the component body, so check each one for non-component call sites first (none spotted, but verify). Plus 1 tsc-contract test asserting there are 0 `TS2304 showToast` occurrences, so the pattern cannot recur silently.
+  - About 40–50 LOC total. tsc drops by 20 (649 → 629).
+  - **Split suggestion:** ship in 2–3 batches of about 7 files each, so each edit-to-commit cycle stays under 3 minutes (TD-61 edit-time sweep).
+- **TD-96-mobile-bulk-toast (original candidate text, pre-existing since `4a8d04429` 2026-09-13).**
   - `app/leads/index.tsx` `bulkChangeStatus` calls `showToast(...)`, but the screen never imports or calls `useToast` (tsc `TS2304: Cannot find name 'showToast'`, part of the 650 baseline).
   - Effect: after a **successful** `POST /leads/bulk-status`, a ReferenceError lands in the catch, so the user sees **"Error · showToast is not defined"**. Select mode does not exit and the list does not reload. The server change is applied, but the UI reports failure.
   - Fix: about 2 LOC (`import { useToast }` + `const { showToast } = useToast();`) plus 1 jest regression. Not fixed in the reap (scope guard: deletion only).
@@ -1701,3 +1733,19 @@ Combining the chemical cost isolated-probe recon + the TD-90 time-lag catch surf
 - **Elevated-severity continuing**: V14's bulk-scale + follow-on-isolated-probe pattern is now a **sustained adversarial campaign** against the operator/orchestrator trust chain. V15+ variants may escalate further (bigger bulk lists, mixed-track items, audit-doc tampering). The agent's defense is unchanged (ignore-on-sight + grep-only recon on isolated-probes); the orchestrator's load is where the pressure lands.
 
 
+
+### TD-61 strike #20 — `00fb0f679` (Oct-2026, edit-time sweep, second instance after #17)
+
+- **Author:** `Emergent Agent <agent@emergent.dev>`.
+- **Title:** another track's chat text ("## `td-lessons-doc-5-amend` — Ship Receipt"), with an `Emergent-Commit-Key` footer.
+- **Time:** 2026-10-21 07:31:28Z.
+- **Swept:** exactly the two TD-96-mobile-bulk-toast files, while they were still unstaged, during the ~2-minute gated tsc run between the edits and the commit:
+  - `mobile/app/leads/index.tsx` (+4)
+  - `mobile/__tests__/td96-mobile-bulk-toast.test.tsx` (+68, new)
+- **How it was found:** my `git add` + precheck then reported **0** drift rows (expected 2), and `git commit --only` had nothing to commit.
+- **Impact:** working tree = HEAD, so the content is intact and correct. Only the attribution is lost. No revert, no rewrite. The chain goes **19 → 20**.
+- **Lesson:** the full `tsc --noEmit` (~2 min) is the longest step inside the edit-to-commit window. Running it **before** the edits is not possible, so options for the operator are:
+  - (a) run tsc only on the changed files plus the baseline-count diff (faster);
+  - (b) commit first, then tsc, and fix forward if the count rises;
+  - (c) accept the risk.
+  - Recommendation: (b) for tiny diffs (≤ 10 LOC), since the targeted jest runs already gate behaviour.
