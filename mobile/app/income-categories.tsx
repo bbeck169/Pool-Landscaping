@@ -10,14 +10,19 @@ import { Loading } from "@/src/components/ui";
 import { showConfirm } from "@/src/components/ConfirmModal";
 import AppTextInput from "@/src/components/ui/AppTextInput";
 
+// TD-81-adj D2 — GET returns {items:[{id,name,...}], total}; POST returns the
+// created doc (not a list), so we reload after Add. Remove → Archive: the
+// legacy DELETE is shadowed by finances.py (TD-81-adj-be), web uses /archive.
+type Cat = { id: string; name: string };
+
 export default function IncomeCategories() {
-  const [cats, setCats] = useState<string[]>([]);
+  const [cats, setCats] = useState<Cat[]>([]);
   const [loading, setLoading] = useState(true);
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
-    try { const r = await api.get("/income-categories"); setCats(r.categories || []); }
+    try { const r = await api.get("/income-categories"); setCats((r?.items || []).filter((c: any) => c?.id && c?.name)); }
     catch { setCats([]); }
     finally { setLoading(false); }
   }, []);
@@ -27,20 +32,22 @@ export default function IncomeCategories() {
   const add = async () => {
     if (!name.trim()) return;
     setBusy(true);
-    try { const r = await api.post("/income-categories", { name: name.trim() }); setCats(r.categories); setName(""); }
-    catch (e: any) { Alert.alert("Error", e.message || "Could not add."); }
+    try { await api.post("/income-categories", { name: name.trim() }); setName(""); await load(); }
+    catch (e: any) {
+      Alert.alert("Error", e?.detail?.error === "duplicate_name" ? "A category with that name already exists." : (e.message || "Could not add."));
+    }
     finally { setBusy(false); }
   };
 
-  const remove = (c: string) => {
+  const archive = (c: Cat) => {
     showConfirm({
-      title: "Remove category",
-      message: `Remove "${c}"? Existing invoices keep their category.`,
-      confirmLabel: "Remove",
+      title: "Archive category",
+      message: `Archive "${c.name}"? It is hidden from pickers; line items using it are flagged for re-categorizing.`,
+      confirmLabel: "Archive",
       confirmStyle: "destructive",
       onConfirm: async () => {
-        try { const r = await api.del(`/income-categories/${encodeURIComponent(c)}`); setCats(r.categories); }
-        catch (e: any) { Alert.alert("Error", e.message || "Could not remove."); }
+        try { await api.post(`/income-categories/${encodeURIComponent(c.id)}/archive`, {}); await load(); }
+        catch (e: any) { Alert.alert("Error", e.message || "Could not archive."); }
       },
     });
   };
@@ -58,11 +65,12 @@ export default function IncomeCategories() {
       </View>
       <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingTop: 0 }}>
         {cats.map((c) => (
-          <View key={c} style={styles.row} testID={`cat-${c}`}>
+          <View key={c.id} style={styles.row} testID={`cat-${c.name}`}>
             <Ionicons name="pricetag-outline" size={18} color={colors.brand} />
-            <Text style={styles.rowText}>{c}</Text>
-            <Pressable hitSlop={10} onPress={() => remove(c)} testID={`cat-del-${c}`}>
-              <Ionicons name="trash-outline" size={19} color={colors.error} />
+            <Text style={styles.rowText}>{c.name}</Text>
+            <Pressable hitSlop={10} onPress={() => archive(c)} accessibilityLabel="Archive" style={styles.archiveBtn} testID={`cat-archive-${c.name}`}>
+              <Ionicons name="archive-outline" size={17} color={colors.error} />
+              <Text style={styles.archiveText}>Archive</Text>
             </Pressable>
           </View>
         ))}
@@ -78,4 +86,6 @@ const styles = StyleSheet.create({
   addBtn: { width: 48, height: 48, borderRadius: radius.md, backgroundColor: colors.brand, alignItems: "center", justifyContent: "center" },
   row: { flexDirection: "row", alignItems: "center", gap: spacing.md, backgroundColor: colors.surface, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, padding: spacing.md, marginBottom: spacing.sm },
   rowText: { flex: 1, fontFamily: font.semibold, fontSize: fontSize.base, color: colors.onSurface },
+  archiveBtn: { flexDirection: "row", alignItems: "center", gap: 4, minHeight: 36, paddingHorizontal: spacing.sm },
+  archiveText: { fontFamily: font.semibold, fontSize: fontSize.sm, color: colors.error },
 });
