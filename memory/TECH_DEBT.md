@@ -654,13 +654,17 @@ Audit identified three candidate sub-primitive extractions (`<TemplatePickerPrev
 **Priority:** closed (scope-reality delta, doc-only).
 
 
-## TD-100-sub-template (candidate) · Extract `<TemplatePickerPreview>` sub-primitive
+## TD-100-sub-template · Extract `<TemplatePickerPreview>` sub-primitive — CLOSED (Feb-2026)
 
-- **Current state:** Template-picker + preview UX is duplicated across `SendComposeModal` (`CustomerDetail.jsx:3844-4100`, ~250 LOC) and `SendEmailModal` (`ProspectsKanbanPage.jsx:331-430`, partial overlap).
-- **Target shape:** `components/communications/TemplatePickerPreview.jsx` consuming `GET /marketing/templates?channel=<X>&active=true` + `GET /marketing/templates/{id}/preview`. Props: `channel`, `onSelect`, `onPreview`, plus `recipientContext` (customer vs. prospect) for template-list scoping.
-- **Why deferred:** Highest-value sub-primitive extraction identified by audit, but no real-world driver yet — operator rejected speculative refactor.
-- **When to ship:** Next compose-adjacent feature touch on SendComposeModal OR SendEmailModal. Fold the extraction into that ship's scope. Bump to **P2 for that ship only**.
-- **Priority:** P3 (opportunistic candidate, not scheduled).
+- **Status:** CLOSED by atomic ship (BE: n/a — pure FE refactor). New component at `components/communications/TemplatePickerPreview.jsx` (~145 LOC); single consumer `SendComposeModal` in `pages/customers/CustomerDetail.jsx` migrated to it. 12/12 vitest green (7 new + 5 phase29 regression locked testids survive).
+- **Original current-state note (bookmark) corrections:**
+  - `SendComposeModal` is defined at `CustomerDetail.jsx:3775` (NOT `:3844` as the bookmark said).
+  - Inlined template-picker surface was **~110-135 LOC** actually, not the bookmark's `~250 LOC` estimate.
+  - `SendEmailModal` at `ProspectsKanbanPage.jsx:331-430` reference is **stale** — `frontend/src/pages/prospects/` directory does not exist on current HEAD (removed/renamed since the Feb-2026 audit).
+  - A third compose surface, `components/mass-messaging/MassMessagingComposeDialog.jsx`, carries intentional UX divergence (dropdown + debounced auto-preview + `useCustom` toggle driven by bulk-recipient semantic) and is NOT consumed by the new sub-primitive — same intentional-divergence pattern the TD-100 parent audit rejected merging. Marked with an inline note comment pointing back at the audit.
+- **Prop surface (controlled):** `channel: "email"|"sms"`, `recipientId`, `pickedId`, `onPick(templateObj|null)`, optional `onPreviewRequest(templateObj)` for future-consumer auto-preview, optional `onError(msg)` for fetch-failure toasting. Parent owns `subject`/`message`/preview-pane; sub-primitive is pure selection + fetch.
+- **Scope-reality recurrence (occurrence #6):** matches the ~80-83% rate codified below. Bookmark LOC estimate 70% high; one claimed consumer file no longer exists; a third divergent consumer surfaced. All three deltas logged for calibration.
+- **Siblings:** `TD-100-sub-consent` + `TD-100-sub-smscount` remain P3 opportunistic candidates (unchanged).
 
 
 ## TD-100-sub-consent (candidate) · Extract `<ConsentOverrideBanner>` sub-primitive

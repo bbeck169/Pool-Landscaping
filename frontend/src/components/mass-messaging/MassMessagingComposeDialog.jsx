@@ -93,6 +93,13 @@ export default function MassMessagingComposeDialog({ open, onOpenChange }) {
   );
 
   // Fetch template + category + tech catalogs on open.
+  // INTENTIONAL DIVERGENCE: this dialog does NOT consume
+  // ``components/communications/TemplatePickerPreview`` — bulk-messaging
+  // UX differs (dropdown, debounced auto-preview, ``useCustom`` toggle,
+  // client-side channel filter). See
+  // ``memory/td100_shared_compose_modal_audit.md`` + TD-100-sub-template
+  // close-out note in ``memory/TECH_DEBT.md`` for the parent-audit
+  // rationale rejecting consolidation.
   useEffect(() => {
     if (!open) return;
     api.get("/marketing/templates").then((r) => {

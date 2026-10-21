@@ -8,6 +8,7 @@ import {
   DropdownMenuItem,
 } from "@/components/ui/dropdown-menu";
 import { api } from "@/api";
+import TemplatePickerPreview from "@/components/communications/TemplatePickerPreview";
 import { CustomerMeasurementsTab, filterCustomerTabs } from "@/components/customer/CustomerMeasurementsTab";
 import CustomerChemicalHistoryTab, { CHEMICAL_HISTORY_TAB_ROLES } from "@/components/customer/CustomerChemicalHistoryTab";
 import { useAuth } from "@/auth";
@@ -3776,13 +3777,11 @@ function SendComposeModal({ payload, customer, onClose, onSent, onError }) {
   const [subject, setSubject] = useState("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
-  // Phase 29 · Feb 2026 — template picker + preview state. Template list
-  // is fetched once when the modal opens; ``pickedId`` = "" ("Custom
-  // message") by default so operators can compose from scratch without
-  // a template. Selecting a template populates ``subject`` + ``message``
-  // and the operator can edit before sending.
-  const [templates, setTemplates] = useState([]);
-  const [templatesLoading, setTemplatesLoading] = useState(false);
+  // TD-100-sub-template · Feb-2026 — template-list fetch + picker JSX
+  // extracted to ``components/communications/TemplatePickerPreview``.
+  // Parent still owns ``pickedId`` (controlled) + preview state because
+  // operator edits subject/message after pick, and the Preview pane
+  // mounts in this editor column, not the picker aside.
   const [pickedId, setPickedId] = useState("");
   const [previewing, setPreviewing] = useState(false);
   const [preview, setPreview] = useState(null);
@@ -3826,11 +3825,10 @@ function SendComposeModal({ payload, customer, onClose, onSent, onError }) {
       });
       setUploadError("");
       setWaitingUploads(false);
-      setTemplatesLoading(true);
-      api.get(`/marketing/templates?channel=${isEmail ? "email" : "sms"}&active=true`)
-        .then((r) => setTemplates(r?.templates || []))
-        .catch(() => setTemplates([]))
-        .finally(() => setTemplatesLoading(false));
+      // TD-100-sub-template · Feb-2026 — template fetch moved into
+      // ``<TemplatePickerPreview>``. Modal-open resets still live here
+      // because they coordinate with attachment + upload state that
+      // the sub-primitive does not own.
     }
   }, [payload, isEmail]);
   // ── Phase P7 · Feb-2026 — auto-clear the waiting-uploads flash
@@ -4082,53 +4080,16 @@ function SendComposeModal({ payload, customer, onClose, onSent, onError }) {
       }
     >
       <div style={{ display: "grid", gridTemplateColumns: "220px 1fr", gap: 16 }}>
-        {/* Template picker */}
-        <aside data-testid="cd-send-templates"
-                style={{ borderRight: `1px solid ${colors.border}`,
-                            paddingRight: 12, maxHeight: 380, overflowY: "auto" }}>
-          <div className="text-xs font-semibold mb-2" style={{ color: colors.muted }}>
-            TEMPLATE
-          </div>
-          <button type="button"
-                   onClick={() => pickTemplate(null)}
-                   className="w-full text-left rounded-md px-2 py-1.5 mb-1 text-sm"
-                   style={{
-                     background: pickedId === "" ? colors.surfaceSecondary : "transparent",
-                     border: pickedId === "" ? `1px solid ${colors.border}` : "1px solid transparent",
-                     color: colors.onSurface,
-                   }}
-                   data-testid="cd-send-template-custom">
-            <div className="font-semibold">Custom message</div>
-            <div className="text-xs" style={{ color: colors.muted }}>
-              Write from scratch
-            </div>
-          </button>
-          {templatesLoading ? (
-            <div className="text-xs" style={{ color: colors.muted }}
-                 data-testid="cd-send-templates-loading">Loading…</div>
-          ) : templates.length === 0 ? (
-            <div className="text-xs" style={{ color: colors.muted }}
-                 data-testid="cd-send-templates-empty">
-              No saved {isEmail ? "email" : "SMS"} templates.
-            </div>
-          ) : templates.map((t) => (
-            <button key={t.id}
-                     type="button"
-                     onClick={() => pickTemplate(t)}
-                     className="w-full text-left rounded-md px-2 py-1.5 mb-1 text-sm"
-                     style={{
-                       background: pickedId === t.id ? colors.surfaceSecondary : "transparent",
-                       border: pickedId === t.id ? `1px solid ${colors.border}` : "1px solid transparent",
-                       color: colors.onSurface,
-                     }}
-                     data-testid={`cd-send-template-${t.id}`}>
-              <div className="font-semibold">{t.name}</div>
-              {t.category ? (
-                <div className="text-xs" style={{ color: colors.muted }}>{t.category}</div>
-              ) : null}
-            </button>
-          ))}
-        </aside>
+        {/* TD-100-sub-template · Feb-2026 — template picker aside
+            extracted to a shared sub-primitive. Parent owns
+            ``pickedId`` (controlled) + the pickTemplate side-effects
+            on ``subject`` / ``message``. */}
+        <TemplatePickerPreview
+          channel={isEmail ? "email" : "sms"}
+          recipientId={customer?.id}
+          pickedId={pickedId}
+          onPick={pickTemplate}
+        />
         {/* Editor */}
         <div className="space-y-3">
           {isEmail ? (
