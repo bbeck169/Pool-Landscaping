@@ -15,6 +15,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/api";
 import { colors, font, fontSize, spacing, radius } from "@/src/theme";
 import AppTextInput from "@/src/components/ui/AppTextInput";
+import { useToast } from "@/src/components/ToastProvider";
 
 const MAX_ENTRIES = 4;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -51,6 +52,7 @@ type Props = {
 export default function CustomerMultiContactEditor({
   customerId, initialEmails, initialMobiles, onSaved,
 }: Props) {
+  const { showToast } = useToast(); // TD-96-mobile-toast-sweep (undefined since 4a8d04429)
   const [emails, setEmails] = useState<EmailRow[]>(
     () => (Array.isArray(initialEmails) ? initialEmails.slice(0, MAX_ENTRIES).map((e: any) => ({
       address: e.address || "", label: e.label || "", notifications_enabled: e.notifications_enabled !== false,

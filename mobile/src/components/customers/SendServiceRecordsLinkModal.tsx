@@ -20,6 +20,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/api";
 import { colors, font, fontSize, spacing, radius } from "@/src/theme";
 import AppTextInput from "@/src/components/ui/AppTextInput";
+import { useToast } from "@/src/components/ToastProvider";
 
 type Channel = "email" | "sms";
 
@@ -57,6 +58,7 @@ export default function SendServiceRecordsLinkModal({
   visible, customerId, customerEmail, customerPhone,
   channelOptIn, isMuted, onClose,
 }: Props) {
+  const { showToast } = useToast(); // TD-96-mobile-toast-sweep (undefined since 4a8d04429)
   const [channel, setChannel] = useState<Channel>("email");
   const [recipient, setRecipient] = useState("");
   const [sending, setSending] = useState(false);

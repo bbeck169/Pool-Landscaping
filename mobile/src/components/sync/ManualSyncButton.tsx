@@ -9,8 +9,10 @@ import { useSyncStatus } from "@/src/services/sync/status";
 import { triggerSyncNow } from "@/src/services/sync/queue";
 import { retryAllStalled } from "@/src/services/sync/photoWorker";
 import { font, fontSize, spacing, radius, colors } from "@/src/theme";
+import { useToast } from "@/src/components/ToastProvider";
 
 export function ManualSyncButton() {
+  const { showToast } = useToast(); // TD-96-mobile-toast-sweep (undefined since 4a8d04429)
   const { pending_count, failed_count, last_sync_at, is_online, is_flushing } = useSyncStatus();
   const [syncing, setSyncing] = useState(false);
 

@@ -11,6 +11,7 @@ import { api } from "@/src/api";
 import { Card, PrimaryButton, Sheet, EmptyState } from "@/src/components/ui";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import AppTextInput from "@/src/components/ui/AppTextInput";
+import { useToast } from "@/src/components/ToastProvider";
 
 /* ── Skeleton ─────────────────────────────────────────────────── */
 function Skeleton({ height = 80 }: { height?: number }) {
@@ -47,6 +48,7 @@ function IngestModal({
 }: {
   visible: boolean; onClose: () => void; onDone: () => void;
 }) {
+  const { showToast } = useToast(); // TD-96-mobile-toast-sweep (undefined since 4a8d04429)
   const [url, setUrl] = useState("");
   const [extra, setExtra] = useState("");
   const [busy, setBusy] = useState(false);
