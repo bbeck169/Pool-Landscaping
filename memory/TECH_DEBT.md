@@ -1032,7 +1032,19 @@ Audit: `memory/mobile/td96_mobile_audit.md` (`37b3e7fc4`). Operator decisions: D
   - Live: lead `8721ff57` panel shows "2" (converted invoice `eb541e58` + quote `cdc8cd49`), and the list shows 1.
   - Fix, one of: `linked_quotes_count` (and the panel total) counts only quote-shaped docs, **or** `/quotes?lead_id=` includes invoice-shaped reparented docs. The operator picks the semantic during that ticket's audit. About 15–30 LOC backend.
   - Mobile keeps web's "View all {total}" label on purpose (D3); the mismatch is fixed at the source.
-- **TD-96-g2-mobile (candidate, P3 mobile).**
+- **TD-96-g2-mobile (P3 mobile) — SHIPPED `c59366785` (Oct-2026, closed).**
+  - `LeadLinkedQuotesPanel` takes a new `linkedQuotesCount` prop (from `lead.linked_quotes_count` in `app/leads/[id].tsx`):
+    - `0` → no GET, and the panel clears (also on refresh after quotes are deleted).
+    - `> 0` → GET.
+    - Absent / `null` → GET (back-compat).
+  - **Deliberate web divergence:** web falls back to the legacy `quotes_count` when the field is missing (`LeadDetail.jsx:287-289`). That count ignores reparented quotes, which was the original reason the mobile panel always fetched. Mobile fetches instead (operator spec).
+  - The TD-96-g2 workaround comment / TODO in the component header has been replaced.
+  - **Tests:** `td96-g2-mobile-panel-gate` 4/4 (P1 zero → no fetch; P2 positive → fetch; P3 absent / null → fetch; P4 drop to 0 → clears without refetch). `--findRelatedTests` selects 2 suites, 19/19 green. tsc 650. Lint clean.
+  - **Live (Expo web, admin, network capture):**
+    - Lead `3a0933b2` (`linked_quotes_count` 1) → 1 `/leads/{id}/quotes` GET, panel rendered.
+    - Lead `ff623042` (0) → **0** GETs, no panel.
+  - **Priority:** closed.
+- **TD-96-g2-mobile (original candidate text).**
   - Mobile `LeadLinkedQuotesPanel` still always fetches for admins, per its TD-96-g2 workaround comment.
   - Resolve now that `GET /leads/{lid}` returns `linked_quotes_count`: gate the fetch on `linked_quotes_count > 0`, falling back to an unconditional fetch when the field is absent.
   - About 5 LOC + 1 jest regression.

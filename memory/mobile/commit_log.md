@@ -2215,3 +2215,17 @@
   - Lesson #9 recorded.
 - **Files modified**: mobile/src/components/leads/LeadLinkedQuotesPanel.tsx, mobile/app/(app)/quotes.tsx, mobile/__tests__/td96-g1-mobile-view-all.test.tsx (new), mobile/__tests__/td96-mobile-lead-actions.test.tsx, mobile/__tests__/quotes-bulk-actions.test.tsx
 - **Web files referenced**: frontend/src/pages/quotes/QuotesList.jsx (00888d0af), frontend/src/pages/leads/LeadDetail.jsx; backend/routers/quotes.py (e6654ca0d), backend/routers/leads.py, backend/services/marketing/lead_triggers.py (read-only)
+
+## Iteration 167 — TD-96-g2-mobile: Linked Quotes panel fetch gate on `linked_quotes_count`
+- **Commits**: `c59366785` td96-g2-mobile-fe · `td96-g2-mobile-doc` (this doc)
+- **Date**: 2026-10-21
+- **Changes**: the panel gets a `linkedQuotesCount` prop from `app/leads/[id].tsx`.
+  - 0 → no GET (and it clears).
+  - > 0 → GET.
+  - Absent → GET (back-compat; deliberately not web's legacy `quotes_count` fallback).
+  - TD-96-g2 workaround comment replaced.
+- **Tests**: td96-g2-mobile-panel-gate 4/4; related suites 19/19; tsc 650.
+- **Live**: count-1 lead → 1 GET + panel; count-0 lead → 0 GETs, no panel (network capture).
+- **Ops**: canonical jest failure-list baselines are in `/root/jest-baselines/` (outside the repo and `/tmp`). Latest: `after_td96g1_ec306147c.txt` (42 + phase40 flake).
+- **Files modified**: mobile/src/components/leads/LeadLinkedQuotesPanel.tsx, mobile/app/leads/[id].tsx, mobile/__tests__/td96-g2-mobile-panel-gate.test.tsx (new)
+- **Web files referenced**: frontend/src/pages/leads/LeadDetail.jsx (gate at :278-297)
