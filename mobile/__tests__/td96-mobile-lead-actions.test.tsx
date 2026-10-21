@@ -49,6 +49,7 @@ beforeEach(() => {
   mockPush.mockClear();
   mockGet.mockReset().mockImplementation(async (u: string) => {
     if (u.startsWith("/leads/L1/quotes")) return typeof mockQuotes === "function" ? mockQuotes() : mockQuotes;
+    if (u.startsWith("/leads/L1/communications")) return { items: [], next_cursor: null, has_more: false }; // TD-96-mobile-timeline
     if (u === "/leads/L1") return mockLead;
     if (u === "/income-categories") return { categories: [] };
     throw new Error(`unexpected GET ${u}`);
@@ -129,7 +130,9 @@ it.each(["admin", "super_admin"])("A2/A3 · %s → all 4 primitives; count badge
 it("A1b · manager → linked-quotes endpoint never called (would 403-free but admin-only UI)", async () => {
   mockLead = { ...BASE, quotes_count: 2 };
   await mount("manager");
-  expect(mockGet.mock.calls.map((c) => c[0])).toEqual(["/leads/L1"]);
+  // TD-96-mobile-timeline: the comms card also fetches; the invariant is "no linked-quotes call".
+  expect(mockGet.mock.calls.map((c) => c[0]).filter((u: string) => u.includes("/quotes"))).toEqual([]);
+  expect(mockGet).toHaveBeenCalledWith("/leads/L1");
 });
 
 it("A4 · quotes_count 0 → Create Quote w/o badge; panel ALWAYS fetched (TD-96-g2 workaround) but hidden when empty", async () => {

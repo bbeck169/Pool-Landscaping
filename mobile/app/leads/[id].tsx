@@ -22,6 +22,7 @@ import { PhoneLink, AddressLink } from "@/src/components/customer";
 import { isAdminPlus, isStrictAdmin } from "@/src/components/RoleGate";
 import LeadComposeSheet, { type LeadComposeChannel } from "@/src/components/leads/LeadComposeSheet";
 import LeadLinkedQuotesPanel from "@/src/components/leads/LeadLinkedQuotesPanel";
+import LeadCommunicationTimeline from "@/src/components/leads/LeadCommunicationTimeline";
 
 const STATUS_COLORS: Record<string, { bg: string; fg: string; label: string }> = {
   // Phase 34 · Task CC: 5 canonical snake_case statuses
@@ -107,6 +108,7 @@ export default function LeadDetailScreen() {
   // GET /leads/{id}/quotes excludes owner). Managers never see these.
   const canQuote = isStrictAdmin(user);
   const [composeChannel, setComposeChannel] = useState<LeadComposeChannel | null>(null);
+  const [commRefresh, setCommRefresh] = useState(0); // TD-96-mobile-timeline · bumped by compose onSent only (D3b)
 
   const [lead, setLead] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -352,6 +354,9 @@ export default function LeadDetailScreen() {
             timeline.map((ev: any, i: number) => <TimelineEntry key={i} ev={ev} />)
           )}
         </View>
+
+        {/* TD-96-mobile-timeline — web placement: directly below Timeline */}
+        <LeadCommunicationTimeline leadId={String(id)} refreshKey={commRefresh} />
       </ScrollView>
 
       {/* Close Lost Modal */}
@@ -387,7 +392,7 @@ export default function LeadDetailScreen() {
       </Modal>
 
       {composeChannel && (
-        <LeadComposeSheet lead={lead} channel={composeChannel} onClose={() => setComposeChannel(null)} />
+        <LeadComposeSheet lead={lead} channel={composeChannel} onClose={() => setComposeChannel(null)} onSent={() => setCommRefresh((n) => n + 1)} />
       )}
     </View>
   );

@@ -31,9 +31,9 @@ export function composeErrorMessage(e: any): string {
   return e?.message || "Send failed";
 }
 
-type Props = { lead: any; channel: LeadComposeChannel; onClose: () => void };
+type Props = { lead: any; channel: LeadComposeChannel; onClose: () => void; onSent?: (row: any) => void };
 
-export default function LeadComposeSheet({ lead, channel, onClose }: Props) {
+export default function LeadComposeSheet({ lead, channel, onClose, onSent }: Props) {
   const { showToast } = useToast();
   const isSms = channel === "sms";
   const label = isSms ? "SMS" : "Email";
@@ -65,6 +65,7 @@ export default function LeadComposeSheet({ lead, channel, onClose }: Props) {
       const status = row?.status || "sent";
       if (status === "sent") showToast(`${label} sent`, "success");
       else showToast(`${label} ${status}${row?.error || row?.provider_status_raw ? ` — ${row?.error || row?.provider_status_raw}` : ""}`, "error");
+      onSent?.(row); // TD-96-mobile-timeline · web LeadComposeModal parity (any persisted row)
       onClose();
     } catch (e: any) {
       showToast(composeErrorMessage(e), "error");
