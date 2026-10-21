@@ -16,11 +16,11 @@ it("H1 · path per scope: admin → /customers/{cid}/timeline, portal → /custo
 });
 
 it("H2 · chips role-gated like web (call/note admin + super_admin only)", () => {
-  expect(timelineChips("admin")).toEqual(["all", "email", "sms", "invoice", "estimate", "call", "note"]);
-  expect(timelineChips("SUPER_ADMIN")).toHaveLength(7);
-  expect(timelineChips("manager")).toEqual(["all", "email", "sms", "invoice", "estimate"]);
-  expect(timelineChips("customer")).toHaveLength(5);
-  expect(timelineChips(undefined)).toHaveLength(5);
+  expect(timelineChips("admin")).toEqual(["all", "email", "sms", "invoice", "estimate", "payment", "call", "note"]);
+  expect(timelineChips("SUPER_ADMIN")).toHaveLength(8);
+  expect(timelineChips("manager")).toEqual(["all", "email", "sms", "invoice", "estimate", "payment"]);
+  expect(timelineChips("customer")).toHaveLength(6);
+  expect(timelineChips(undefined)).toHaveLength(6);
 });
 
 it("H3 · kind: kind → source_type → legacy type; quote ≡ estimate", () => {

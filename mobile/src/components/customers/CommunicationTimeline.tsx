@@ -45,6 +45,7 @@ const KIND_META: Record<string, { label: string; icon: any; bg: string; fg: stri
   estimate: { label: "Estimate", icon: "document-text", bg: "#FEF3C7", fg: "#92400E", dot: "#D97706" },
   call:     { label: "Call",     icon: "call",          bg: "#EDE9FE", fg: "#5B21B6", dot: "#7C3AED" },
   note:     { label: "Note",     icon: "create",        bg: "#F1F5F9", fg: "#334155", dot: "#64748B" },
+  payment:  { label: "Payment",  icon: "card",          bg: "#D1FAE5", fg: "#065F46", dot: "#059669" }, // web CreditCard
 };
 const metaFor = (k: string) => KIND_META[k] || { label: k || "Event", icon: "ellipse", bg: "#F1F5F9", fg: "#475569", dot: "#94A3B8" };
 const chipLabel = (k: string) => (k === "all" ? "All" : `${metaFor(k).label}s`);
@@ -91,6 +92,7 @@ function Row({ item, isAdmin, route, onOpen }: { item: TimelineItem; isAdmin: bo
   // Delivery status is admin-only for messages (server strips it on portal); doc status is not sensitive.
   const showStatus = !!item.status && (isAdmin || !isMsg);
   const headline = item.kind === "email" && item.subject ? `Subject: ${item.subject}` : !isMsg ? item.summary : "";
+  const money = item.total > 0 ? `$${item.total.toFixed(2)}` : ""; // web DefaultRow money chip
   return (
     <View style={r.row} testID={`timeline-row-${item.id}`}>
       <View style={[r.marker, { backgroundColor: metaFor(item.kind).dot }]} />
@@ -101,6 +103,7 @@ function Row({ item, isAdmin, route, onOpen }: { item: TimelineItem; isAdmin: bo
             <Ionicons name="time-outline" size={10} color={colors.muted} />
             <Text style={r.time} testID={`timeline-time-${item.id}`}>{relTime(item.occurredAt)}</Text>
           </View>
+          {money ? <Text style={r.money} testID={`timeline-money-${item.id}`}>{money}</Text> : null}
           {item.actor ? (
             <Text style={r.actor}>by <Text style={r.actorBold} testID={`timeline-actor-${item.id}`}>{item.actor}</Text></Text>
           ) : null}
@@ -144,6 +147,7 @@ const r = StyleSheet.create({
   chipRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: spacing.sm },
   timeRow: { flexDirection: "row", alignItems: "center", gap: 3 },
   time: { fontFamily: font.regular, fontSize: 11, color: colors.muted },
+  money: { fontFamily: font.semibold, fontSize: 11, color: colors.onSurface },
   actor: { fontFamily: font.regular, fontSize: 11, color: colors.muted },
   actorBold: { fontFamily: font.bold, color: colors.onSurface },
   subject: { fontFamily: font.bold, fontSize: fontSize.sm, color: colors.onSurface },

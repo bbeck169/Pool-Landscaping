@@ -14,10 +14,10 @@
  */
 
 export type TimelineScope = "admin" | "portal";
-export type TimelineKind = "email" | "sms" | "invoice" | "estimate" | "call" | "note";
+export type TimelineKind = "email" | "sms" | "invoice" | "estimate" | "call" | "note" | "payment";
 
-/** Web parity: base chips for everyone; call/note only for admin/super_admin. */
-export const TIMELINE_BASE_CHIPS = ["all", "email", "sms", "invoice", "estimate"];
+/** Web parity: base chips for everyone (incl. payment — BE portal-visible, web 28bdef72c); call/note only for admin/super_admin. */
+export const TIMELINE_BASE_CHIPS = ["all", "email", "sms", "invoice", "estimate", "payment"];
 export const TIMELINE_ADMIN_CHIPS = ["call", "note"];
 const FULL_TIMELINE_ROLES = new Set(["admin", "super_admin"]);
 export const TIMELINE_PAGE_SIZE = 20;
@@ -47,6 +47,8 @@ export type TimelineItem = {
   recipient: string;
   url: string;
   deliveryError: string | null;
+  /** Numeric money (BE `total`, e.g. payment amount_cents/100); web DefaultRow `$X.XX` chip when > 0. */
+  total: number;
 };
 
 export function normaliseTimelineItem(raw: any): TimelineItem {
@@ -66,6 +68,7 @@ export function normaliseTimelineItem(raw: any): TimelineItem {
     recipient: raw?.recipient || "",
     url: raw?.url || "",
     deliveryError: raw?.delivery_error || null,
+    total: typeof raw?.total === "number" ? raw.total : 0,
   };
 }
 
