@@ -196,10 +196,11 @@ export default function AdminJobsList() {
       {selectMode ? (
         <BulkActionBar
           count={busy ? 0 : bulk.count} onClear={bulk.clear}
+          // Icon-less labels: 3 actions + count/Clear overflow the shared bar at ~430pt widths with icons.
           actions={[
-            { key: "bulk-action-status", label: "Status", icon: "swap-vertical-outline", onPress: () => setStatusOpen(true) },
-            { key: "bulk-action-reschedule", label: "Reschedule", icon: "calendar-outline", onPress: () => setReschedOpen(true) },
-            { key: "bulk-action-delete", label: "Delete", icon: "trash-outline", tone: "danger", onPress: askDelete },
+            { key: "bulk-action-status", label: "Status", onPress: () => setStatusOpen(true) },
+            { key: "bulk-action-reschedule", label: "Reschedule", onPress: () => setReschedOpen(true) },
+            { key: "bulk-action-delete", label: "Delete", tone: "danger", onPress: askDelete },
           ]}
         />
       ) : null}
