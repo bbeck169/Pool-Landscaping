@@ -2130,3 +2130,16 @@
 - **Tests**: td82-mobile-bulk-sheets 5 + td82-mobile-admin-jobs-bulk 8 = 13/13. Full jest 42 failing (= baseline), 283 passing. tsc 651.
 - **Files modified**: mobile/app/admin/jobs.tsx, mobile/src/components/jobs/{JobStatusPickerSheet,JobRescheduleSheet}.tsx (new), mobile/__tests__/td82-mobile-{bulk-sheets,admin-jobs-bulk}.test.tsx (new)
 - **Web files referenced**: frontend/src/pages/jobs/JobsList.jsx, frontend/src/components/bulk-select/BulkSelectToolkit.jsx
+
+## Iteration 163 — TD-98-be-cleanup mobile migration (super-timeline)
+- **Commits**: `b3e759c3a` (audit) · `db6edd59f` (b1 adapter) · `e0bc500ae` (b2 component switch) · `td98-cleanup-a-doc` (this doc)
+- **Date**: 2026-10-21
+- **Changes**:
+  - `CommunicationTimeline` now reads `/customers/{cid}/timeline` (admin) and `/customers/me/timeline` (portal) with page-mode Load more.
+  - It shows 6 kinds with role-gated chips, and rows with a url open the matching mobile screen.
+  - A 403 renders the empty state; this fixes the red error box technicians saw.
+  - A guard test keeps the legacy endpoint out of mobile.
+- **Tests**: 15/15 new. Full jest 42 failing (= baseline), 285 passing. tsc 650 (−1).
+- **Commit protocol**: stage + precheck + `--only` commit in one shell sequence; staging-to-commit was ≤ 2 s for b1 and b2. No cron sweep this cycle.
+- **Files modified**: mobile/src/lib/customerTimeline.ts (new), mobile/src/components/customers/CommunicationTimeline.tsx, mobile/__tests__/td98-cleanup-timeline-{adapter,component}.test.ts(x) (new)
+- **Web files referenced**: frontend/src/components/customers/CustomerFullTimeline.jsx, backend/routers/communication_timeline.py (read-only)

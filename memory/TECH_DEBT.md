@@ -882,6 +882,40 @@ The original ask included "default 5 entries, View all to expand, Show less to c
 - **Dependency:** `e1_expo_frontend_dev` mobile migration first.
 - **Priority:** P2 (candidate, not scheduled).
 
+### TD-98-be-cleanup · mobile migration — SHIPPED (Oct-2026) → web/BE retirement UNBLOCKED
+
+- Audit `memory/mobile/td98_be_cleanup_mobile_audit.md` (`b3e759c3a`). Operator picked M1 (b), M2 B-narrow, M3 (a), M4 (a).
+- **Commits:** `db6edd59f` `td98-cleanup-b1-fe` (pure adapter `mobile/src/lib/customerTimeline.ts`) · `e0bc500ae` `td98-cleanup-b2-fe` (`CommunicationTimeline.tsx` switch) · this doc `td98-cleanup-a-doc`.
+- **What shipped:**
+  - Admin variant → `GET /customers/{cid}/timeline`; portal variant → `GET /customers/me/timeline`.
+  - Page-mode "Load more" on both scopes (the portal endpoint has no cursor).
+  - 6 kinds with pills, plus role-gated filter chips (call/note for admin + super_admin, web parity).
+  - Rows with a `url` open `/quote/<id>`, `/job/<id>`, or the portal invoices/estimates list.
+  - Any 403 renders the empty state. Side effect: fixes the pre-existing bug where technicians saw a red "Couldn't load timeline" box on the customer profile.
+  - Both mounts (`customer/[id].tsx:1029`, `portal/messages.tsx:137`) migrate through the component, with no mount edits.
+- **Guard:** `__tests__/td98-cleanup-timeline-component.test.tsx` G1 asserts `/communication-timeline` appears nowhere in `mobile/src` or `mobile/app`, so mobile can't silently regress onto the retired endpoint.
+- **Tests:** adapter 7/7 + component 8/8 = 15. Full jest 42 failing suites (= baseline), 285 passing. tsc **651 → 650** (the old component's invalid `alert-triangle` icon name is gone).
+- **Live (read-only):**
+  - Admin, customer `drift-dt-fd70e7`: 20 rows on page 1 (invoice/estimate/note), 7 chips, Load more shown; the Notes chip filters to note rows, which link to `/job/<id>`.
+  - Tech `mike@aquaterra.com`, same customer: empty state, no red error box.
+- **Dependency chain for e1_dev:** mobile no longer calls the legacy endpoint, so **TD-98-be-cleanup-retire** (delete `routers/communication_timeline.py:258` + helpers + contract pytests) is unblocked. **Caveat (M1):** `_dispatch_to_item` / `_audit_to_item` are the only timeline readers of `notification_dispatch_log` + `audit_events`. If TD-98-be-sources is taken, lift them into `_build_full_timeline` instead of deleting them.
+
+## TD-98-be-sources (candidate, P2 backend) · Super timeline omits dispatch-log + audit-event history
+
+- **Current state:** `_build_full_timeline` (`communication_timeline.py:1142`) reads marketing_deliveries, quotes, lead_communications, sms_inbound (+ calls/notes for admin). It does **not** read `notification_dispatch_log` (362 rows in preview: transactional sends such as service-report emails and on-my-way SMS) or `audit_events` (portal_invite_bulk, job_edited), and it never emits `delivery_error`. Web lost these in `td98b-fe`; mobile matches since `e0bc500ae`.
+- **Scope:**
+  - Rebuild the notification-dispatch-log reader in the super timeline.
+  - Rebuild the audit-event reader in the super timeline.
+  - Preserve `delivery_error` (admin-only), or document its absence as intentional.
+  - Mobile already passes `delivery_error` through (`normaliseTimelineItem.deliveryError`) and renders it for admins, so no mobile change would be needed.
+- **Ships to both surfaces at once** (shared endpoint). Operator may bump P2 → P1 if the history-loss UX regression surfaces post-ship.
+- **Priority:** P2 (candidate).
+
+## TD-98-mobile-detail (candidate, P3 mobile) · Comm-detail sheet for SMS/email timeline rows
+
+- Web's TD-98/99-xref opens `CommunicationDetailModal` (`GET /communications-detail/{id}`, admin + manager) for SMS/email rows without a `url`. Mobile has no analog; it didn't before the migration either, so B-narrow preserved parity. Port it as a `CommunicationDetailSheet` when requested.
+- **Related (P3):** portal invoice/estimate rows open only the list screens (`/portal/invoices`, `/portal/estimates`), because mobile has no portal `[id]` routes.
+
 
 ## TD-98/99-xref · Cross-visibility aggregator — SHIPPING (Feb-2026)
 
