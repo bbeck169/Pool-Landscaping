@@ -1,6 +1,5 @@
 import React, { useCallback, useState } from "react";
 import { View, Text, StyleSheet, FlatList, RefreshControl, Pressable, Platform, Alert } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useRouter } from "expo-router";
 
 import { api } from "@/src/api";
@@ -49,17 +48,10 @@ export default function Leads() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
-  const [sel, setSel] = useState<any>(null);
   const [form, setForm] = useState({ name: "", phone: "", email: "", source: "Website", notes: "", est_value: "", address: "" });
   const [addressGeo, setAddressGeo] = useState<{ lat: number; lng: number } | null>(null);
 
   // Convert-to-job/quote state
-  const [convOpen, setConvOpen] = useState(false);
-  const [convLead, setConvLead] = useState<any>(null);
-  const [convMode, setConvMode] = useState<"job" | "quote">("job");
-  const [convBusy, setConvBusy] = useState(false);
-  const [jobForm, setJobForm] = useState({ service_type: "Pool Service", scheduled_date: "", price: "" });
-  const [quoteForm, setQuoteForm] = useState({ title: "", unit_price: "" });
   const [selectMode, setSelectMode] = useState(false);
   const [bulkStatusTarget, setBulkStatusTarget] = useState("");
 
@@ -112,63 +104,6 @@ export default function Leads() {
     load(filter);
   };
 
-  const setStatus = async (lid: string, status: string) => {
-    await api.put(`/leads/${lid}`, { status });
-    setSel(null);
-    load(filter);
-  };
-
-  const convert = async (lid: string) => {
-    await api.post(`/leads/${lid}/convert`);
-    setSel(null);
-    load(filter);
-  };
-
-  const openConvert = (lead: any) => {
-    setConvLead(lead);
-    setConvMode("job");
-    setJobForm({ service_type: "Pool Service", scheduled_date: "", price: lead.est_value ? String(lead.est_value) : "" });
-    setQuoteForm({ title: `Estimate for ${lead.name}`, unit_price: lead.est_value ? String(lead.est_value) : "" });
-    setSel(null);
-    setConvOpen(true);
-  };
-
-  const doConvert = async () => {
-    if (!convLead) return;
-    setConvBusy(true);
-    try {
-      if (convMode === "job") {
-        const job = await api.post(`/leads/${convLead.id}/convert-to-job`, {
-          service_type: jobForm.service_type,
-          scheduled_date: jobForm.scheduled_date.trim() || null,
-          price: parseFloat(jobForm.price) || 0,
-        });
-        setConvOpen(false);
-        load(filter);
-        Alert.alert("Job created ✅", `Scheduled job created for ${convLead.name}.`, [
-          { text: "OK" },
-          { text: "View job", onPress: () => router.push(`/job/${job.id}`) },
-        ]);
-      } else {
-        const quote = await api.post(`/leads/${convLead.id}/convert-to-quote`, {
-          title: quoteForm.title.trim() || undefined,
-          unit_price: parseFloat(quoteForm.unit_price) || 0,
-        });
-        setConvOpen(false);
-        load(filter);
-        Alert.alert("Estimate sent ✅", `Estimate created for ${convLead.name}.`, [
-          { text: "OK" },
-          { text: "View estimate", onPress: () => router.push(`/quote/${quote.id}`) },
-        ]);
-      }
-    } catch (e: any) {
-      Alert.alert("Conversion failed", e.message);
-    } finally {
-      setConvBusy(false);
-    }
-  };
-
-  const SERVICE_TYPES = ["Pool Service", "Landscaping", "Equipment Repair"];
 
   return (
     <View style={styles.root}>
@@ -239,63 +174,6 @@ export default function Leads() {
         <PrimaryButton title="Add Lead" onPress={create} testID="save-lead-button" />
       </Sheet>
 
-      <Sheet visible={!!sel} onClose={() => setSel(null)} title={sel?.name} testID="lead-detail-sheet">
-        {sel ? (
-          <>
-            <Text style={styles.sub}>{sel.source} · {sel.phone} · {sel.email}</Text>
-            {sel.notes ? <Text style={styles.notes}>{sel.notes}</Text> : null}
-            <Text style={[styles.inputLabel, { marginTop: spacing.md }]}>SET STATUS</Text>
-            <View style={styles.statusRow}>
-              {STATUSES.map((s) => (
-                <Pressable key={s} style={[styles.statusChip, sel.status === s && styles.statusChipActive]} onPress={() => setStatus(sel.id, s)} testID={`lead-status-${s}`}>
-                  <Text style={[styles.statusChipText, sel.status === s && { color: "#fff" }]}>{s}</Text>
-                </Pressable>
-              ))}
-            </View>
-            <View style={{ height: spacing.md }} />
-            <PrimaryButton title="⚡ Convert to Job / Quote" icon="flash-outline" onPress={() => openConvert(sel)} testID="convert-open-button" />
-            <View style={{ height: spacing.sm }} />
-            <PrimaryButton title="Convert to Customer only" variant="outline" icon="person-add-outline" onPress={() => convert(sel.id)} testID="convert-lead-button" />
-          </>
-        ) : null}
-      </Sheet>
-
-      <Sheet visible={convOpen} onClose={() => setConvOpen(false)} title={`Convert ${convLead?.name || ""}`} testID="convert-sheet">
-        <View style={styles.segment}>
-          {(["job", "quote"] as const).map((m) => (
-            <Pressable key={m} onPress={() => setConvMode(m)} style={[styles.segBtn, convMode === m && styles.segBtnActive]} testID={`convert-mode-${m}`}>
-              <Ionicons name={m === "job" ? "calendar-outline" : "document-text-outline"} size={16} color={convMode === m ? "#fff" : colors.onSurfaceSecondary} />
-              <Text style={[styles.segText, { color: convMode === m ? "#fff" : colors.onSurfaceSecondary }]}>{m === "job" ? "Scheduled Job" : "Send Estimate"}</Text>
-            </Pressable>
-          ))}
-        </View>
-
-        {convMode === "job" ? (
-          <>
-            <Text style={styles.inputLabel}>SERVICE TYPE</Text>
-            <View style={styles.chipRow}>
-              {SERVICE_TYPES.map((s) => (
-                <Pressable key={s} onPress={() => setJobForm((f) => ({ ...f, service_type: s }))} style={[styles.chip, jobForm.service_type === s && styles.chipActive]} testID={`convert-svc-${s}`}>
-                  <Text style={[styles.chipText, jobForm.service_type === s && { color: "#fff" }]}>{s}</Text>
-                </Pressable>
-              ))}
-            </View>
-            <Text style={[styles.inputLabel, { marginTop: spacing.md }]}>SCHEDULED DATE (YYYY-MM-DD)</Text>
-            <AppTextInput style={styles.input} value={jobForm.scheduled_date} onChangeText={(v) => setJobForm((f) => ({ ...f, scheduled_date: v }))} placeholder="Optional" placeholderTextColor={colors.muted} testID="convert-job-date" />
-            <Text style={[styles.inputLabel, { marginTop: spacing.md }]}>PRICE ($)</Text>
-            <AppTextInput style={styles.input} value={jobForm.price} onChangeText={(v) => setJobForm((f) => ({ ...f, price: v }))} keyboardType="decimal-pad" placeholderTextColor={colors.muted} testID="convert-job-price" />
-          </>
-        ) : (
-          <>
-            <Text style={styles.inputLabel}>ESTIMATE TITLE</Text>
-            <AppTextInput style={styles.input} value={quoteForm.title} onChangeText={(v) => setQuoteForm((f) => ({ ...f, title: v }))} placeholderTextColor={colors.muted} testID="convert-quote-title" />
-            <Text style={[styles.inputLabel, { marginTop: spacing.md }]}>AMOUNT ($)</Text>
-            <AppTextInput style={styles.input} value={quoteForm.unit_price} onChangeText={(v) => setQuoteForm((f) => ({ ...f, unit_price: v }))} keyboardType="decimal-pad" placeholderTextColor={colors.muted} testID="convert-quote-amount" />
-          </>
-        )}
-        <View style={{ height: spacing.lg }} />
-        <PrimaryButton title={convMode === "job" ? "Create Scheduled Job" : "Create & Send Estimate"} icon="flash" loading={convBusy} onPress={doConvert} testID="convert-confirm-button" />
-      </Sheet>
       <BulkActionBar
         count={bulk.count}
         onClear={exitSelectMode}
@@ -318,19 +196,6 @@ const styles = StyleSheet.create({
   name: { fontFamily: font.semibold, fontSize: fontSize.lg, color: colors.onSurface },
   sub: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted },
   value: { fontFamily: font.semibold, fontSize: fontSize.base, color: colors.brand },
-  notes: { fontFamily: font.regular, fontSize: fontSize.base, color: colors.onSurfaceSecondary, marginTop: spacing.sm },
   inputLabel: { fontFamily: font.semibold, fontSize: 11, letterSpacing: 0.8, color: colors.onSurfaceSecondary, marginBottom: spacing.xs },
   input: { backgroundColor: colors.surfaceSecondary, borderWidth: 1.5, borderColor: colors.border, borderRadius: radius.md, paddingHorizontal: spacing.md, height: 48, fontFamily: font.regular, fontSize: fontSize.base, color: colors.onSurface, ...(Platform.OS === "web" ? { outlineStyle: "none" as any } : {}) },
-  statusRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
-  statusChip: { paddingHorizontal: spacing.md, height: 34, borderRadius: radius.pill, alignItems: "center", justifyContent: "center", backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border },
-  statusChipActive: { backgroundColor: colors.brand, borderColor: colors.brand },
-  statusChipText: { fontFamily: font.semibold, fontSize: fontSize.sm, color: colors.onSurfaceSecondary, textTransform: "capitalize" },
-  segment: { flexDirection: "row", gap: spacing.sm, marginBottom: spacing.md },
-  segBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, height: 42, borderRadius: radius.pill, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border },
-  segBtnActive: { backgroundColor: colors.brand, borderColor: colors.brand },
-  segText: { fontFamily: font.semibold, fontSize: fontSize.sm },
-  chipRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
-  chip: { paddingHorizontal: spacing.md, height: 36, borderRadius: radius.pill, alignItems: "center", justifyContent: "center", backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border },
-  chipActive: { backgroundColor: colors.brand, borderColor: colors.brand },
-  chipText: { fontFamily: font.semibold, fontSize: fontSize.sm, color: colors.onSurfaceSecondary },
 });
