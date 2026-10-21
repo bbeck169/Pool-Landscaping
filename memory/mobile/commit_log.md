@@ -2119,3 +2119,14 @@
 - **Tests**: td81-mobile-k48-helpers 3 + td81-mobile-bu-reclassify 8 = 11/11. Adjacent revenue suites green. tsc 651.
 - **Files modified**: mobile/src/lib/k48.ts (new), mobile/src/components/dashboard/{BusinessUnitPickerSheet (new),IncomeDrillDownSheet,RevenueByCategoryTile,DonutChart}.tsx, mobile/__tests__/td81-mobile-{k48-helpers,bu-reclassify}.test.* (new)
 - **Web files referenced**: frontend/src/components/dashboard/DashboardDrillDownModal.jsx (`_k48StatusFlags`, `resolveInitialBuId`, `commitBusinessUnit`)
+
+## Iteration 162 — TD-82 admin Jobs list bulk actions (B-narrow)
+- **Commits**: `ef00d1601` (proposal) · `41044b2c1` (b1 content, swept by rogue cron under a non-td82 title) · `4c796118f` (b2 wiring) · `ddde15b2f` (b2 fix: icon-less bar) · `td82-a-doc` (this doc)
+- **Date**: 2026-10-21
+- **Changes**:
+  - On `app/admin/jobs.tsx`, long-press a row or tap "Select" to enter select mode.
+  - The bulk bar offers Status (picker), Reschedule (absolute date sheet) and Delete (destructive confirm).
+  - These hit `/jobs/bulk-update` and `/jobs/bulk-delete`, with a "Y locked" toast for skipped jobs.
+- **Tests**: td82-mobile-bulk-sheets 5 + td82-mobile-admin-jobs-bulk 8 = 13/13. Full jest 42 failing (= baseline), 283 passing. tsc 651.
+- **Files modified**: mobile/app/admin/jobs.tsx, mobile/src/components/jobs/{JobStatusPickerSheet,JobRescheduleSheet}.tsx (new), mobile/__tests__/td82-mobile-{bulk-sheets,admin-jobs-bulk}.test.tsx (new)
+- **Web files referenced**: frontend/src/pages/jobs/JobsList.jsx, frontend/src/components/bulk-select/BulkSelectToolkit.jsx

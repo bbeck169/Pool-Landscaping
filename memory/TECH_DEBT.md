@@ -457,10 +457,30 @@ Source: `memory/mobile_dashboard_parity_audit.md` (`92f064b38`). The operator ke
   - **Reproducer:** as admin, open the mobile Income Categories screen. It shows no categories, although the tenant has 16. `quote/new` silently falls back to the hard-coded `["Pool","Landscaping","Labor"]`.
   - **Fix scope:** a ~2-line read-path correction per file (`.items`, keeping `.categories` as a fallback is optional) plus one regression test asserting the correct category count on both screens. The TD-81 drill-down already reads `.items` correctly.
   - **Priority:** P2 — mobile, tenant data visibility bug.
-- **TD-82 · Mobile admin Jobs list is read-only (no bulk actions).**
-  - Web `JobsList.jsx` has bulk delete, bulk status change and reschedule.
-  - Mobile `app/admin/jobs.tsx` is only the landing screen for the dashboard tiles: status filter, and a row tap opens the job.
-  - Future cycle candidate if the operator wants bulk parity (mobile `BulkSelectToolkit` already exists). **Priority:** on request.
+- **TD-82 · Mobile admin Jobs list bulk actions — SHIPPED (B-narrow, Oct-2026).**
+  - Audit `memory/td82_mobile_jobs_bulk_audit.md` (web pod). Mobile re-sizing `memory/mobile/td82_mobile_phase2_proposal.md` (`ef00d1601`). Operator picked T1 B-narrow, T2 long-press + "Select", T3 as proposed, T4 ~12 jest + throwaway-job live check.
+  - **Scope-reality #5 (file-inventory sub-finding):** the audit budgeted ~200 LOC to build a mobile `BulkSelectToolkit`, but `mobile/src/components/bulk-select/BulkSelectToolkit.tsx` (197 LOC, 4 consumers) already existed.
+    - Admins never see `(app)/jobs.tsx`; it redirects to the Schedule calendar.
+    - The calendar already ships job bulk Complete / Move / Delete / Assign.
+  - **Commits:**
+    - b1 primitives (`JobStatusPickerSheet.tsx`, `JobRescheduleSheet.tsx`, `td82-mobile-bulk-sheets.test.tsx`) were swept by the rogue cron into **`41044b2c1` "Both tasks complete. Reporting together."** before my `td82-b1-fe` commit ran. The content is identical; history was not rewritten. TD-61 pattern; see the chain note below.
+    - `4c796118f` `td82-b2-fe` (wiring) and `ddde15b2f` `td82-b2-fe-fix` (icon-less bar so 3 actions fit at 390-430 pt). This doc is `td82-a-doc`.
+  - **What shipped:**
+    - `app/admin/jobs.tsx`: long-press a row or tap the header "Select" to enter select mode, with checkboxes and select-all (= loaded rows, `GET /jobs` ≤ 1,000). A filter change clears the selection.
+    - `BulkActionBar` actions:
+      - **Status**: `JobStatusPickerSheet`, web STATUS_OPTIONS 1:1, no confirm.
+      - **Reschedule**: `JobRescheduleSheet`, absolute date. Apply plus a summary line is the confirmation (one step shorter than web's second modal).
+      - **Delete**: `showConfirm` destructive with web's "Locked jobs (active timers or completed with an invoice) will be skipped." copy.
+    - All three hit the **web endpoints** `POST /jobs/bulk-update` / `POST /jobs/bulk-delete`. The toast reads "X updated · Y locked — reason · reason · reason".
+  - **Tests:** `td82-mobile-bulk-sheets` 5/5 + `td82-mobile-admin-jobs-bulk` 8/8 = 13. The existing `dashboard-kpi-drilldown-filters` 9/9 stays green. Full jest 42 failing suites (= baseline), 283 passing. tsc 651.
+  - **Live (Expo web, admin):** a throwaway job was created via API and set to `canceled`. Under `/admin/jobs?status=canceled`: Select → row → Reschedule 2026-12-01 → 2026-12-15 → Delete confirm (web copy) → row removed, "1 job deleted" toast, `GET /jobs/{id}` → 404. No existing preview jobs were mutated; the 390 pt bar-fit check made no changes.
+  - **Priority:** closed.
+- **TD-82-calendar-consolidate (candidate, P3 mobile + BE note).**
+  - Schedule calendar bulk Complete/Move (`calendar.tsx:575/589`) run N sequential `PUT /jobs/{id}`, and Delete uses `POST /jobs/bulk-soft-delete {job_ids}` (L617). Move them onto `/jobs/bulk-update` / `/jobs/bulk-delete` for a single round-trip plus locked-job reporting.
+  - **BE sub-note:** there are two job bulk-delete endpoints, `POST /jobs/bulk-delete {ids}` (`routers/bulk_crm.py:444`, `require_admin_or_manager`, `failed[]` lock reasons) and `POST /jobs/bulk-soft-delete {job_ids}` (`routers/jobs.py:4253`). Reconcile them in this ticket. Operator picks the canonical one during its audit; soft-delete is the likely default for admin-destructive ops, and hard-delete may be a legacy path.
+- **TD-82-reap-confirm (candidate, P3 mobile).** `BulkConfirmModal` (toolkit L129-155) has zero consumers, and its testIDs are hard-coded to `bulk-delete-*`. The house pattern is `showConfirm`. Reap it on the next bulk-screen touch.
+- **TD-82-relative-shift (candidate, P3 mobile).** The B-plus slice: relative reschedule (± days/weeks, `scheduled_date_shift_days` + `anchor_unscheduled_from_today` toggle, `anchored_count` toast) in `JobRescheduleSheet`. Deferred per T1.
+- **TD-61 chain note (Oct-2026):** `41044b2c1` (04:34:44Z, "Both tasks complete. Reporting together.") swept 3 uncommitted mobile files plus the jest artifact about 1 min after creation. Same title family as `fa35b174e` ("Reporting both results together."). If both are confirmed, the chain goes 14 → 16. Mitigation used for b2: test and commit in the same step so the uncommitted window was under a minute.
 - **TD-83 · Customers endpoint ignores `?ids_in=` (the batch-ID filter web relies on).**
   - Web `PropertiesListPage.jsx` resolves customer names with `GET /customers?ids_in=…`.
   - The backend ignores that param and returns its default bare list (213 rows), so 15 of 67 groups show "(unknown customer)" on web.
