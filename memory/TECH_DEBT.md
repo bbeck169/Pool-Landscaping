@@ -1192,12 +1192,24 @@ Evidence from this cycle accumulates further on the attack class shape codified 
 
 
 
-## TD-96-mobile-reap (candidate) · Dead lead popups in mobile `leads/index.tsx`
+## TD-96-mobile-reap · Dead lead popups in mobile `leads/index.tsx` — SHIPPED `a141e1366` (Oct-2026, closed)
 
-- **Current state:** `app/leads/index.tsx:242-330` (`lead-detail-sheet` + `convert-sheet` "⚡ Convert to Job / Quote", with state at L57-62 and handlers at L115-169) cannot be reached. `setSel` is only ever called with `null`, and row press routes to `/leads/[id]`.
-- **Warning:** these popups call the deprecated legacy `POST /leads/{id}/convert-to-quote` / `convert-to-job` shortcuts (convert-first, not the Phase-2 lead-recipient contract) and **must not be reused**.
-- **Fix:** delete the two sheets plus their state and handlers (~-90 LOC) in its own atomic commit. Kept out of the TD-96-mobile ship to keep that narrow.
-- **Priority:** P3 (candidate, mobile).
+- **Shipped:** pure deletion, +0 / −135 LOC (336 → 201) in `app/leads/index.tsx`.
+  - Removed: `lead-detail-sheet` and `convert-sheet`; their state (`sel`, `convOpen`, `convLead`, `convMode`, `convBusy`, `jobForm`, `quoteForm`); handlers (`setStatus`, `convert`, `openConvert`, `doConvert`); `SERVICE_TYPES`; 13 orphaned styles; the orphaned `Ionicons` import.
+  - Unreachability proof: `setSel` was only ever called with `null`, and `convOpen` was only opened by `openConvert`, which was called solely from inside the dead sheet.
+  - No test or e2e flow referenced the removed testIDs. `k40-default-filters` reads the file source, but its two `leads/index` assertions (the `filter` default and no AsyncStorage persistence) are independent and pass 2/2.
+  - tsc 650. Lint: only the pre-existing unused `bulkStatusTarget` warning remains (left alone, scope guard).
+- **TD-96-mobile-reap-be (candidate, P3 backend).** The `/convert-to-job` and `/convert-to-quote` backend routes (`routers/leads.py:953`, `:994`) have no callers after `TD-96-mobile-reap-fe` ships; grep across web `frontend/src` and mobile found none.
+  - `/leads/{id}/convert` (`:911`) is still live: web `LeadsDashboardPage.jsx:1138` and mobile `d2d/index.tsx:139`. So only the 2 unused routes are reap candidates.
+  - About −50 LOC of backend deletion.
+- **TD-96-mobile-bulk-toast (candidate, P2 mobile, found during reap recon; pre-existing since `4a8d04429` 2026-09-13).**
+  - `app/leads/index.tsx` `bulkChangeStatus` calls `showToast(...)`, but the screen never imports or calls `useToast` (tsc `TS2304: Cannot find name 'showToast'`, part of the 650 baseline).
+  - Effect: after a **successful** `POST /leads/bulk-status`, a ReferenceError lands in the catch, so the user sees **"Error · showToast is not defined"**. Select mode does not exit and the list does not reload. The server change is applied, but the UI reports failure.
+  - Fix: about 2 LOC (`import { useToast }` + `const { showToast } = useToast();`) plus 1 jest regression. Not fixed in the reap (scope guard: deletion only).
+- **TD-mobile-tech-search (bookmark, P3, product decision first).** Mobile global search (TD-90) is role-gated to admin / super_admin / owner / manager by the backend `_require_dashboard_role` (`routers/global_search.py:57`); technicians get 403 and keep the tools-only "Search tools…" box.
+  - Extending it to techs needs a product and backend scoping decision first (e.g. own jobs and customers only).
+  - After that, mobile is about 5 LOC (`GLOBAL_SEARCH_ROLES`).
+- **TD-90-search-address-gaps (bookmark, P3 backend).** `/api/search` jobs match `title` and `customer_name` only, and leads match `name`, `email` and `phone` only. Neither matches address. Small backend field-set expansion.
 
 
 ## TD-96-mobile-owner-gate (candidate) · Align the web lead gates with backend truth (remove `owner`)

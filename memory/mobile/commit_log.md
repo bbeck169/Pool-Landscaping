@@ -2229,3 +2229,17 @@
 - **Ops**: canonical jest failure-list baselines are in `/root/jest-baselines/` (outside the repo and `/tmp`). Latest: `after_td96g1_ec306147c.txt` (42 + phase40 flake).
 - **Files modified**: mobile/src/components/leads/LeadLinkedQuotesPanel.tsx, mobile/app/leads/[id].tsx, mobile/__tests__/td96-g2-mobile-panel-gate.test.tsx (new)
 - **Web files referenced**: frontend/src/pages/leads/LeadDetail.jsx (gate at :278-297)
+
+## Iteration 168 — TD-96-mobile-reap: pure deletion of the unreachable lead popups
+- **Commits**: `a141e1366` td96-mobile-reap-fe · `td96-mobile-reap-doc` (this doc)
+- **Date**: 2026-10-21
+- **Changes**:
+  - `app/leads/index.tsx` −135 LOC: `lead-detail-sheet` + `convert-sheet`, their state and handlers, `SERVICE_TYPES`, 13 orphaned styles, the orphaned `Ionicons` import.
+  - Zero behaviour change: `setSel` was only ever called with `null`; `convOpen` was only reachable from inside the dead sheet.
+- **Tests**: no suite imports the file; k40 `leads/index` assertions 2/2; tsc 650; lint only the pre-existing `bulkStatusTarget` warning.
+- **TECH_DEBT**:
+  - TD-96-mobile-reap closed.
+  - New candidates: TD-96-mobile-reap-be (P3 BE: `/convert-to-job` + `/convert-to-quote`, zero callers; `/convert` stays live) and TD-96-mobile-bulk-toast (P2 mobile: undefined `showToast` turns a successful bulk status change into an "Error" alert; ~2 LOC).
+  - Bookmarks: TD-mobile-tech-search, TD-90-search-address-gaps.
+- **Files modified**: mobile/app/leads/index.tsx
+- **Web files referenced**: frontend/src/pages/leads/LeadsDashboardPage.jsx (live `/convert` caller); backend/routers/leads.py, backend/routers/global_search.py (read-only)
