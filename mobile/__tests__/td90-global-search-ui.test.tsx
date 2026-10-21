@@ -34,8 +34,9 @@ const RESP = {
   invoices: [{ id: "i1", primary: "Monthly Pool Service", secondary: "Preview Customer0143 · $149.00" }],
   quotes: [{ id: "q1", primary: "Pool tile replacement estimate", secondary: "Preview Customer0161 · $1,316.52" }],
   leads: [{ id: "l1", primary: "Pool Lead", secondary: "lead@x.com" }],
+  technicians: [{ id: "t1", primary: "Pool Tech Pat", secondary: "pool_tech · 480-555-0199" }],
 };
-const EMPTY = { customers: [], jobs: [], invoices: [], quotes: [], leads: [] };
+const EMPTY = { customers: [], jobs: [], invoices: [], quotes: [], leads: [], technicians: [] };
 
 async function type(q: any, testID: string, text: string) {
   fireEvent.changeText(q.getByTestId(testID), text);
@@ -54,15 +55,27 @@ beforeEach(() => {
 afterEach(() => { jest.useRealTimers(); });
 
 describe.each([["tab", "tools-search"], ["sheet", "mobile-menu-search"]] as const)("%s surface", (variant, inputID) => {
-  it("admin: global placeholder; 'pool' → one /search call; tools first, then Customers·Jobs·Invoices·Quotes·Leads", async () => {
+  it("admin: global placeholder; 'pool' → one /search call; tools first, then Customers·Jobs·Invoices·Quotes·Leads·Technicians", async () => {
     mockGet.mockResolvedValue(RESP);
     const q = render(<ToolsMenuBody variant={variant} onNavigate={variant === "sheet" ? jest.fn() : undefined} />);
     expect(q.getByTestId(inputID).props.placeholder).toBe(GLOBAL_SEARCH_PLACEHOLDER);
     await type(q, inputID, "pool");
     expect(mockGet.mock.calls).toEqual([["/search?q=pool&limit=5"]]);
     expect(order(q)).toEqual(["tools-section-ops", "global-search-group-customers", "global-search-group-jobs",
-      "global-search-group-invoices", "global-search-group-quotes", "global-search-group-leads"]);
+      "global-search-group-invoices", "global-search-group-quotes", "global-search-group-leads", "global-search-group-technicians"]);
     expect(q.getByText("Preview Customer0143 · $149.00")).toBeTruthy();
+    expect(q.getByText("Technicians")).toBeTruthy();
+    expect(q.getByTestId("global-search-row-technician-t1")).toBeTruthy();
+    expect(q.getByText("pool_tech · 480-555-0199")).toBeTruthy();
+  });
+
+  it("TD-mobile-tech-search · empty technicians bucket → no Technicians header; other groups unchanged", async () => {
+    mockGet.mockResolvedValue({ ...RESP, technicians: [] });
+    const q = render(<ToolsMenuBody variant={variant} onNavigate={variant === "sheet" ? jest.fn() : undefined} />);
+    await type(q, inputID, "pool");
+    expect(q.queryByTestId("global-search-group-technicians")).toBeNull();
+    expect(q.queryByText("Technicians")).toBeNull();
+    expect(q.getByTestId("global-search-group-leads")).toBeTruthy();
   });
 
   it("1 char → tools filter only, no fetch", async () => {
@@ -88,8 +101,8 @@ it("Tools tab: each kind pushes its mobile route (invoice + quote → /quote/[id
   mockGet.mockResolvedValue(RESP);
   const q = render(<ToolsMenuBody variant="tab" />);
   await type(q, "tools-search", "pool");
-  for (const id of ["customer-c1", "job-j1", "invoice-i1", "quote-q1", "lead-l1"]) fireEvent.press(q.getByTestId(`global-search-row-${id}`));
-  expect(mockPush.mock.calls.map((c) => c[0])).toEqual(["/customer/c1", "/job/j1", "/quote/i1", "/quote/q1", "/leads/l1"]);
+  for (const id of ["customer-c1", "job-j1", "invoice-i1", "quote-q1", "lead-l1", "technician-t1"]) fireEvent.press(q.getByTestId(`global-search-row-${id}`));
+  expect(mockPush.mock.calls.map((c) => c[0])).toEqual(["/customer/c1", "/job/j1", "/quote/i1", "/quote/q1", "/leads/l1", "/technician/t1"]);
   expect(mockMarkUsed).not.toHaveBeenCalled();
 });
 
@@ -100,6 +113,8 @@ it("menu sheet: hit tap goes through onNavigate (sheet closes, then pushes) — 
   await type(q, "mobile-menu-search", "pool");
   fireEvent.press(q.getByTestId("global-search-row-invoice-i1"));
   expect(onNavigate).toHaveBeenCalledWith(expect.objectContaining({ route: "/quote/i1", label: "Monthly Pool Service" }));
+  fireEvent.press(q.getByTestId("global-search-row-technician-t1"));
+  expect(onNavigate).toHaveBeenLastCalledWith(expect.objectContaining({ route: "/technician/t1", label: "Pool Tech Pat" }));
   expect(mockPush).not.toHaveBeenCalled();
 });
 

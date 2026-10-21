@@ -22,11 +22,13 @@ export const GLOBAL_SEARCH_LIMIT = 5;
 export const GLOBAL_SEARCH_ROLES = ["admin", "super_admin", "owner", "manager"];
 
 export type SearchHit = { id: string; primary: string; secondary?: string };
+// TD-mobile-tech-search · `technicians` bucket (BE 907f2d1a6, web c64864f3d) — BE default entities include it.
 export type SearchBuckets = {
   customers: SearchHit[]; jobs: SearchHit[]; invoices: SearchHit[]; quotes: SearchHit[]; leads: SearchHit[];
+  technicians: SearchHit[];
 };
 export const EMPTY_SEARCH_BUCKETS: SearchBuckets = Object.freeze({
-  customers: [], jobs: [], invoices: [], quotes: [], leads: [],
+  customers: [], jobs: [], invoices: [], quotes: [], leads: [], technicians: [],
 }) as SearchBuckets;
 
 export function canGlobalSearch(role?: string | null): boolean {
@@ -57,7 +59,7 @@ export function useGlobalSearch(query: string, role?: string | null) {
           if (cancelled) return;
           setBuckets({
             customers: arr(d?.customers), jobs: arr(d?.jobs), invoices: arr(d?.invoices),
-            quotes: arr(d?.quotes), leads: arr(d?.leads),
+            quotes: arr(d?.quotes), leads: arr(d?.leads), technicians: arr(d?.technicians),
           });
           setError(false);
         })
@@ -68,6 +70,6 @@ export function useGlobalSearch(query: string, role?: string | null) {
   }, [q, active]);
 
   const total = buckets.customers.length + buckets.jobs.length + buckets.invoices.length
-    + buckets.quotes.length + buckets.leads.length;
+    + buckets.quotes.length + buckets.leads.length + buckets.technicians.length;
   return { active, buckets, loading, error, total };
 }

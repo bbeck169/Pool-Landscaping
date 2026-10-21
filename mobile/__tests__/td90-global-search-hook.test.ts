@@ -15,13 +15,14 @@ const RESP = {
   invoices: [{ id: "i1", primary: "Invoice 1001", secondary: "Alice · $149.00" }],
   quotes: [{ id: "q1", primary: "Quote 7", secondary: "Alice · $1,316.52" }],
   leads: [{ id: "l1", primary: "Bob", secondary: "b@x.com" }],
+  technicians: [{ id: "t1", primary: "Mike Rivera", secondary: "technician · 480-555-0142" }],
 };
 const flush = async (ms: number) => { await act(async () => { jest.advanceTimersByTime(ms); }); await act(async () => {}); };
 
 beforeEach(() => { jest.useFakeTimers(); mockGet.mockReset(); });
 afterEach(() => { jest.useRealTimers(); });
 
-it("2+ chars → one debounced GET /search?q=&limit=5 (300 ms), all 5 buckets mapped", async () => {
+it("2+ chars → one debounced GET /search?q=&limit=5 (300 ms), all 6 buckets mapped (incl. technicians)", async () => {
   mockGet.mockResolvedValue(RESP);
   const { result } = renderHook(() => useGlobalSearch("po", "admin"));
   expect(result.current.active).toBe(true);
@@ -31,8 +32,20 @@ it("2+ chars → one debounced GET /search?q=&limit=5 (300 ms), all 5 buckets ma
   expect(mockGet).toHaveBeenCalledTimes(1);
   expect(mockGet).toHaveBeenCalledWith("/search?q=po&limit=5");
   expect(result.current.buckets).toEqual(RESP);
-  expect(result.current.total).toBe(5);
+  expect(result.current.total).toBe(6);
   expect(result.current.loading).toBe(false);
+});
+
+it("TD-mobile-tech-search · missing / non-array technicians bucket (older BE) → [] (no crash)", async () => {
+  const { technicians: _omit, ...legacy } = RESP;
+  mockGet.mockResolvedValueOnce(legacy).mockResolvedValueOnce({ ...legacy, technicians: "bad" });
+  const { result, rerender } = renderHook(({ q }) => useGlobalSearch(q, "admin"), { initialProps: { q: "po" } });
+  await flush(300);
+  expect(result.current.buckets.technicians).toEqual([]);
+  expect(result.current.total).toBe(5);
+  rerender({ q: "poo" });
+  await flush(300);
+  expect(result.current.buckets.technicians).toEqual([]);
 });
 
 it("1 char / whitespace → no fetch, empty buckets", async () => {
@@ -82,7 +95,7 @@ it("401 / 403 / network error → previous buckets kept + error flag; next succe
   rerender({ q: "alic" });
   await flush(300);
   expect(result.current.error).toBe(true);
-  expect(result.current.total).toBe(5);
+  expect(result.current.total).toBe(6); // previous 6-bucket fixture kept (incl. technicians)
   rerender({ q: "alice" });
   await flush(300);
   expect(result.current.error).toBe(false);
@@ -116,5 +129,8 @@ it("route map: customer/job/invoice→/quote/quote/lead; missing id → null; we
   expect(routeForSearchHit("lead", "l1")).toBe("/leads/l1");
   expect(routeForSearchHit("job", "")).toBeNull();
   expect(routeForSearchHit("customer", "a/b")).toBe("/customer/a%2Fb");
-  expect(GLOBAL_SEARCH_GROUPS.map((g) => g.label)).toEqual(["Customers", "Jobs", "Invoices", "Quotes", "Leads"]);
+  expect(routeForSearchHit("technician", "t1")).toBe("/technician/t1"); // SINGULAR (web parity)
+  expect(routeForSearchHit("technician", "t1")).not.toMatch(/^\/technicians\//);
+  expect(routeForSearchHit("technician", "")).toBeNull();
+  expect(GLOBAL_SEARCH_GROUPS.map((g) => g.label)).toEqual(["Customers", "Jobs", "Invoices", "Quotes", "Leads", "Technicians"]);
 });

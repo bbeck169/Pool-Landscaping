@@ -7,7 +7,7 @@
  */
 import type { SearchBuckets } from "@/src/hooks/useGlobalSearch";
 
-export type SearchKind = "customer" | "job" | "invoice" | "quote" | "lead";
+export type SearchKind = "customer" | "job" | "invoice" | "quote" | "lead" | "technician";
 
 export const GLOBAL_SEARCH_GROUPS: { key: keyof SearchBuckets; kind: SearchKind; label: string; icon: string }[] = [
   { key: "customers", kind: "customer", label: "Customers", icon: "people-outline" },
@@ -15,6 +15,7 @@ export const GLOBAL_SEARCH_GROUPS: { key: keyof SearchBuckets; kind: SearchKind;
   { key: "invoices", kind: "invoice", label: "Invoices", icon: "receipt-outline" },
   { key: "quotes", kind: "quote", label: "Quotes", icon: "document-text-outline" },
   { key: "leads", kind: "lead", label: "Leads", icon: "person-add-outline" },
+  { key: "technicians", kind: "technician", label: "Technicians", icon: "construct-outline" }, // web: after Leads
 ];
 
 export function routeForSearchHit(kind: SearchKind, id?: string | null): string | null {
@@ -26,6 +27,7 @@ export function routeForSearchHit(kind: SearchKind, id?: string | null): string 
     case "invoice":
     case "quote": return `/quote/${e}`;
     case "lead": return `/leads/${e}`;
+    case "technician": return `/technician/${e}`; // SINGULAR — app/technician/[id].tsx (web parity)
     default: return null;
   }
 }
