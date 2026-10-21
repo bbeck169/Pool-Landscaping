@@ -10,6 +10,7 @@ import { useBulkSelect, BulkCheckbox, BulkActionBar } from "@/src/components/bul
 import AppTextInput from "@/src/components/ui/AppTextInput";
 import AddressAutocomplete, { type AddressSelection } from "@/src/components/common/AddressAutocomplete";
 import { PhoneLink } from "@/src/components/customer";
+import { useToast } from "@/src/components/ToastProvider";
 
 const FILTERS = [
   { key: "all", label: "All" },
@@ -43,6 +44,9 @@ Object.assign(statusMeta, {
 
 export default function Leads() {
   const router = useRouter();
+  // TD-96-mobile-bulk-toast · bulkChangeStatus called showToast without this
+  // (since 4a8d04429) → ReferenceError → false "Error" alert after success.
+  const { showToast } = useToast();
   const [items, setItems] = useState<any[]>([]);
   const [filter, setFilter] = useState("all");
   const [loading, setLoading] = useState(true);
