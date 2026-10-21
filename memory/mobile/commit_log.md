@@ -2194,3 +2194,24 @@
   - b1: mobile/src/components/dashboard/ServiceCategoryTileRow.tsx (new), mobile/app/(app)/index.tsx, mobile/app/(app)/customers.tsx, mobile/__tests__/td84-mobile-service-category.test.tsx (new)
   - b2: mobile/src/lib/uncategorized.ts, mobile/src/components/dashboard/UncategorizedBanner.tsx, mobile/src/components/reports/UncategorizedRow.tsx, mobile/app/reports/uncategorized-items.tsx (all new), mobile/src/components/dashboard/BusinessUnitPickerSheet.tsx, mobile/app/(app)/index.tsx, mobile/__tests__/td84-mobile-uncategorized.test.tsx (new)
 - **Web files referenced**: frontend/src/components/dashboard/ServiceCategoryTileRow.jsx, frontend/src/pages/admin/Dashboard.jsx, frontend/src/pages/reports/UncategorizedItemsReport.jsx, frontend/src/components/income/CategoryPicker.jsx, frontend/src/components/admin/DataIntegrityTile.jsx; backend/routers/{dashboard_service_category,income_categories,customers,service_categories}.py (read-only)
+
+## Iteration 166 — TD-96-g1-mobile: Lead "View all" deep-link + Quotes list `?lead=` filter
+- **Commits**: `fcb934448` proposal (docs) · `ec306147c` td96-g1-mobile-fe · `td96-g1-mobile-doc` (this doc)
+- **Date**: 2026-10-21
+- **Changes**:
+  - `LeadLinkedQuotesPanel`: "View all {total} →" → `(app)/quotes` with `{lead, view:"all"}`.
+  - `(app)/quotes.tsx`:
+    - `lead` → `lead_id` on both role branches; `view` param seeds the lifecycle view.
+    - Lead badge (`GET /leads/{lid}`, short-id fallback) with Clear.
+    - Offline cache skipped while filtered.
+- **Tests**:
+  - td96-g1-mobile-view-all 8/8; td96 A11 inverted; quotes-bulk-actions mock updated; QuoteDeclineReopen green.
+  - tsc 650.
+  - Full jest 43 failed: +1 = known flake `phase40-customer-profile-visual-grouping` (17/17 isolated, outside the import graph). Effective baseline 42.
+- **Live**: throwaway lead + 11 drafts → panel "View all 11 →" → filtered list of exactly 11 + badge → Clear → full list. All deleted; all-quotes back to 110.
+- **TECH_DEBT**:
+  - TD-96-g1-mobile closed.
+  - Candidates: TD-96-g1-web-view (P3 web), TD-96-g1-invoices (P3 BE/web), TD-96-g2-mobile (P3 mobile); bookmark TD-96-g1-mobile-labels.
+  - Lesson #9 recorded.
+- **Files modified**: mobile/src/components/leads/LeadLinkedQuotesPanel.tsx, mobile/app/(app)/quotes.tsx, mobile/__tests__/td96-g1-mobile-view-all.test.tsx (new), mobile/__tests__/td96-mobile-lead-actions.test.tsx, mobile/__tests__/quotes-bulk-actions.test.tsx
+- **Web files referenced**: frontend/src/pages/quotes/QuotesList.jsx (00888d0af), frontend/src/pages/leads/LeadDetail.jsx; backend/routers/quotes.py (e6654ca0d), backend/routers/leads.py, backend/services/marketing/lead_triggers.py (read-only)

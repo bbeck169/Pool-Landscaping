@@ -991,13 +991,59 @@ Audit: `memory/mobile/td96_mobile_audit.md` (`37b3e7fc4`). Operator decisions: D
 - **Priority:** closed.
 
 
-## TD-96-g1-mobile (candidate, P3 mobile) · Replace "+N more" workaround with real `/quotes?lead=<id>` deep-link
+## TD-96-g1-mobile (P3 mobile) · Replace "+N more" workaround with real `/quotes?lead=<id>` deep-link — SHIPPED (Oct-2026, closed)
 
 - **Current state (mobile):** `LeadLinkedQuotesPanel.tsx` renders a non-link `+N more` hint instead of a real View all link because the web-side filter did not exist pre-TD-96-g1 (`app/leads/[id].tsx` + `src/components/leads/LeadLinkedQuotesPanel.tsx` per `td96_mobile_audit.md`).
 - **Unblocked by:** TD-96-g1 web ship (`e6654ca0d` + `00888d0af`). BE `?lead_id=<lid>` is live and FE `/quotes?lead=<lid>` is a working filtered deep-link.
 - **Fix:** mobile Quotes list screen accepts a `lead=` query param (or routes through existing mobile Quotes consumption pattern) and swaps the hint for a real deep-link. Mobile Lead badge rendering is optional parity.
 - **Scope:** ~30-50 LOC mobile + ~1 jest spec + inline TODO cleanup in `LeadLinkedQuotesPanel.tsx`.
 - **Priority:** P3 (candidate, mobile track pick). Blocked only on operator dispatch, not on web.
+- **Shipped `ec306147c` `td96-g1-mobile-fe`** (proposal `fcb934448`, `memory/mobile/td96_g1_mobile_phase2_proposal.md`, decisions D1–D5 approved):
+  - **Panel:** "+N more" text → `Pressable` "View all {total} →" (web label + `lead-linked-quotes-view-all` testid, same `total > shown` condition) → `router.push({pathname:"/(app)/quotes", params:{lead, view:"all"}})`.
+    - D1: `view:"all"` is deliberate. Web omits `view`, so its link lands on "open".
+  - **`app/(app)/quotes.tsx`:**
+    - Reads the `lead`/`view` route params. `lead` → `lead_id` on both the admin `view` and non-admin `doc_type` branches (D4).
+    - A valid `view` param seeds the lifecycle view; invalid values are ignored.
+    - Lead badge via `GET /leads/{lid}`, with a `Lead <id[:8]>` fallback (D2, web `quotes-filter-lead-*` testids).
+    - Clear → `router.setParams({lead: undefined})`.
+    - Filtered fetches skip offline-cache read and write. A failure shows the empty state, never stale unfiltered rows.
+  - **Tests:**
+    - New `td96-g1-mobile-view-all` 8/8 (G1–G8).
+    - `td96-mobile-lead-actions` A11 inverted (it used to assert "NO View-all link").
+    - `quotes-bulk-actions` router mock gained `useLocalSearchParams`. `QuoteDeclineReopen` green.
+    - `--findRelatedTests` on both source files selects exactly those 4 suites, all green.
+    - tsc 650. Lint clean.
+    - Full jest: 43 failed. The +1 versus TD-84's 42 is `phase40-customer-profile-visual-grouping`, a known load flake: 17/17 in isolation and outside the import graph. Effective baseline is 42.
+  - **Live (D5, Expo web, admin):**
+    - Throwaway lead `td96-g1-throwaway` (`.invalid` email, no phone). Pre-check: 0 active and 0 inactive `new_lead` marketing sequences on the tenant, so nothing fired.
+    - Added 11 draft quotes.
+    - Panel: count 11, 10 rows, "View all 11 →", no "+N more".
+    - Tap → `/quotes?lead=<id>&view=all`: badge "Preview Lead8104" (preview name masking), **exactly 11 cards, all throwaway**.
+    - Clear → URL `?view=all`, badge gone, full list refetched.
+    - Cleanup: 11/11 `DELETE /quotes` (200), `DELETE /leads` (200). Lead filter → 0; all-quotes back to 110 (pre-check 110).
+  - **Priority:** closed.
+- **TD-96-g1-web-view (candidate, P3 web).**
+  - `LeadDetail.jsx:779` View all navigates to `/quotes?lead=${lead.id}` with no `view`. QuotesList then defaults to `open`.
+  - Live: on 2 of the 3 preview leads that have linked quotes, the link lands on an **empty** list, because the only linked quote was converted (accepted).
+  - Fix: append `&view=all`. About 2 LOC web FE plus 1 vitest assertion. Mobile already does this (D1).
+- **TD-96-g1-invoices (candidate, P3 backend/web) · Panel count vs filtered list disagree.**
+  - `GET /leads/{lid}/quotes` and TD-96-g2's `linked_quotes_count` count both quote- and invoice-shaped docs (`recipient_type="lead"` or `converted_from_lead_id`).
+  - `/quotes?lead_id=X&view=<any>` returns quote-shaped rows only; `view` overrides even `&doc_type=invoice`.
+  - Live: lead `8721ff57` panel shows "2" (converted invoice `eb541e58` + quote `cdc8cd49`), and the list shows 1.
+  - Fix, one of: `linked_quotes_count` (and the panel total) counts only quote-shaped docs, **or** `/quotes?lead_id=` includes invoice-shaped reparented docs. The operator picks the semantic during that ticket's audit. About 15–30 LOC backend.
+  - Mobile keeps web's "View all {total}" label on purpose (D3); the mismatch is fixed at the source.
+- **TD-96-g2-mobile (candidate, P3 mobile).**
+  - Mobile `LeadLinkedQuotesPanel` still always fetches for admins, per its TD-96-g2 workaround comment.
+  - Resolve now that `GET /leads/{lid}` returns `linked_quotes_count`: gate the fetch on `linked_quotes_count > 0`, falling back to an unconditional fetch when the field is absent.
+  - About 5 LOC + 1 jest regression.
+- **TD-96-g1-mobile-labels (bookmark, P3, skip unless the operator wants it).** Mobile's lifecycle view says "Converted" where web says "Accepted". The backend accepts both.
+- **Scope-reality lesson #9 (for `td-lessons-doc-5`) · mobile recon on web-shipped tickets works as post-ship verification.** 4th consecutive occurrence:
+  - TD-96-mobile → g1/g2.
+  - TD-82 → calendar-consolidate endpoint dedup.
+  - TD-81-adj → web's older `.categories` page.
+  - TD-96-g1-mobile → F1 (missing `view`) + F2 (count semantics).
+  - Mobile parity work exercises web contracts against live data more thoroughly than the web ship's own tests, which used fixture leads with more than 10 open quotes. Codify a live-data probe of every cross-platform link (target URL × default filters) as part of the mobile Step 2 recon.
+- **Ops note:** jest failure-list baselines now live in `/root/jest-baselines/` (outside the repo, so the cron can't sweep them, and outside `/tmp`, which was cleaned twice this session).
 
 
 ## Audit-process lessons learned · td-lessons-doc-4 batch (Oct-2026 · post-TD-96-g1/g2 ship)
