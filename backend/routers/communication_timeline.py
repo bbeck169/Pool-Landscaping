@@ -255,102 +255,51 @@ def _strip_admin_fields(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return stripped
 
 
-@router.get("/customers/{customer_id}/communication-timeline")
-async def communication_timeline(
+@router.get(
+    "/customers/{customer_id}/communication-timeline",
+    include_in_schema=False,
+    deprecated=True,
+)
+async def communication_timeline_retired(
     customer_id: str,
-    limit: int = Query(_DEFAULT_LIMIT, ge=1, le=_MAX_LIMIT),
-    before: Optional[str] = Query(None),
-    types: Optional[str] = Query(None,
-                                       description="csv: sms,email"),
     user: Dict[str, Any] = Depends(get_current_user),
     tenant: Dict[str, Any] = Depends(get_current_tenant),
 ) -> Dict[str, Any]:
-    role = (user.get("role") or "").lower()
-    if role in _TECH_ROLES:
-        raise HTTPException(403, "Technicians cannot access comms timeline")
-    is_admin = role in _ADMIN_ROLES
-    is_customer = role == "customer"
-    if is_customer and user.get("customer_id") != customer_id:
-        raise HTTPException(403, "Not allowed")
-    if not (is_admin or is_customer):
-        raise HTTPException(403, "Not allowed")
+    """TD-98-be-cleanup-retire · Feb-2026.
 
-    customer = await _load_customer(customer_id, tenant["id"])
-    emails, phones = _customer_addresses(customer)
+    The legacy per-customer communication-timeline endpoint has been
+    retired. All known FE/mobile consumers migrated to
+    ``GET /customers/{cid}/timeline`` (Phase B super-timeline) by
+    `db6edd59f` (mobile adapter) + `e0bc500ae` (mobile component)
+    + web ship `td98b-fe` (`CustomerDetail.jsx` CustomerFullTimeline
+    mount) + `e0bc500ae` (mobile portal/messages migration).
 
-    wanted_types = None
-    if types:
-        wanted_types = {t.strip().lower() for t in types.split(",")
-                             if t.strip()}
+    Three source types that this endpoint used to surface do NOT
+    have a replacement reader on the Phase B super-timeline:
+      * ``notification_dispatch_log`` dispatch rows.
+      * ``audit_events`` with event_type ∈ ``_AUDIT_EVENT_TYPES``
+        (portal_invite_bulk, K6 job_edited, K14 invoice_auto_charged).
+      * ``delivery_error`` field on dispatch rows.
+    Operator-approved regression per TD-98/99 close-out; the gap is
+    bookmarked as **TD-98-be-sources (P2 backend)** in TECH_DEBT.md
+    for history-preservation migration into the super-timeline when
+    operator approves that ticket. See
+    ``memory/td98_99_combined_communication_timeline_audit.md`` and
+    the TD-98-be-cleanup-retire ship commit message.
 
-    # ── notification_dispatch_log ─────────────────────────────────
-    dispatch_filter: Dict[str, Any] = {
-        "tenant_id": tenant["id"],
-        "$or": [
-            {"recipient_id": customer_id},
-        ],
-    }
-    if emails or phones:
-        dispatch_filter["$or"].append(
-            {"resolved_address": {"$in": emails + phones}},
-        )
-    if wanted_types:
-        dispatch_filter["channel"] = {"$in": list(wanted_types)}
-    if before:
-        dispatch_filter["$and"] = [
-            {"$or": [{"sent_at": {"$lt": before}},
-                        {"sent_at": None,
-                             "reserved_at": {"$lt": before}}]},
-        ]
-    dispatch_rows: List[Dict[str, Any]] = []
-    async for r in db.notification_dispatch_log.find(
-        dispatch_filter, {"_id": 0},
-    ).sort([("sent_at", -1), ("reserved_at", -1)]).limit(_MAX_PER_COLLECTION):
-        dispatch_rows.append(r)
-
-    # ── audit_events (portal_invite_bulk + K6 job_edited) ────────
-    audit_rows: List[Dict[str, Any]] = []
-    # Phase K6 · Feb-2026 — the timeline surfaces audit rows when
-    # the caller either doesn't filter by type OR asks for "email"
-    # (portal invites) or "job_edited" (K6 completion edits).
-    # Phase K14 · Feb-2026 — "payment" (invoice_auto_charged) joined.
-    include_audit = (wanted_types is None) or bool(
-        set(wanted_types) & {"email", "job_edited", "payment"})
-    if include_audit:
-        audit_filter: Dict[str, Any] = {
-            "tenant_id": tenant["id"],
-            "event_type": {"$in": list(_AUDIT_EVENT_TYPES)},
-            "$or": [
-                {"payload.customer_ids": customer_id},
-                {"payload.customer_id": customer_id},
-            ],
-        }
-        if before:
-            audit_filter["timestamp"] = {"$lt": before}
-        async for r in db.audit_events.find(
-            audit_filter, {"_id": 0},
-        ).sort("timestamp", -1).limit(_MAX_PER_COLLECTION):
-            audit_rows.append(r)
-
-    # ── Merge + sort desc ────────────────────────────────────────
-    items = [_dispatch_to_item(r) for r in dispatch_rows]
-    items += [_audit_to_item(r) for r in audit_rows]
-    items.sort(key=lambda i: i["occurred_at"] or "", reverse=True)
-
-    # Pagination cursor: return one extra row to detect ``has_more``.
-    page = items[:limit]
-    has_more = len(items) > limit
-    next_before = page[-1]["occurred_at"] if (has_more and page) else None
-
-    if is_customer:
-        page = _strip_admin_fields(page)
-
-    return {
-        "customer_id": customer_id,
-        "items": page,
-        "has_more": has_more,
-        "next_before": next_before,
-    }
+    The ``_dispatch_to_item``, ``_audit_to_item``, ``_strip_admin_fields``,
+    ``_load_customer``, ``_customer_addresses``, ``_load_dispatch``,
+    and ``_preview`` helpers above are preserved as recoverable
+    primitives for the eventual TD-98-be-sources migration (operator
+    default: preserve-with-comment, see TD-98-be-cleanup-retire
+    operator spec). Delete-on-sight only after TD-98-be-sources
+    ships or is rejected.
+    """
+    raise HTTPException(
+        410,
+        "Endpoint retired · migrate to GET /customers/{cid}/timeline · "
+        "see TD-98-be-cleanup-retire + TD-98-be-sources (P2 candidate)",
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════

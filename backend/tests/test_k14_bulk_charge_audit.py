@@ -288,6 +288,17 @@ def test_k14_impersonated_charge_stamps_row_and_emits_audit(k14_scenario):
     assert ae["acting_admin_id"] == "u_super_admin_boss"
 
 
+@pytest.mark.skip(reason=(
+    "TD-98-be-cleanup-retire · Feb-2026 — the legacy "
+    "/customers/{cid}/communication-timeline endpoint has been retired "
+    "(returns 410). This test asserted that K14 invoice_auto_charged "
+    "audit events surface on that endpoint — a source class with no "
+    "replacement reader on the Phase B super-timeline. Bookmarked as "
+    "TD-98-be-sources (P2 backend) in TECH_DEBT.md. Un-skip when "
+    "TD-98-be-sources ships _audit_to_item migration into the "
+    "super-timeline's _build_full_timeline aggregator (OR delete this "
+    "test entirely if TD-98-be-sources is rejected)."
+))
 def test_k14_audit_event_surfaces_on_communication_timeline(k14_scenario):
     """After a successful bulk-charge the customer's communication
     timeline surfaces the ``invoice_auto_charged`` row as a
