@@ -12,6 +12,7 @@ const mockConfirm = jest.fn();
 jest.mock("expo-router", () => ({
   useRouter: () => ({ push: jest.fn() }),
   useFocusEffect: (cb: any) => require("react").useEffect(cb, [cb]),
+  useLocalSearchParams: () => ({}), // TD-96-g1-mobile: quotes.tsx reads ?lead / ?view
 }));
 jest.mock("@/src/api", () => ({ api: { get: (...a: any[]) => mockGet(...a), post: (...a: any[]) => mockPost(...a) } }));
 jest.mock("@/src/auth", () => ({ useAuth: () => ({ user: { role: mockRole } }) }));

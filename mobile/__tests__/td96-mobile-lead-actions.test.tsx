@@ -169,13 +169,14 @@ it("A10 · linked-quotes fetch rejects → panel absent, screen intact (fail-ope
   expect(q.getByTestId("lead-create-quote-count")).toBeTruthy();
 });
 
-it("A11 · total 12 / items 10 → '+2 more' hint, NO View-all link (TD-96-g1 dead filter)", async () => {
+it("A11 · total 12 / items 10 → 'View all 12 →' deep-links Quotes with lead + view:'all' (TD-96-g1-mobile)", async () => {
   mockQuotes = { items: Array.from({ length: 10 }, (_, i) => Q(`q${i}`)), total: 12, limit: 10 };
   const q = await mount();
-  await waitFor(() => q.getByTestId("lead-linked-quotes-more"));
-  expect(q.getByTestId("lead-linked-quotes-more").props.children).toBe("+2 more");
-  expect(q.queryByTestId("lead-linked-quotes-view-all")).toBeNull();
-  expect(q.getByTestId("lead-linked-quotes-more").props.onPress).toBeUndefined();
+  await waitFor(() => q.getByTestId("lead-linked-quotes-view-all"));
+  expect(q.queryByTestId("lead-linked-quotes-more")).toBeNull();
+  expect(q.getByText("View all 12 →")).toBeTruthy();
+  fireEvent.press(q.getByTestId("lead-linked-quotes-view-all"));
+  expect(mockPush).toHaveBeenCalledWith({ pathname: "/(app)/quotes", params: { lead: "L1", view: "all" } });
 });
 
 it("D3 · quote/new with recipient_type=lead hydrates the lead name via GET /leads/{id}", async () => {

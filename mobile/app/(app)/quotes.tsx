@@ -4,7 +4,7 @@ import {
   Alert,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { useFocusEffect, useRouter } from "expo-router";
+import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 
 import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
@@ -51,6 +51,28 @@ export default function Quotes() {
   const [refreshing, setRefreshing] = useState(false);
   const lifecycleBusyRef = useRef<string | null>(null);
 
+  // ── TD-96-g1-mobile · `?lead=<lid>` filter (web QuotesList 00888d0af) ──
+  // `lead` → `lead_id` on both role branches (BE scopes; D4). `view` param
+  // seeds the lifecycle view (LeadLinkedQuotesPanel sends view:"all", D1).
+  // Badge name via GET /leads/{lid}, short-id fallback (D2). Filtered
+  // fetches never touch the offline cache (keyed by view / doc_type only).
+  const params = useLocalSearchParams<{ lead?: string; view?: string }>();
+  const leadFilter = typeof params?.lead === "string" && params.lead ? params.lead : null;
+  const viewParam = typeof params?.view === "string" ? params.view : "";
+  useEffect(() => {
+    if (VIEW_FILTERS.some((f) => f.key === viewParam)) setView(viewParam);
+  }, [viewParam]);
+  const [leadName, setLeadName] = useState<string | null>(null);
+  useEffect(() => {
+    setLeadName(null);
+    if (!leadFilter) return;
+    let alive = true;
+    api.get(`/leads/${encodeURIComponent(leadFilter)}`)
+      .then((r: any) => { if (alive) setLeadName(r?.name || null); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [leadFilter]);
+
   // ── Phase 4b · Bulk selection (web parity f61449679) ─────────────
   // Same role set as web ``canUserLifecycle`` / server
   // ``require_admin_or_manager``. Techs never see checkboxes/toolbar.
@@ -83,17 +105,19 @@ export default function Quotes() {
         // Non-admin: legacy doc_type filter
         q = dtf === "all" ? "" : `?doc_type=${dtf}`;
       }
+      if (leadFilter) q += `${q ? "&" : "?"}lead_id=${encodeURIComponent(leadFilter)}`;
       const data = await api.get(`/quotes${q}`);
       setItems(Array.isArray(data) ? data : []);
-      writeCache(`quotes:${isAdmin ? v : dtf}`, data).catch(() => {});
+      if (!leadFilter) writeCache(`quotes:${isAdmin ? v : dtf}`, data).catch(() => {});
     } catch {
+      if (leadFilter) { setItems([]); return; }
       const cached = await readCache<any[]>(`quotes:${isAdmin ? v : dtf}`);
       if (cached) setItems(cached);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [isAdmin]);
+  }, [isAdmin, leadFilter]);
 
   useFocusEffect(
     useCallback(() => {
@@ -242,6 +266,24 @@ export default function Quotes() {
           testID="quotes-filter"
         />
       )}
+      {leadFilter ? (
+        <View style={styles.leadBar} testID="quotes-filter-lead-bar">
+          <Text style={styles.leadBarLabel}>Lead</Text>
+          <View style={styles.leadBadge}>
+            <Text style={styles.leadBadgeText} numberOfLines={1} testID="quotes-filter-lead-badge">
+              {leadName || `Lead ${leadFilter.slice(0, 8)}`}
+            </Text>
+          </View>
+          <Pressable
+            onPress={() => router.setParams({ lead: undefined } as any)} hitSlop={8}
+            style={styles.leadClear} testID="quotes-filter-lead-clear"
+            accessibilityRole="button" accessibilityLabel="Clear lead filter"
+          >
+            <Text style={styles.leadClearText}>Clear</Text>
+            <Ionicons name="close" size={12} color="#374151" />
+          </Pressable>
+        </View>
+      ) : null}
       {loading ? (
         <Loading testID="quotes-loading" />
       ) : items.length === 0 ? (
@@ -341,6 +383,12 @@ export default function Quotes() {
 }
 
 const styles = StyleSheet.create({
+  leadBar: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: spacing.sm, paddingHorizontal: spacing.lg, paddingTop: spacing.sm },
+  leadBarLabel: { fontFamily: font.semibold, fontSize: fontSize.sm, color: colors.muted },
+  leadBadge: { maxWidth: "60%", paddingHorizontal: spacing.sm, paddingVertical: 4, borderRadius: radius.pill, backgroundColor: "#DBEAFE", borderWidth: 1, borderColor: "#93C5FD" },
+  leadBadgeText: { fontFamily: font.semibold, fontSize: fontSize.sm, color: "#1E40AF" },
+  leadClear: { flexDirection: "row", alignItems: "center", gap: 4, minHeight: 32, paddingHorizontal: spacing.sm, borderRadius: radius.pill, backgroundColor: "#F3F4F6", borderWidth: 1, borderColor: "#D1D5DB" },
+  leadClearText: { fontFamily: font.semibold, fontSize: fontSize.sm, color: "#374151" },
   root: { flex: 1, backgroundColor: colors.surfaceSecondary },
   card: {
     backgroundColor: colors.surface,

@@ -12,6 +12,9 @@
  *   count includes reparented quotes, gate on it again to skip the GET.
  * - No "View all" link: web's `/quotes?lead=<id>` is a dead filter
  *   (TD-96-g1). A non-link "+N more" hint is shown instead.
+ *   → Resolved by TD-96-g1-mobile: "View all {total} →" (web label/testid)
+ *   opens the Quotes tab with `lead` + `view:"all"` (web omits view, so
+ *   its link lands on "open" and can be empty — TD-96-g1-web-view).
  *
  * Fail-open: fetch error or empty list → renders nothing (web parity).
  */
@@ -82,7 +85,13 @@ export default function LeadLinkedQuotesPanel({ leadId, refreshKey }: Props) {
         );
       })}
       {more > 0 ? (
-        <Text style={s.more} testID="lead-linked-quotes-more">{`+${more} more`}</Text>
+        <Pressable
+          onPress={() => router.push({ pathname: "/(app)/quotes", params: { lead: leadId, view: "all" } } as any)}
+          style={({ pressed }) => [s.viewAll, pressed && { opacity: 0.7 }]}
+          testID="lead-linked-quotes-view-all" accessibilityRole="button"
+        >
+          <Text style={s.viewAllText}>{`View all ${data.total} →`}</Text>
+        </Pressable>
       ) : null}
     </View>
   );
@@ -98,5 +107,6 @@ const s = StyleSheet.create({
   rowMeta: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, marginTop: 2 },
   chip: { paddingHorizontal: spacing.sm, paddingVertical: 2, borderRadius: radius.pill },
   chipText: { fontFamily: font.semibold, fontSize: 11 },
-  more: { fontFamily: font.medium, fontSize: fontSize.sm, color: colors.muted, textAlign: "center", paddingTop: spacing.sm },
+  viewAll: { minHeight: 44, alignItems: "center", justifyContent: "center", marginTop: spacing.xs, borderTopWidth: 1, borderTopColor: colors.border },
+  viewAllText: { fontFamily: font.semibold, fontSize: fontSize.sm, color: colors.brand },
 });
