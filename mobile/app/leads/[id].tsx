@@ -316,8 +316,8 @@ export default function LeadDetailScreen() {
           </View>
         )}
 
-        {/* TD-96-mobile — linked quotes (admin). Always fetched; see TD-96-g2 note in the component. */}
-        {canQuote && <LeadLinkedQuotesPanel leadId={String(id)} refreshKey={lead} />}
+        {/* TD-96-mobile — linked quotes (admin). Fetch gated on linked_quotes_count (TD-96-g2-mobile). */}
+        {canQuote && <LeadLinkedQuotesPanel leadId={String(id)} refreshKey={lead} linkedQuotesCount={lead?.linked_quotes_count} />}
 
         {/* Notes */}
         <View style={st.card}>

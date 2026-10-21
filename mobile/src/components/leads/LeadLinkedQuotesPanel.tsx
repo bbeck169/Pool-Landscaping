@@ -6,10 +6,11 @@
  * Rows: title · $total · "reparented" marker · status pill → /quote/<id>.
  *
  * Deliberate deviations from web (operator D2):
- * - ALWAYS fetched for admins. Web gates the fetch on `quotes_count > 0`,
- *   but `quotes_count` ignores reparented (post-conversion) quotes, so the
- *   panel vanishes after close-won. TODO(TD-96-g2): once the backend
- *   count includes reparented quotes, gate on it again to skip the GET.
+ * - Fetch gate (TD-96-g2-mobile): skip the GET when the lead's
+ *   `linked_quotes_count` (post-conversion `$or` count, TD-96-g2) is 0.
+ *   When the field is absent we still fetch — web falls back to the legacy
+ *   `quotes_count`, which ignores reparented quotes (the original reason
+ *   this panel always fetched), so mobile keeps the safer behaviour.
  * - No "View all" link: web's `/quotes?lead=<id>` is a dead filter
  *   (TD-96-g1). A non-link "+N more" hint is shown instead.
  *   → Resolved by TD-96-g1-mobile: "View all {total} →" (web label/testid)
@@ -34,14 +35,16 @@ function pill(status: string) {
   return statusMeta[s] || { label, bg: colors.surfaceTertiary, fg: colors.onSurfaceSecondary };
 }
 
-type Props = { leadId: string; refreshKey?: unknown };
+type Props = { leadId: string; refreshKey?: unknown; linkedQuotesCount?: number | null };
 
-export default function LeadLinkedQuotesPanel({ leadId, refreshKey }: Props) {
+export default function LeadLinkedQuotesPanel({ leadId, refreshKey, linkedQuotesCount }: Props) {
   const router = useRouter();
   const [data, setData] = useState<{ items: any[]; total: number } | null>(null);
+  const knownEmpty = typeof linkedQuotesCount === "number" && !(linkedQuotesCount > 0);
 
   useEffect(() => {
     if (!leadId) return;
+    if (knownEmpty) { setData(null); return; }
     let alive = true;
     api.get(`/leads/${encodeURIComponent(leadId)}/quotes?limit=${LINKED_QUOTES_LIMIT}`)
       .then((res: any) => {
@@ -51,7 +54,7 @@ export default function LeadLinkedQuotesPanel({ leadId, refreshKey }: Props) {
       })
       .catch(() => { if (alive) setData(null); });
     return () => { alive = false; };
-  }, [leadId, refreshKey]);
+  }, [leadId, refreshKey, knownEmpty]);
 
   if (!data || data.items.length === 0) return null;
   const more = data.total - data.items.length;
