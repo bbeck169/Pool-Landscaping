@@ -433,10 +433,30 @@ Source: `memory/mobile_dashboard_parity_audit.md` (`92f064b38`). The operator ke
   - Happens on BOTH web and mobile: the backend count aggregator and the list query disagree (upstream data-model drift). Found during the mobile live walkthrough.
   - Related: preview property docs have no `service_category`, so the Pool, Landscaping and Both tiles are 0 and their lists are empty on both platforms.
   - Future backend investigation candidate. **Priority:** P2 — backend/data.
-- **TD-81 · Mobile Revenue-by-Category drill-down is read-only.**
-  - Web's `DashboardDrillDownModal` (`income-by-category`) supports recategorize plus line-item audit editing.
-  - Mobile `src/components/dashboard/IncomeDrillDownSheet.tsx` shows rows only: Load more, and a row tap opens `/quote/<id>`.
-  - Future cycle candidate if the operator wants write-mode parity on mobile. **Priority:** on request.
+- **TD-81 · Mobile Revenue-by-Category drill-down write-mode — SHIPPED (B-narrow, Oct-2026).**
+  - Audit `memory/td81_mobile_revenue_drilldown_audit.md` (web pod). Mobile re-sizing `memory/mobile/td81_mobile_phase2_proposal.md` (`748698e78`). Operator picked T1 B-narrow, T2 per-row button, T3 "Moved to X" + tile refresh on close, T4 shared primitives.
+  - **Commits:** `284ce35c9` `td81-b1-fe` (shared `src/lib/k48.ts` + `BusinessUnitPickerSheet.tsx`, TD-84-ready but no TD-84 code) and `7f8cf5beb` `td81-b2-fe` (drill-down wiring). Split because the combined diff was ~380 LOC including tests. This doc is `td81-a-doc`.
+  - **What shipped:**
+    - Each `IncomeDrillDownSheet` row has a "Re-classify" button (`income-row-<inv>-<idx>-bu-trigger`); tapping the row itself still opens the invoice.
+    - The button opens the Business Unit picker, fed by `GET /income-categories?include_archived=false` (`{items}`).
+    - Saving sends a minimal `PATCH /quotes/{id}` `{business_unit, business_unit_id}` plus the A2 bypass flags, without `line_items`. It then fires a best-effort `POST /dashboard/drilldown/line-item-audit` (`tile:"income-by-category"`, `field:"business_unit"`).
+    - Optimistic, with rollback, inline error and toast on failure. `void`/`cancelled` rows are locked.
+    - A "Moved to X" chip shows when the new bucket differs; it stays until the sheet is reopened (web parity).
+    - The tile refetches on sheet close after any save (additive `useRangedFetch` `reloadKey`).
+    - No confirmation sheet: the mobile revenue section is admin/super_admin only, so A2 always applies.
+  - **Not ported (web-only):** Service Unit select, description/qty/price inline edits, Uncategorized report.
+  - **Tests:** `td81-mobile-k48-helpers` 3/3 and `td81-mobile-bu-reclassify` 8/8. Adjacent `revenue-by-category-drilldown` and `phase39a-*` stay green. tsc 651 (= baseline).
+  - **Live:**
+    - Expo-web as admin, "This Year": the Uncategorized drill shows 3 rows, each with a Re-classify button. The picker lists all 16 tenant business units and renders above the drill sheet; closed without selecting, so no preview data changed.
+    - API contract on a throwaway invoice: minimal BU PATCH → 200, `business_unit` set, total and line items unchanged; audit POST → 200; invoice deleted. The invoice stayed `draft` (my `status:"sent"` PATCH didn't stick), so the sent/paid lock-bypass branch was not exercised live; jest covers it.
+  - **Priority:** closed.
+- **TD-81-adj (candidate) · Mobile reads `/income-categories` with the wrong response shape.**
+  - The BE returns `{items, total}`. Two screens read `.categories` instead:
+    - `app/income-categories.tsx:20` (`setCats(r.categories || [])`).
+    - `app/quote/new.tsx:68` (`r.categories || []`).
+  - **Reproducer:** as admin, open the mobile Income Categories screen. It shows no categories, although the tenant has 16. `quote/new` silently falls back to the hard-coded `["Pool","Landscaping","Labor"]`.
+  - **Fix scope:** a ~2-line read-path correction per file (`.items`, keeping `.categories` as a fallback is optional) plus one regression test asserting the correct category count on both screens. The TD-81 drill-down already reads `.items` correctly.
+  - **Priority:** P2 — mobile, tenant data visibility bug.
 - **TD-82 · Mobile admin Jobs list is read-only (no bulk actions).**
   - Web `JobsList.jsx` has bulk delete, bulk status change and reschedule.
   - Mobile `app/admin/jobs.tsx` is only the landing screen for the dashboard tiles: status filter, and a row tap opens the job.

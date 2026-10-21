@@ -2107,3 +2107,15 @@
 - **Tests**: td96-mobile-lead-compose 9 + td96-mobile-lead-actions 15 = 24/24. Full jest 42 failing suites (= baseline; `phase40-customer-profile-visual-grouping` flaked once and passed on rerun). tsc 651 (= baseline).
 - **Files modified**: mobile/app/leads/[id].tsx, mobile/app/quote/new.tsx, mobile/src/components/leads/{LeadComposeSheet,LeadLinkedQuotesPanel}.tsx (new), mobile/__tests__/td96-mobile-lead-{compose,actions}.test.tsx (new)
 - **Web files referenced**: frontend/src/pages/leads/LeadDetail.jsx, frontend/src/pages/leads/LeadComposeModal.jsx, frontend/src/pages/quotes/QuoteInvoiceNew.jsx, frontend/src/pages/quotes/QuotesList.jsx
+
+## Iteration 161 — TD-81 Revenue-by-Category drill-down BU re-classify (B-narrow)
+- **Commits**: `748698e78` (proposal) · `284ce35c9` (b1 shared primitives) · `7f8cf5beb` (b2 drill-down) · `td81-a-doc` (this doc)
+- **Date**: 2026-10-21
+- **Changes**:
+  - Each drill-down row gets a Re-classify button, which opens the Business Unit picker.
+  - Saving sends a minimal BU PATCH (A2/K48 helpers) plus a best-effort audit POST. It is optimistic with rollback; void/cancelled rows are locked.
+  - A "Moved to X" chip shows after a move, and the tile refetches when the sheet closes.
+  - The shared `src/lib/k48.ts` and `BusinessUnitPickerSheet` are TD-84-ready.
+- **Tests**: td81-mobile-k48-helpers 3 + td81-mobile-bu-reclassify 8 = 11/11. Adjacent revenue suites green. tsc 651.
+- **Files modified**: mobile/src/lib/k48.ts (new), mobile/src/components/dashboard/{BusinessUnitPickerSheet (new),IncomeDrillDownSheet,RevenueByCategoryTile,DonutChart}.tsx, mobile/__tests__/td81-mobile-{k48-helpers,bu-reclassify}.test.* (new)
+- **Web files referenced**: frontend/src/components/dashboard/DashboardDrillDownModal.jsx (`_k48StatusFlags`, `resolveInitialBuId`, `commitBusinessUnit`)

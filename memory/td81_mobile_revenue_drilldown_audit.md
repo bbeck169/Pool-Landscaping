@@ -119,3 +119,14 @@ Mobile matches web line-for-line. ~2050 LOC across ~10 files. Requires a dedicat
 - Recommendation attached; operator decides next action.
 
 **Awaiting operator decision on Option A/B/C.** If A, this doc is the receipt and no further commits land. If B or C, operator dispatches to the Expo specialist with this audit as the brief.
+
+---
+
+## Amendment · 2026-10-21 · scope correction + outcome (mobile pod)
+
+- **Scope correction:** the mobile drill-down is `mobile/src/components/dashboard/IncomeDrillDownSheet.tsx` (90 LOC, opened from `RevenueByCategoryTile.tsx`), not `app/reports/revenue-by-service.tsx`.
+  - The K48 confirmation sheet is not needed on mobile: the revenue section is admin/super_admin only, so the A2 auto-pass always applies.
+  - The revenue-by-category BU edit is a minimal invoice-level PATCH, with no `line_items` rebuild.
+  - Re-sized from ~770 to ~230-280 LOC. See `memory/mobile/td81_mobile_phase2_proposal.md`.
+- **Decision:** Option **B-narrow** (Business Unit re-classify only).
+- **Shipped:** `284ce35c9` (`td81-b1-fe`, shared primitives) + `7f8cf5beb` (`td81-b2-fe`, drill-down wiring). Ship record in `memory/TECH_DEBT.md` § TD-81.
