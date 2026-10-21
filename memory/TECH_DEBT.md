@@ -488,14 +488,74 @@ Lead-recipient docs are strictly `doc_type="quote"` scope. Invoice-facing surfac
 **Priority:** closed (pre-shipped).
 
 
-## TD-100 (candidate) · Shared SMS/Email compose modal across lead + customer surfaces
+## TD-100 · Shared SMS/Email compose modal — SCOPE-REALITY DELTA, DOC-ONLY CLOSE-OUT (Feb-2026)
 
-- **Current state:** Two distinct compose modals live side-by-side:
-  - Lead side: `frontend/src/pages/leads/LeadComposeModal.jsx` (Phase L3, Feb-2026) — SMS GSM-7 counter, consent-override checkbox, email subject+body.
-  - Customer side: Feb-2026 "Customer Detail Additions — Send Email/SMS modal" block in `pages/customers/CustomerDetail.jsx:2714+` — same feature set, independently implemented.
-- **Why deferred:** Flagged during TD-96 Phase-1 audit (Q3 of the 15-question matrix). The two modals have converged feature sets; dedupe is a pure refactor. Folding into TD-98/99 (shared timeline) would widen that ship's scope — operator explicitly scoped TD-100 as a dedicated candidate instead.
-- **When to ship:** When the next natural feature touch lands on either compose modal (e.g. attachment support, template picker, scheduled send), extract to a shared `components/compose/EntityComposeModal.jsx` (or similar) parameterized on `entityKind ∈ {customer, lead}`.
-- **Priority:** P2 (candidate, not scheduled).
+Audit doc: `memory/td100_shared_compose_modal_audit.md`.
+
+**Closed with sub-primitive-recommendation rationale (Option A disposition).** TD-100 Phase-1 audit (ship `td100-audit`, `td100a-doc`) found that the original candidate note's "two divergent compose modals" framing did not match repo reality — in practice there are **three** actively mounted + vitest-covered implementations with intentionally divergent feature sets driven by recipient semantic:
+
+- `LeadComposeModal` (`pages/leads/LeadComposeModal.jsx`, 197 LOC extracted) — lean: GSM-7 counter + consent-override. No templates/attachments/preview.
+- `SendComposeModal` (`pages/customers/CustomerDetail.jsx:3775-4411`, 637 LOC inlined) — rich: template picker + preview + attachment library + upload-from-computer + progress UX.
+- `SendEmailModal` (`pages/admin/outreach/ProspectsKanbanPage.jsx:331-430`, ~100 LOC inlined) — email-only, template-centric for prospects/outreach domain.
+
+Three key TD-98/99 scope-reality findings applied:
+
+1. **No orphans detected** — unlike TD-98/99 (Wave A was reap-able). All three impls are mounted and tested. **No dead-code reap candidate.**
+2. **No backend endpoint consolidation** — `/leads/{id}/send-X` writes to `lead_communications`; `/customers/{id}/send-X` writes to `marketing_deliveries`. Collections have different retention/indexing policies. TD-96 §6 touch-map already scoped these as distinct; zero consolidation win.
+3. **No mobile cross-dep** — grep against `/app/memory/mobile/` returned zero mentions of these send endpoints or the three compose components. Mobile has its own compose UI. No `e1_expo_frontend_dev` delegation needed for TD-100.
+
+### Why mega-modal unification was REJECTED
+
+Full merge into one shared compose modal would EITHER:
+
+- (a) Downgrade `SendComposeModal` (losing templates, attachments, previews, upload-from-computer for the customer-side feature set).
+- (b) Over-engineer `LeadComposeModal` (bolting template/attachment UX onto a surface where those features don't fit semantically — leads can't own customer-scoped templates or attachments pre-conversion).
+- (c) Create a 700-900 LOC super-modal with heavy prop-conditional branches — maintenance liability.
+
+Divergence between lean lead-compose and rich customer-compose is **intentional**, driven by the recipient semantic. The three-impl state is correct, not a bug.
+
+### Sub-primitive extraction deferred — opportunistic, not speculative
+
+Audit identified three candidate sub-primitive extractions (`<TemplatePickerPreview>`, `<ConsentOverrideBanner>`, `<SmsCharCounter>`) that would deliver **architectural clarity but approximately flat net LOC** (-390 inlined + +340 extracted ≈ -50 net). Operator rejected speculative extraction without a feature pulling on it; the three P3 candidates below ride piggyback on the next real compose-adjacent feature ship that defines the interface requirement.
+
+**Priority:** closed (scope-reality delta, doc-only).
+
+
+## TD-100-sub-template (candidate) · Extract `<TemplatePickerPreview>` sub-primitive
+
+- **Current state:** Template-picker + preview UX is duplicated across `SendComposeModal` (`CustomerDetail.jsx:3844-4100`, ~250 LOC) and `SendEmailModal` (`ProspectsKanbanPage.jsx:331-430`, partial overlap).
+- **Target shape:** `components/communications/TemplatePickerPreview.jsx` consuming `GET /marketing/templates?channel=<X>&active=true` + `GET /marketing/templates/{id}/preview`. Props: `channel`, `onSelect`, `onPreview`, plus `recipientContext` (customer vs. prospect) for template-list scoping.
+- **Why deferred:** Highest-value sub-primitive extraction identified by audit, but no real-world driver yet — operator rejected speculative refactor.
+- **When to ship:** Next compose-adjacent feature touch on SendComposeModal OR SendEmailModal. Fold the extraction into that ship's scope. Bump to **P2 for that ship only**.
+- **Priority:** P3 (opportunistic candidate, not scheduled).
+
+
+## TD-100-sub-consent (candidate) · Extract `<ConsentOverrideBanner>` sub-primitive
+
+- **Current state:** Lead-side `LeadComposeModal.jsx:36-45, 110-140` carries ~50 LOC of consent-check (`sms_ok`/`email_ok` flag) + override-checkbox UX. Customer-side `SendComposeModal` does NOT have an equivalent (customer compose assumes opt-in).
+- **Target shape:** `components/communications/ConsentOverrideBanner.jsx`. Props: `channel`, `consentFlag`, `override`, `onOverrideChange`.
+- **Why deferred:** Lowest-overlap sub-primitive today (only one consumer). Payoff grows if a future surface lands that needs consent gating (e.g., bulk-lead-SMS, direct-SMS-to-prospect).
+- **When to ship:** When a second consumer surfaces with consent-gating needs.
+- **Priority:** P3 (opportunistic candidate, not scheduled).
+
+
+## TD-100-sub-smscount (candidate) · Extract `<SmsCharCounter>` sub-primitive
+
+- **Current state:** Lead-side `LeadComposeModal.jsx:72-100` carries ~40 LOC of GSM-7-aware character counter (160 warn / 1600 hard-cap). Customer-side `SendComposeModal` uses carrier-driven validation on the backend without a client-side counter.
+- **Target shape:** `components/communications/SmsCharCounter.jsx`. Props: `body`, `warnAt` (default 160), `hardCapAt` (default 1600).
+- **Why deferred:** Smallest extraction value today; most useful if `SendComposeModal` ever adopts GSM-7 counting (operator's call).
+- **When to ship:** When customer-side SMS compose adds a client-side char counter OR when a new surface needs the counter.
+- **Priority:** P3 (opportunistic candidate, not scheduled).
+
+
+## Audit-process lessons learned (Feb-2026)
+
+Pattern tracker. Updated as subsequent audits produce useful calibration data.
+
+- **Scope-reality recurrence (occurrence #1 of ongoing track):** TD-98/99 candidate note said "two timelines, merge them" → audit found **three divergent impls** (Wave A orphan, Phase B super-timeline, lead-side inline). TD-98/99 shipped close-out + dead-code reap.
+- **Scope-reality recurrence (occurrence #2):** TD-100 candidate note said "two compose modals, dedupe them" → audit found **three divergent impls** (lead-extracted, customer-inlined 637 LOC, prospects-inlined ~100 LOC). TD-100 shipped close-out + three P3 sub-primitive candidates deferred.
+- **Operational calibration bullet:** Operator's candidate notes have consistently under-estimated repo divergence by ~1 impl across TD-98/99 + TD-100 (two consecutive audits). Future audits should default-hypothesise "one more impl than the candidate note describes" during reconnaissance. No change to the audit cadence itself; just better recon priors.
+- **Related operational pattern:** For both TD-98/99 and TD-100, the "right" disposition was NOT full merge but either (a) dead-code reap + canonical state record (TD-98/99) OR (b) doc-only close + sub-primitive deferral (TD-100). Audit-first discipline + operator trust in "do nothing beyond document" has protected against speculative-refactor regret in both cases.
 
 
 ## TD-96-mobile (candidate) · Mobile parity for the 3 lead-detail action buttons
