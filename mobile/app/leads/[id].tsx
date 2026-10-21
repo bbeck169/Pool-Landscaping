@@ -19,6 +19,8 @@ import { colors, font, fontSize, spacing, radius } from "@/src/theme";
 import { useToast } from "@/src/components/ToastProvider";
 import AppTextInput from "@/src/components/ui/AppTextInput";
 import { PhoneLink, AddressLink } from "@/src/components/customer";
+import { isAdminPlus } from "@/src/components/RoleGate";
+import LeadComposeSheet, { type LeadComposeChannel } from "@/src/components/leads/LeadComposeSheet";
 
 const STATUS_COLORS: Record<string, { bg: string; fg: string; label: string }> = {
   // Phase 34 · Task CC: 5 canonical snake_case statuses
@@ -91,6 +93,10 @@ export default function LeadDetailScreen() {
   const { user } = useAuth();
   const role = String((user as any)?.role || "");
   const allowed = ["admin", "super_admin", "manager"].includes(role);
+  // TD-96-mobile — manager+ send (BE lead_communications roles; owner is
+  // already blocked by GET /leads/{id}, so no owner special-case).
+  const canCompose = isAdminPlus(user);
+  const [composeChannel, setComposeChannel] = useState<LeadComposeChannel | null>(null);
 
   const [lead, setLead] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -260,6 +266,17 @@ export default function LeadDetailScreen() {
           {lead.est_value ? <Text style={st.estValue}>Est. value: ${Number(lead.est_value).toLocaleString()}</Text> : null}
         </View>
 
+        {/* TD-96-mobile — outreach (web header SMS/Email); not status-gated like web */}
+        {canCompose && (
+          <View style={st.actionsCard} testID="lead-outreach-card">
+            <Text style={st.sectionLabel}>REACH OUT</Text>
+            <View style={st.actionsGrid}>
+              <ActionBtn icon="chatbubble-ellipses-outline" label="Send SMS" color={colors.brand} onPress={() => lead.phone && setComposeChannel("sms")} disabled={!lead.phone} testID="lead-detail-send-sms" />
+              <ActionBtn icon="mail-outline" label="Send Email" color={colors.brand} onPress={() => lead.email && setComposeChannel("email")} disabled={!lead.email} testID="lead-detail-send-email" />
+            </View>
+          </View>
+        )}
+
         {/* Action buttons */}
         {canAct && (
           <View style={st.actionsCard} testID="lead-actions">
@@ -344,13 +361,18 @@ export default function LeadDetailScreen() {
           </View>
         </KeyboardAvoidingView>
       </Modal>
+
+      {composeChannel && (
+        <LeadComposeSheet lead={lead} channel={composeChannel} onClose={() => setComposeChannel(null)} />
+      )}
     </View>
   );
 }
 
-function ActionBtn({ icon, label, color, onPress, busy, testID }: any) {
+function ActionBtn({ icon, label, color, onPress, busy, disabled, testID }: any) {
+  const off = !!(busy || disabled);
   return (
-    <TouchableOpacity style={st.actionBtn} onPress={onPress} disabled={busy} testID={testID}>
+    <TouchableOpacity style={[st.actionBtn, disabled && { opacity: 0.4 }]} onPress={onPress} disabled={off} accessibilityState={{ disabled: off }} testID={testID}>
       <View style={[st.actionIcon, { backgroundColor: color + "18" }]}>
         <Ionicons name={icon} size={18} color={color} />
       </View>
