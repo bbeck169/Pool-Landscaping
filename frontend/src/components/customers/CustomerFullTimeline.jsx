@@ -29,7 +29,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Mail, MessageSquare, FileText, Receipt, Clock, ExternalLink,
-  Phone, StickyNote, PhoneIncoming, PhoneOutgoing, Play,
+  Phone, StickyNote, PhoneIncoming, PhoneOutgoing, Play, CreditCard,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 
@@ -59,6 +59,12 @@ function _relative(iso) {
 // Phase B · Feb-2026 — ``call`` + ``note`` entries added. Icon
 // colours pick from existing brand palette slots so the chip row
 // stays visually consistent with the pre-B chips.
+// TD-98-be-sources-payment-kind · Oct-2026 — ``payment`` entry added
+// for ``invoice_auto_charged`` audit events (K14 Stripe auto-charge)
+// reclassified from ``kind=note`` to ``kind=payment``. Green-tinted
+// palette echoes "money-in" semantics; chip visible to portal + admin
+// per BE §4.d portal-visibility split (gate is on event_type, not
+// kind, so the reclassification doesn't change portal visibility).
 const _KIND_META = {
   email:    { label: "Email",          icon: Mail,          bg: "#DCFCE7", fg: "#166534" },
   sms:      { label: "SMS",            icon: MessageSquare, bg: "#FEE2E2", fg: "#991B1B" },
@@ -70,6 +76,7 @@ const _KIND_META = {
   quote:    { label: "Estimate",       icon: FileText,      bg: "#FEF3C7", fg: "#92400E" },
   call:     { label: "Calls",          icon: Phone,         bg: "#EDE9FE", fg: "#5B21B6" },
   note:     { label: "Internal Notes", icon: StickyNote,    bg: "#FEF9C3", fg: "#854D0E" },
+  payment:  { label: "Payment",        icon: CreditCard,    bg: "#D1FAE5", fg: "#065F46" },
 };
 
 
@@ -235,6 +242,12 @@ function DefaultRow({ item, index, meta, onOpenDetail }) {
   // lead_communication rows + lead_sms_inbound rows all qualify.
   // Non-SMS/email rows (invoice, estimate) retain their Link
   // navigation unchanged — zero regression.
+  // TD-98-be-sources-payment-kind · Oct-2026 — ``kind=payment`` rows
+  // (BE K14 ``invoice_auto_charged`` audit events) fall through to
+  // this component. BE emits ``total`` numeric so the ``$X.XX`` money
+  // chip at :244 lights up next to the Payment pill at :249. No
+  // ``url`` on audit-event-sourced items so the row renders as a
+  // plain subject + money + Payment pill — no modal, no link.
   const kind = (item.kind || item.source_type || "").toLowerCase();
   const canOpenModal = !hasUrl
                         && (kind === "sms" || kind === "email")
@@ -351,7 +364,7 @@ function Row({ item, index, onOpenDetail }) {
 
 // Phase B · Feb-2026 — chips are role-gated at build time. Admin +
 // super_admin see all 6; every other role sees the pre-B 4.
-const _BASE_CHIPS = ["all", "email", "sms", "invoice", "estimate"];
+const _BASE_CHIPS = ["all", "email", "sms", "invoice", "estimate", "payment"];
 const _ADMIN_ONLY_CHIPS = ["call", "note"];
 const _FULL_TIMELINE_ROLES = new Set(["admin", "super_admin"]);
 

@@ -1090,7 +1090,42 @@ Quote(s) with the legacy `approved` status exist (1 observed on preview). Web's 
 - **Priority:** closed.
 
 
-## TD-98-be-sources-payment-kind (candidate, P3 BE + FE + mobile)
+## TD-98-be-sources-payment-kind · dedicated payment kind on super-timeline — SHIPPED (Oct-2026)
+
+- **Ships:** `2f35d291d` `td-98-be-sources-payment-kind-be` (Phase 2A · `_TIMELINE_ALLOWED_KINDS` + `_audit_events_to_items` branch flip + `_normalise_existing_item.src` map + `total` numeric wire-through + 11/11 new pytest + 5/5 updated audit-events pytest · pytest 37/37 across TD-98 suite) · `_pending_fe_sha_` `td-98-be-sources-payment-kind-fe` (Phase 2B · `_KIND_META.payment` + `_BASE_CHIPS` extend + CreditCard icon import + DefaultRow TD-98 comment + 9/9 new vitest + 14/14 CustomerFullTimeline.super regression preserved · vitest 23/23).
+- **Semantic contract:** `invoice_auto_charged` audit events (K14 bulk Stripe card auto-charge) now emit `kind="payment"` instead of `kind="note"`. BE emits `total` numeric alongside the body string so the FE `DefaultRow` `$X.XX` money chip surfaces next to the Payment pill. Portal field-strip preserved byte-identical (gate on `event_type` not `kind`, so `actor_user_id` + `via_impersonation` stay admin-only).
+- **Deferred to sibling candidates (zero scope creep this cycle):**
+  - `TD-98-be-sources-payment-kind-ach` (P3, BE): `invoice_ach_initiated` audit event exists at `invoices_bulk_charge.py:640-642` but NOT in `_AUDIT_EVENT_TYPES` — not surfaced on timeline today. Adding to timeline needs its own portal visibility decision (ACH initiated ≠ completed).
+  - `TD-98-payment-failed-kind` (P3, BE): `autobilling_ach_skipped_unverified` audit event at `stripe_charge.py:1270` — semantically a skip, needs its own kind decision (`payment` vs `payment_failed`).
+  - `TD-98-be-sources-webhook-feed` (P3, BE): architectural lift — new source helper feeding `stripe_webhook_events` ledger to timeline + webhook-type whitelist + dedupe against `invoice_auto_charged`.
+  - `TD-98-manual-payment-audit` (P3, BE): no audit event today for operator-recorded manual payments. Needs new BE emit + classifier.
+- **Priority:** closed.
+
+
+## TD-98-be-sources-mobile-payment (candidate, P3 mobile)
+
+Mobile parity for the web `payment` kind shipped above (`2f35d291d` + `_pending_fe_sha_`). Mobile needs:
+- `mobile/src/lib/customerTimeline.ts:17` — extend `TimelineKind` union with `"payment"`.
+- `:20` — `TIMELINE_BASE_CHIPS` gains `"payment"` (base, not admin-gated — mirrors web `_BASE_CHIPS` placement and BE §4.d portal-visibility split).
+- `mobile/src/components/customers/CommunicationTimeline.tsx` — kind-based rendering branch for the Payment pill + money display (match web's `_KIND_META.payment` CreditCard icon + green-tinted palette).
+- Est ~30-50 LOC + jest regression.
+- Reporter: TD-98-be-sources-payment-kind ship cycle 2026-10-21 (web + BE shipped; mobile parked per hard-rule "no mobile edits").
+- **Priority:** P3 (candidate). Blocked only on mobile-track dispatch.
+
+
+## TD-98-payment-row-component (candidate, P3 FE)
+
+Dedicated `PaymentRow` component for enhanced payment-row rendering on `CustomerFullTimeline.jsx`. The current ship uses `DefaultRow` fall-through which covers the K14 auto-charge adequately (Payment pill + `$X.XX` money chip + subject + logged status). A dedicated row could add:
+- Receipt link (requires BE to emit `receipt_url` on payment items — Stripe receipt lookup needed).
+- PI tail prominence (currently embedded in body text).
+- Charged-via badge (card last-4 or ACH bank last-4).
+- Refund-state indicator (would depend on `TD-98-be-sources-webhook-feed` surfacing refund events).
+- Est ~40-60 LOC FE + ~30-50 LOC vitest per audit §4.b β original estimate.
+- Reporter: TD-98-be-sources-payment-kind ship cycle 2026-10-21 (operator deferred per D4 default; `DefaultRow` currently handles K14 adequately).
+- **Priority:** P3 (candidate). Opportunistic — blocked only on operator pick + the `receipt_url` BE emit scope decision.
+
+
+## TD-98-be-sources-payment-kind (candidate — SUPERSEDED by SHIPPED entry above)
 
 - **Scope:** introduce dedicated `payment` kind on the super-timeline for auto-charges (and future manual payments / refunds / failed charges). Currently `invoice_auto_charged` folds into `kind=note` per §4.b α default — functional but loses the opportunity for a dedicated payment-shaped UX (dollar amount prominence, PI-id tail, charged/refunded state semantics).
 - **BE delta:** extend `_TIMELINE_ALLOWED_KINDS`; add `payment` branch to `_normalise_existing_item.src` map; `_audit_events_to_items` emits `kind=payment` for `invoice_auto_charged` instead of `kind=note`.
