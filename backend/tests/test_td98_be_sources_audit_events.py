@@ -143,8 +143,9 @@ def test_all_event_types_surface_admin_with_mapped_kind():
         "job_edited_after_completion",
         "portal_invite_bulk",
     ]
-    # §4.b α default: portal_invite_bulk=email; others=note.
-    assert [i["kind"] for i in items] == ["note", "note", "email"]
+    # §4.b β (post-TD-98-be-sources-payment-kind): portal_invite_bulk=email;
+    # job_edited=note; invoice_auto_charged=payment (reclassified from note).
+    assert [i["kind"] for i in items] == ["payment", "note", "email"]
     assert all(i["ref_type"] == "audit_event" for i in items)
 
 

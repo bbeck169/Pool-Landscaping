@@ -196,7 +196,7 @@ async def communication_timeline_retired(
 # ═══════════════════════════════════════════════════════════════════════
 
 _TIMELINE_ALLOWED_KINDS = {"email", "sms", "invoice", "estimate",
-                             "call", "note"}
+                             "call", "note", "payment"}
 _TIMELINE_DEFAULT_PAGE_SIZE = 20
 _TIMELINE_MAX_PAGE_SIZE = 100
 _TIMELINE_HARD_CAP = 500
@@ -899,7 +899,8 @@ def _normalise_existing_item(item: Dict[str, Any]) -> Dict[str, Any]:
     kind = (item.get("kind") or "").lower()
     src = {"email": "email", "sms": "sms",
            "invoice": "invoice", "estimate": "quote",
-           "call": "call", "note": "note"}.get(kind, kind or "unknown")
+           "call": "call", "note": "note",
+           "payment": "payment"}.get(kind, kind or "unknown")
     occurred = _coerce_utc_iso(item.get("created_at"))
     subj = item.get("subject") or ""
     stat = item.get("delivery_status") or item.get("payment_status") or ""
@@ -1059,10 +1060,13 @@ async def _audit_events_to_items(
     edited after completion / K14 invoice auto-charged) as super-
     timeline items.
 
-    Event-type → ``kind`` mapping per audit §4.b default (α):
+    Event-type → ``kind`` mapping (post-TD-98-be-sources-payment-kind):
       - ``portal_invite_bulk``          → kind=email
       - ``job_edited_after_completion`` → kind=note
-      - ``invoice_auto_charged``        → kind=note
+      - ``invoice_auto_charged``        → kind=payment (TD-98-be-sources-
+        payment-kind · reclassified from kind=note so the super-timeline
+        can surface auto-charges with a dedicated payment-shaped UX
+        — chip + icon + money chip via ``total`` numeric)
 
     Portal visibility is filtered PER EVENT TYPE at the helper level
     (``_AUDIT_EVENT_PORTAL_VISIBLE`` whitelist) — matches the TD-98/99-
@@ -1071,7 +1075,8 @@ async def _audit_events_to_items(
     """
     want_email = wanted_kinds is None or "email" in wanted_kinds
     want_note = wanted_kinds is None or "note" in wanted_kinds
-    if not (want_email or want_note):
+    want_payment = wanted_kinds is None or "payment" in wanted_kinds
+    if not (want_email or want_note or want_payment):
         return []
 
     is_admin = role in _FULL_TIMELINE_ROLES
@@ -1127,7 +1132,12 @@ async def _audit_events_to_items(
             if payload.get("job_id"):
                 related = {"kind": "job", "id": payload["job_id"]}
         elif event_type == "invoice_auto_charged":
-            # K14 payment card (§4.b α: folded into note kind).
+            # K14 payment card. TD-98-be-sources-payment-kind: emits
+            # kind=payment with ``total`` numeric so the FE
+            # ``DefaultRow`` money chip surfaces ``$X.XX`` alongside
+            # the dedicated payment pill. Portal field-strip is on
+            # the shared post-loop ``if is_admin`` block below so
+            # ``actor_user_id`` + impersonation stamp stay admin-only.
             amount_cents = int(payload.get("amount_cents") or 0)
             currency = (payload.get("currency") or "usd").upper()
             amount_str = f"${amount_cents / 100:,.2f} {currency}"
@@ -1140,7 +1150,8 @@ async def _audit_events_to_items(
                 f"{label if is_admin else 'System'} charged {amount_str}"
                 f" to card on file{stamp} · pi_…{pi_tail}"
             )
-            kind = "note"
+            kind = "payment"
+            total = amount_cents / 100 if amount_cents > 0 else 0
             related = None
             if payload.get("invoice_id"):
                 related = {"kind": "invoice", "id": payload["invoice_id"]}
@@ -1159,7 +1170,8 @@ async def _audit_events_to_items(
             related = None
 
         if not ((kind == "email" and want_email)
-                or (kind == "note" and want_note)):
+                or (kind == "note" and want_note)
+                or (kind == "payment" and want_payment)):
             continue
 
         item: Dict[str, Any] = {
@@ -1176,6 +1188,13 @@ async def _audit_events_to_items(
             "url":             "",
             "body":            _preview(body),
         }
+        if kind == "payment":
+            # TD-98-be-sources-payment-kind · ``total`` numeric wires
+            # the FE ``DefaultRow`` ``$X.XX`` money chip. Portal path
+            # keeps the field — amount is already in the body for
+            # portal and admin alike; the numeric form adds no PII
+            # beyond what body carries, so no field-strip needed.
+            item["total"] = total
         if is_admin:
             if r.get("reason"):
                 item["delivery_error"] = r.get("reason")
