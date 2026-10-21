@@ -269,6 +269,17 @@ async def list_quotes(user: dict = Depends(get_current_user),
                       # the Invoices + Quotes list pages. Additive to
                       # every existing filter; tenant scope preserved.
                       customer_id: Optional[str] = Query(None),
+                      # TD-96-g1 · Feb-2026 — lead-scoped filter for
+                      # the Quotes list. ``$or`` on
+                      # ``(recipient_type="lead" + recipient_id=lead_id)``
+                      # OR ``converted_from_lead_id=lead_id`` so the
+                      # filter mirrors ``GET /leads/{lid}/quotes`` +
+                      # the ``linked_quotes_count`` field (TD-96-g2) —
+                      # operators keep visibility post close-won
+                      # reparent. Composes with ``view`` /
+                      # ``status`` / ``customer_id`` via ``$and``.
+                      # Tenant scope preserved on both legs.
+                      lead_id: Optional[str] = Query(None),
                       # FIN-PARITY-B · Feb-2026 — server-side
                       # ``payment_status`` filter. Accepted values:
                       # ``unpaid`` / ``partial`` / ``paid`` (all three
@@ -362,6 +373,10 @@ async def list_quotes(user: dict = Depends(get_current_user),
         date_to = None
     if not isinstance(date_field, str):
         date_field = None
+    # TD-96-g1 · Feb-2026 — Same TD-21 coercion for the lead-scoped
+    # filter param.
+    if not isinstance(lead_id, str):
+        lead_id = None
     if user.get("role") == "technician":
         raise HTTPException(403, "Not allowed")
     # FIN-PARITY-B · payment_status validation — accept the four
@@ -468,6 +483,23 @@ async def list_quotes(user: dict = Depends(get_current_user),
     # because the caller can't send a foreign id from a portal shell).
     if customer_id:
         q["customer_id"] = customer_id
+    # TD-96-g1 · Feb-2026 — lead-scoped filter emission. ``$or`` on
+    # ``(recipient_type="lead" + recipient_id=lead_id)`` OR
+    # ``converted_from_lead_id=lead_id`` to mirror
+    # ``GET /leads/{lid}/quotes`` + the ``linked_quotes_count`` field
+    # (TD-96-g2). Composes with the lifecycle ``view`` ``$and`` via
+    # a shared list — order-independent since both branches scope by
+    # tenant_id at the top-level ``q`` dict. If both ``customer_id``
+    # and ``lead_id`` are set the intersection is "quotes for this
+    # customer AND linked to this lead" — typically empty but kept
+    # non-erroring for callers that pass both (e.g., a stale URL).
+    if lead_id:
+        _lead_and = q.get("$and", [])
+        _lead_and.append({"$or": [
+            {"recipient_type": "lead", "recipient_id": lead_id},
+            {"converted_from_lead_id": lead_id},
+        ]})
+        q["$and"] = _lead_and
     # Phase 14b · Feb-2026 — line-item category filter. Case-insensitive
     # union across every selected value; matches invoices where ANY
     # ``line_items[].category`` equals one of the caller's values.
