@@ -269,6 +269,22 @@ function DefaultRow({ item, index, meta, onOpenDetail }) {
             {item.delivery_status}
           </span>
         ) : null}
+        {/* TD-98-be-sources · Feb-2026 — admin-only delivery_error
+            badge. Emitted top-level only when the caller is in
+            _FULL_TIMELINE_ROLES; portal path never sees this field
+            (stripped at source in the BE helper). Red surface
+            follows the DocsIndicator "failed send" convention. */}
+        {item.delivery_error ? (
+          <span
+            className="text-[10px] font-semibold uppercase tracking-wide rounded-full px-2 py-0.5"
+            style={{ background: "#FEE2E2", color: "#991B1B",
+                      border: "1px solid #FCA5A5" }}
+            title={item.delivery_error}
+            data-testid={`timeline-delivery-error-${index}`}
+          >
+            Error
+          </span>
+        ) : null}
       </div>
       <div
         className="text-sm mt-1 font-medium truncate"
