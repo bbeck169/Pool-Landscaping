@@ -2143,3 +2143,22 @@
 - **Commit protocol**: stage + precheck + `--only` commit in one shell sequence; staging-to-commit was ≤ 2 s for b1 and b2. No cron sweep this cycle.
 - **Files modified**: mobile/src/lib/customerTimeline.ts (new), mobile/src/components/customers/CommunicationTimeline.tsx, mobile/__tests__/td98-cleanup-timeline-{adapter,component}.test.ts(x) (new)
 - **Web files referenced**: frontend/src/components/customers/CustomerFullTimeline.jsx, backend/routers/communication_timeline.py (read-only)
+
+## Iteration 164 — TD-81-adj income categories response-shape fix (D1 + D2(a) + D3)
+- **Commits**: `9387003da` (b1 quote form) · `909fe15c9` (b2 Income Categories screen) · `td81-adj-a-doc` (this doc)
+- **Date**: 2026-10-21
+- **Changes**:
+  - `quote/new` reads `GET /income-categories` `{items,total}` and maps the items to names. The 3 hard-coded names are now only the fetch-failure fallback; techs hit it because the GET is admin-only.
+  - Income Categories screen:
+    - Lists the `{id,name}` items.
+    - Add reloads after the POST; a 409 duplicate shows the web copy.
+    - Remove → Archive (`POST /income-categories/{id}/archive`), with "Archive" label and confirm.
+  - Live: the screen shows 16 categories (was 0). A throwaway category was added and archived via the UI; the server shows `is_archived: true`.
+- **Tests**: td81-adj-quote-categories 2 + td81-adj-income-categories 3 = 5/5. td96 15/15. `--findRelatedTests` selects only these 3 suites. Full jest 43 failing: the extra `duplicate-quote.test.tsx` is outside the TD-81-adj import graph (quote/[id] mount drift), left for the Baseline Drift Sweep. tsc 650.
+- **TECH_DEBT**:
+  - TD-81-adj closed.
+  - New candidates: TD-81-adj-settings (P3 mobile), TD-81-adj-web (P3 web), TD-81-adj-be (P3 BE, blocked on -web).
+  - Scope-reality occurrence #7 recorded.
+- **Commit protocol**: path-scoped `git add` + precheck + `--only` commit in one shell call. b2's precheck showed 0 drift after staging, but the commit content is correct (not a TD-61 strike; the chain stays at 16).
+- **Files modified**: mobile/app/quote/new.tsx, mobile/app/income-categories.tsx, mobile/__tests__/td81-adj-{quote-categories,income-categories}.test.tsx (new)
+- **Web files referenced**: frontend/src/pages/settings/IncomeCategoriesPage.jsx, frontend/src/pages/finance/FinancePages.jsx; backend/routers/{income_categories,finances}.py + server.py (read-only)

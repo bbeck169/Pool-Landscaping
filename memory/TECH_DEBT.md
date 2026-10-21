@@ -450,13 +450,46 @@ Source: `memory/mobile_dashboard_parity_audit.md` (`92f064b38`). The operator ke
     - Expo-web as admin, "This Year": the Uncategorized drill shows 3 rows, each with a Re-classify button. The picker lists all 16 tenant business units and renders above the drill sheet; closed without selecting, so no preview data changed.
     - API contract on a throwaway invoice: minimal BU PATCH → 200, `business_unit` set, total and line items unchanged; audit POST → 200; invoice deleted. The invoice stayed `draft` (my `status:"sent"` PATCH didn't stick), so the sent/paid lock-bypass branch was not exercised live; jest covers it.
   - **Priority:** closed.
-- **TD-81-adj (candidate) · Mobile reads `/income-categories` with the wrong response shape.**
-  - The BE returns `{items, total}`. Two screens read `.categories` instead:
-    - `app/income-categories.tsx:20` (`setCats(r.categories || [])`).
-    - `app/quote/new.tsx:68` (`r.categories || []`).
-  - **Reproducer:** as admin, open the mobile Income Categories screen. It shows no categories, although the tenant has 16. `quote/new` silently falls back to the hard-coded `["Pool","Landscaping","Labor"]`.
-  - **Fix scope:** a ~2-line read-path correction per file (`.items`, keeping `.categories` as a fallback is optional) plus one regression test asserting the correct category count on both screens. The TD-81 drill-down already reads `.items` correctly.
-  - **Priority:** P2 — mobile, tenant data visibility bug.
+- **TD-81-adj · Mobile reads `/income-categories` with the wrong response shape — SHIPPED (Oct-2026, closed).**
+  - **Root cause:** `routers/income_categories.py` (server.py:1043) is registered before `routers/finances.py` (:1426), so `GET`/`POST /income-categories` resolve to the new router.
+    - `GET` returns `{items:[{id,name,…}], total}` and is admin-gated (`_require_admin`).
+    - `POST` returns the created doc.
+    - Mobile still read the retired finances shape `{categories: string[]}`.
+  - **Operator decisions:** D1 (quote form: `.items` → names, hard-coded 3 = fetch-failure fallback only), D2(a) (in-place screen fix + Remove → Archive), D3 (raise -settings / -web / -be candidates).
+  - **Commits:**
+    - `9387003da` `td81-adj-b1-fe` — `app/quote/new.tsx` maps `items[].name`; `["Pool","Landscaping","Labor"]` stays only when the fetch fails. Techs hit that path on every load: the new GET is admin-only, while the legacy finances GET allowed technicians.
+    - `909fe15c9` `td81-adj-b2-fe` — `app/income-categories.tsx`:
+      - Lists `{id,name}` rows from `items`.
+      - Add → `POST` then reload. A 409 `duplicate_name` shows the web copy.
+      - Remove → **Archive** via `POST /income-categories/{id}/archive`, with "Archive" label + confirm and an `archive-outline` icon.
+      - The old `DELETE /income-categories/{name}` hit the unshadowed legacy finances handler, which edits only the `db.settings` doc nobody reads. Mobile Remove was therefore a silent no-op or 404 against real categories.
+    - This doc is `td81-adj-a-doc`.
+  - **Tests:** `td81-adj-quote-categories` 2/2 (16-category render + 403 fallback) and `td81-adj-income-categories` 3/3 (list / add-reload / archive-never-DELETE). `td96-mobile-lead-actions` 15/15 unchanged. `jest --findRelatedTests` on both files selects exactly these 3 suites.
+  - **Full jest:** 43 failing suites vs the 42 baseline. The extra suite is `duplicate-quote.test.tsx` (`app/quote/[id].tsx` mount: "Unable to find node on an unmounted component"). It is outside the TD-81-adj import graph, so it is baseline drift, not a regression. It is left for the Baseline Drift Sweep.
+  - **tsc:** 650 (= baseline). Lint clean.
+  - **Live (Expo web, admin, 430 pt):**
+    - The screen lists 16 categories (was 0).
+    - Added throwaway `td81adj-throwaway` (16 → 17), then archived it via the UI confirm "Archive category" / "Archive" (17 → 16).
+    - Server: absent from the active list; `?include_archived=true` shows `id 5a319c38-…`, `is_archived: true`. Soft archive, not deleted.
+  - **Commit-protocol note:** for b2 the precheck reported 0 material drift right after `git add`, while b1 reported 2. `909fe15c9` nonetheless carries my exact message, exactly my 2 files and no `Emergent-Commit-Key` footer. This is **not** a TD-61 strike; the chain stays at 16. The precheck/staged-state reporting quirk is worth a look under TD-85.
+  - **Priority:** closed.
+- **TD-81-adj-settings (candidate, P3 mobile) · Port the modern web Income Categories page.**
+  - Scope: web `frontend/src/pages/settings/IncomeCategoriesPage.jsx` (create / edit / archive / restore, "Show archived" toggle, `?include_archived=true`).
+  - Target: mobile `app/settings/income-categories.tsx`, which is currently `export { default } from "@/src/components/ComingSoonPage"`.
+  - After the port, `app/income-categories.tsx` (fixed in-place by TD-81-adj) can redirect to it or be retired.
+- **TD-81-adj-web (candidate, P3 web) · Older web `/income-categories` page has the same `.categories` bug.**
+  - `frontend/src/pages/finance/FinancePages.jsx:1216-1256`:
+    - `GET` at :1226 reads the retired shape.
+    - `POST` at :1236.
+    - Remove uses `DELETE /income-categories/{name}` at :1248, which hits the legacy finances handler and never touches the real `income_categories` collection.
+  - Fix: same as TD-81-adj b2 (read `items`, reload after add, archive by id), or redirect to the settings page.
+  - Found by mobile recon (3rd consecutive mobile recon catching a web issue: TD-96-g1/g2, TD-98-be-sources, now this).
+- **TD-81-adj-be (candidate, P3 backend) · Remove the shadowed legacy `/income-categories` routes in `routers/finances.py`.**
+  - `GET :282` and `POST :289` are dead: shadowed by `routers/income_categories.py`, which is registered first.
+  - `DELETE :302` (`/income-categories/{name}`) is **not** shadowed. It is live and mutates only the orphaned `db.settings{id:"income_categories"}` doc.
+  - Remove all three, plus `get_income_categories` if no other caller remains (verify `DEFAULT_INCOME_CATEGORIES` / `INCOME_CATEGORIES_ID` usages first).
+  - **Blocked on TD-81-adj-web:** the older web page still calls the DELETE.
+  - Product question to settle with this ticket: the legacy GET allowed `technician`; the new one is admin-only, so tech quote forms fall back to the 3 hard-coded names. Decide whether techs need a read-only category list.
 - **TD-82 · Mobile admin Jobs list bulk actions — SHIPPED (B-narrow, Oct-2026).**
   - Audit `memory/td82_mobile_jobs_bulk_audit.md` (web pod). Mobile re-sizing `memory/mobile/td82_mobile_phase2_proposal.md` (`ef00d1601`). Operator picked T1 B-narrow, T2 long-press + "Select", T3 as proposed, T4 ~12 jest + throwaway-job live check.
   - **Scope-reality #5 (file-inventory sub-finding):** the audit budgeted ~200 LOC to build a mobile `BulkSelectToolkit`, but `mobile/src/components/bulk-select/BulkSelectToolkit.tsx` (197 LOC, 4 consumers) already existed.
@@ -743,6 +776,22 @@ Mobile track's TD-98-be-cleanup Phase-1 audit (commit `b3e759c3a`) found that re
 - The `delivery_error` field, which the replacement endpoint `/customers/{cid}/timeline` strips at the Phase B field-safety layer.
 
 **Pattern enrichment**: ticket name posture — "cleanup", "retire", "reap", "remove", "deprecate" — may conceal functionality changes requiring explicit history-preservation decision. A truly dead endpoint reads nothing of unique value; this endpoint reads unique sources that have no alternate reader on the replacement.
+
+### Occurrence #7 — TD-81-adj "quick 2-line fix" was a 3-screen bug + duplicate backend routes (Oct-2026, mobile-track-reported)
+
+TD-81-adj was filed as "~2-line read-path correction per file + one regression test". Mobile Phase-1 file-inventory recon found it was a lot bigger:
+
+- **3 screens, not 2.**
+  - Mobile `quote/new.tsx` (read path).
+  - Mobile `income-categories.tsx`: read path, **plus** a broken POST response handling (`setCats(r.categories)` on a doc response → `undefined`), **plus** a Remove that hit a different router.
+  - The older web `FinancePages.jsx` `/income-categories` page has the identical bug (→ TD-81-adj-web).
+- **Duplicate backend routes.** `routers/finances.py` still defines `GET`/`POST`/`DELETE /income-categories`.
+  - GET/POST are shadowed by the newer `routers/income_categories.py`.
+  - DELETE is live but writes an orphaned `db.settings` doc, so "remove" was silently a no-op against real data (→ TD-81-adj-be).
+- **Contract change hidden in the shadowing.** The legacy GET allowed technicians; the new one is admin-only, so tech quote forms fall back to hard-coded names.
+- **3rd consecutive mobile recon catching web issues** (TD-96-g1/g2 → TD-98-be-sources → TD-81-adj-web).
+
+Shipped: ~40 LOC + 5 tests across 2 commits (`9387003da`, `909fe15c9`), plus 3 P3 candidates. **Pattern enrichment:** a "response-shape" ticket is a symptom. Enumerate every caller of the endpoint, on every platform and for every verb, **and** every backend handler registered on that path (router-order shadowing) before sizing it. This is the same root as Codified Step 3 (source enumeration), applied to writers as well as readers.
 
 ### CODIFIED STEP 3 — cleanup/retire ticket source enumeration (NEW, mandatory)
 
