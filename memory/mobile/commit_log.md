@@ -2296,3 +2296,12 @@
 - **Ops note**: scope-reality tracker says this is the 8th consecutive mobile recon catching real bugs (here the bookmark undersold it: "cosmetic label" turned out to be a data gap). Batch into td-lessons-doc-7.
 - **Files modified**: mobile/app/(app)/quotes.tsx, mobile/__tests__/QuoteDeclineReopen.test.tsx
 - **Web files referenced**: frontend/src/pages/quotes/QuotesList.jsx (L20-46 LIFECYCLE_VIEWS/LABELS, L112-138 converted→accepted rewrite); backend/routers/quotes.py L406-470 (read-only)
+
+## Iteration 174 — TD-mobile-tech-search: technicians bucket in mobile global search
+- **Commits**: `a5ae96921` (td-mobile-tech-search) · `td-mobile-tech-search-doc` (this doc)
+- **Date**: 2026-10-21
+- **Changes**: `useGlobalSearch` gains the technicians bucket (defensive parse, total). `globalSearchRoutes` gains the technician kind, a Technicians group after Leads, and the route to `/technician/{id}` (SINGULAR). Prod +9/−3. No UI component edits needed.
+- **Checks**: td90 hook + ui 21/21; related suites: 17 failing, all baseline; tsc 629 post-commit; live search "mike" → Technicians group → profile. Hygiene drift = exactly the 4 expected files.
+- **Candidate raised**: TD-tech-secondary-role-empty-fallback (P3 BE).
+- **Files modified**: mobile/src/hooks/useGlobalSearch.ts, mobile/src/lib/globalSearchRoutes.ts, mobile/__tests__/td90-global-search-hook.test.ts, mobile/__tests__/td90-global-search-ui.test.tsx
+- **Web files referenced**: frontend/src/hooks/useGlobalSearchResults.js, frontend/src/components/GlobalSearchBar.jsx (c64864f3d); backend/routers/global_search.py (907f2d1a6, read-only)

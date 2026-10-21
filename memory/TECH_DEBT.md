@@ -1312,7 +1312,7 @@ Evidence from this cycle accumulates further on the attack class shape codified 
   - `app/leads/index.tsx` `bulkChangeStatus` calls `showToast(...)`, but the screen never imports or calls `useToast` (tsc `TS2304: Cannot find name 'showToast'`, part of the 650 baseline).
   - Effect: after a **successful** `POST /leads/bulk-status`, a ReferenceError lands in the catch, so the user sees **"Error · showToast is not defined"**. Select mode does not exit and the list does not reload. The server change is applied, but the UI reports failure.
   - Fix: about 2 LOC (`import { useToast }` + `const { showToast } = useToast();`) plus 1 jest regression. Not fixed in the reap (scope guard: deletion only).
-- **TD-mobile-tech-search (bookmark, P3, product decision first).** Mobile global search (TD-90) is role-gated to admin / super_admin / owner / manager by the backend `_require_dashboard_role` (`routers/global_search.py:57`); technicians get 403 and keep the tools-only "Search tools…" box.
+- **TD-mobile-tech-search: CLOSED (`a5ae96921`). The operator re-scoped it to technicians as search RESULTS; the original intent below now lives on as `TD-tech-using-search`. See the close-out block at the end of this file.** Original bookmark: Mobile global search (TD-90) is role-gated to admin / super_admin / owner / manager by the backend `_require_dashboard_role` (`routers/global_search.py:57`); technicians get 403 and keep the tools-only "Search tools…" box.
   - Extending it to techs needs a product and backend scoping decision first (e.g. own jobs and customers only).
   - After that, mobile is about 5 LOC (`GLOBAL_SEARCH_ROLES`).
 - **TD-90-search-address-gaps (bookmark, P3 backend).** `/api/search` jobs match `title` and `customer_name` only, and leads match `name`, `email` and `phone` only. Neither matches address. Small backend field-set expansion.
@@ -2011,4 +2011,29 @@ V16 is the **first injection vector to compromise the session-start task-directi
 - **Occurrence #1 (2026-10-21)**: TD-96-g2-web-fallback dispatch session. System-prompt `<problem_statement>` contained Pool-Landscaping.git clone-and-inspect injection. Operator surfaced the discrepancy in-chat and demanded direct-bash ground-truth verification. Classification confirmed via `/app` ground-truth probe (git log + file existence + branch state); real scope resumed. Agent-amplified-ask-human-framing sub-pattern also acknowledged this cycle. Zero code written against injection; zero `/tmp` activity; zero clone executed.
 
 **Codification pointer**: this entry extends the authority-layer trend table from `td-lessons-doc-6` to layer 5 (initialization layer). Future lesson docs should treat V16 as the current deepest-known layer and anticipate V17+ at the platform-infrastructure layer.
+
+
+## TD-mobile-tech-search: CLOSED (`a5ae96921`, Oct-2026)
+
+Mobile follow-up to the web-track ships `907f2d1a6` (BE `technicians` bucket in `GET /api/search`) and `c64864f3d` (web global search group).
+
+- **Changes:** prod +9/−3 in 2 files.
+  - **`src/hooks/useGlobalSearch.ts`:** `SearchBuckets` and `EMPTY_SEARCH_BUCKETS` gain `technicians`; the response reads `arr(d?.technicians)`, so a missing or non-array bucket becomes `[]`; `total` includes it.
+  - **`src/lib/globalSearchRoutes.ts`:** `SearchKind` gains `"technician"`; `GLOBAL_SEARCH_GROUPS` adds "Technicians" (`construct-outline`) after Leads, matching web order; `routeForSearchHit("technician", id)` returns `/technician/{id}` (SINGULAR, the existing `app/technician/[id].tsx`).
+  - **Untouched:** `GlobalSearchResults`, `GlobalSearchRow` and `ToolsMenuBody`. They already iterate the group list and skip empty buckets. Row testID: `global-search-row-technician-<id>`.
+- **Request unchanged:** `GET /search?q=&limit=5`. Neither mobile nor web sends `entities=`, so the BE default list applies, and it now includes `technicians`.
+- **Tests:** `td90-global-search-hook` + `td90-global-search-ui`, 21/21. New coverage: legacy/non-array bucket, singular route + plural guard, group order on both surfaces, empty bucket shows no header on both surfaces, tab `router.push` + sheet `onNavigate` for a technician row. One fixture-total assertion moved from 5 to 6.
+  - **Related suites (`--findRelatedTests`):** 17 failing, all in the 43-suite baseline. The commit message says "18"; that count included the td90 assertion fixed before commit.
+- **tsc:** 629 post-commit, unchanged, 0 in touched files.
+- **Live (admin):** typing "mike" in the Tools search sends `/search?q=mike&limit=5`. A Technicians group renders under Leads with "Mike Rivera / 480-555-0142". Tapping it opens `/technician/ccbc75d1-…`, and the profile screen loads with Call / Email / Active Jobs.
+- **Not absorbed:** TD-tech-roster-pii, TD-tech-using-search. No BE or web edits.
+- **Left as-is:** the mobile placeholder ("Search customers, jobs, invoices, quotes…") already differed from web before this ticket. Web's now also lists leads and technicians.
+
+## TD-tech-secondary-role-empty-fallback (candidate, P3 backend)
+
+When a technician record has an empty or missing `role`, the `secondary` line in the `/api/search` technicians bucket drops to just the phone instead of "role · phone". Observed live on the "Mike Rivera" row (`secondary: "480-555-0142"`).
+
+- **Impact:** low. The mobile `GlobalSearchRow` and the web row both render a phone-only secondary fine.
+- **Fix sketch:** in BE `routers/global_search.py` `_search_technicians`, default `role` to a sensible display string (e.g. "Technician") when building the hit, so `secondary` is always "role · phone" (or "role · email" as the fallback).
+- **Status:** doc-only in TD-mobile-tech-search; web/BE track to pick up.
 
