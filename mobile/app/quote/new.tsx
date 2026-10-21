@@ -65,8 +65,10 @@ export default function QuoteForm() {
         if (l?.name) setRecipient((prev) => (prev && prev.type === "lead" && prev.id === lid ? { ...prev, name: l.name } : prev));
       }).catch(() => {});
     }
+    // TD-81-adj D1 — GET returns {items:[{id,name,...}], total}; the 3
+    // hard-coded names in useState stay only as the fetch-failure fallback.
     api.get("/income-categories").then((r) => {
-      const cats = r.categories || [];
+      const cats: string[] = (r?.items || []).map((c: any) => c?.name).filter(Boolean);
       if (cats.length) {
         setCategories(cats);
         setItems((arr) => arr.map((li) => (li.category ? li : { ...li, category: cats[0] })));
