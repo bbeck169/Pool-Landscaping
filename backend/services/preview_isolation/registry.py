@@ -75,8 +75,11 @@ PII_INGRESS_REGISTRY: List[Tuple[str, str, str, str]] = [
     ("PUT",   "/api/leads/{lid}",                           "lead",     "json"),
     ("PATCH", "/api/leads/{lid}",                           "lead",     "json"),
     ("POST",  "/api/leads/{lid}/convert-to-customer",       "customer", "json"),
-    ("POST",  "/api/leads/{lid}/convert-to-job",            "customer", "json"),
-    ("POST",  "/api/leads/{lid}/convert-to-quote",          "customer", "json"),
+    # TD-96-mobile-reap-be · Feb-2026 — retired. Kept in registry
+    # to preserve 410 Gone semantics under preview-isolation; writer
+    # callers no longer exist in production code.
+    # ("POST",  "/api/leads/{lid}/convert-to-job",            "customer", "json"),
+    # ("POST",  "/api/leads/{lid}/convert-to-quote",          "customer", "json"),
     ("POST",  "/api/public/leads",                          "lead",     "json"),
     ("POST",  "/api/public/lead-request/{token}/submit",    "lead",     "json"),
     # Marketing / subscribers / forms.

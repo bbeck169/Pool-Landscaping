@@ -30,7 +30,7 @@ from config import db, logger
 from routers.tenants import get_current_tenant
 from utils import get_current_user, new_id, now_iso, require_admin
 from models import (
-    ConvertJobIn, ConvertQuoteIn, LeadCloseLostIn, LeadIn,
+    LeadCloseLostIn, LeadIn,
     LeadNoteIn, LeadUpdate, PublicLeadIn,
 )  # LeadIn / LeadUpdate / etc.
 
@@ -951,80 +951,40 @@ async def _ensure_customer_from_lead(lead: dict, tenant_id: str) -> dict:
 
 
 @router.post("/leads/{lid}/convert-to-job")
-async def convert_lead_to_job(lid: str, body: ConvertJobIn,
+async def convert_lead_to_job(lid: str,
                                  user: dict = Depends(require_admin),
                                  tenant: dict = Depends(get_current_tenant)):
-    lead = await db.leads.find_one(
-        {"id": lid, "tenant_id": tenant["id"]}, {"_id": 0},
-    )
-    if not lead:
-        raise HTTPException(404, "Lead not found")
-    cust = await _ensure_customer_from_lead(lead, tenant["id"])
-    price = body.price if body.price is not None else float(lead.get("est_value") or 0)
-    tech_name = tech_avatar = None
-    if body.technician_id:
-        tech = await db.technicians.find_one(
-            {"id": body.technician_id, "tenant_id": tenant["id"]},
-            {"_id": 0},
-        )
-        tech_name = tech["name"] if tech else None
-        tech_avatar = tech.get("avatar", "") if tech else ""
-    job = {
-        "id": new_id(), "tenant_id": tenant["id"],
-        "customer_id": cust["id"], "customer_name": cust["name"],
-        "address": cust.get("address", ""),
-        "service_type": body.service_type or "Pool Service",
-        "scheduled_date": body.scheduled_date,
-        "notes": lead.get("notes", ""),
-        "technician_id": body.technician_id, "technician_name": tech_name,
-        "technician_avatar": tech_avatar, "price": price,
-        "status": "pending", "photos": [], "created_at": now_iso(),
-    }
-    await db.jobs.insert_one(job)
-    await db.leads.update_one(
-        {"id": lid, "tenant_id": tenant["id"]},
-        {"$set": {"status": "Quoted",
-                    "converted": {"type": "job", "id": job["id"]},
-                    "updated_at": now_iso()}},
-    )
-    job.pop("_id", None)
-    return job
+    """TD-96-mobile-reap-be · Feb-2026 — retired.
+
+    Both ``POST /leads/{lid}/convert-to-job`` and
+    ``POST /leads/{lid}/convert-to-quote`` were last called by the
+    mobile Leads screen's convert sheet, which was reaped as
+    unreachable in ``a141e1366`` (TD-96-mobile-reap-fe).  Web + mobile
+    production code both use the unified ``POST /leads/{lid}/convert``
+    path (web ``LeadsDashboardPage.jsx:1138`` + mobile
+    ``d2d/index.tsx:139``).  Pre-delete grep confirmed zero live
+    callers for either route; the body implementations are
+    recoverable from this commit's parent.
+    """
+    raise HTTPException(status_code=410, detail=(
+        "Endpoint retired. Use POST /leads/{lid}/convert instead "
+        "(converts the lead to a customer; create the job/quote via "
+        "POST /jobs or POST /quotes against the resulting customer)."
+    ))
 
 
 @router.post("/leads/{lid}/convert-to-quote")
-async def convert_lead_to_quote(lid: str, body: ConvertQuoteIn,
+async def convert_lead_to_quote(lid: str,
                                    user: dict = Depends(require_admin),
                                    tenant: dict = Depends(get_current_tenant)):
-    lead = await db.leads.find_one(
-        {"id": lid, "tenant_id": tenant["id"]}, {"_id": 0},
-    )
-    if not lead:
-        raise HTTPException(404, "Lead not found")
-    cust = await _ensure_customer_from_lead(lead, tenant["id"])
-    up = body.unit_price if body.unit_price is not None else float(lead.get("est_value") or 0)
-    title = body.title or f"Estimate for {lead['name']}"
-    line_items = [{"description": lead.get("notes") or title,
-                     "quantity": 1, "unit_price": up}]
-    subtotal = round(up, 2)
-    tax = round(subtotal * ((body.tax_rate or 0) / 100.0), 2)
-    total = round(subtotal + tax, 2)
-    quote = {
-        "id": new_id(), "tenant_id": tenant["id"],
-        "customer_id": cust["id"], "customer_name": cust["name"],
-        "title": title, "doc_type": "quote", "line_items": line_items,
-        "tax_rate": body.tax_rate or 0, "subtotal": subtotal, "tax": tax,
-        "total": total, "status": "sent", "payment_status": "unpaid",
-        "notes": lead.get("notes", ""), "created_at": now_iso(),
-    }
-    await db.quotes.insert_one(quote)
-    await db.leads.update_one(
-        {"id": lid, "tenant_id": tenant["id"]},
-        {"$set": {"status": "Quoted",
-                    "converted": {"type": "quote", "id": quote["id"]},
-                    "updated_at": now_iso()}},
-    )
-    quote.pop("_id", None)
-    return quote
+    """TD-96-mobile-reap-be · Feb-2026 — retired. See
+    ``convert_lead_to_job`` above for the retirement rationale +
+    migration path."""
+    raise HTTPException(status_code=410, detail=(
+        "Endpoint retired. Use POST /leads/{lid}/convert instead "
+        "(converts the lead to a customer; create the job/quote via "
+        "POST /jobs or POST /quotes against the resulting customer)."
+    ))
 
 
 @router.delete("/leads/{lid}")
