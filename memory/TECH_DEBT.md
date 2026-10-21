@@ -1284,7 +1284,30 @@ Evidence from this cycle accumulates further on the attack class shape codified 
 `routers/leads.py:540-542` compares the already-lowercased status against the title-case strings `'Contacted'` / `'Quoted'`. Those branches never execute, so the `contacted_at` and `quoted_at` timestamps are never set. This matters for lifecycle analytics and reporting. The fix is ~5 LOC backend (change the comparison to lowercase) plus a regression test asserting the timestamps populate. P3 backend; blocked on nothing.
 
 **Twin-bug origin:** this is the same bug class as TD-96-mobile-status (title-case vs snake_case). Both were left behind by the Phase 34 · Task CC status-enum standardization. That refactor made `_normalize_status` lowercase every write but did not update the downstream title-case comparisons: here on the BE, and in the mobile `leads/[id].tsx` tiles (fixed in `24deb0a8f`). Raised during the TD-96-mobile-status recon. NOT fixed in the mobile ship (scope guard: mobile-only track).
-- **-timeline:** mobile has no lead communication timeline (`GET /leads/{id}/communications`), so a successful compose only toasts. Web refreshes its comm timeline. P3, mobile.
+- **-timeline: CLOSED (`633dfd80e` b1 + `eb643b208` b2, D1 Option A).** Original note: mobile has no lead communication timeline (`GET /leads/{id}/communications`), so a successful compose only toasts. Web refreshes its comm timeline. P3, mobile.
+  - **Recon:** the gap was total. The mobile screen never called the endpoint, and nothing was hidden behind a gate, flag or separate screen. Lead `7b9bf538…` has 2 outbound SMS via the API; mobile showed only "Lead created". Endpoint behaviour: `{items, next_cursor, has_more}`; status_change rows carry `id: "status:<ts>"` and appear on the first page only; tech → 403; bad cursor → 400; unknown lead → 404.
+  - **b1:** NEW `src/components/leads/LeadCommunicationTimeline.tsx`, a port of web's `LeadDetail.jsx` card and inline `CommTimelineItem`. It is separate from the customer-only `CommunicationTimeline.tsx`, per the TD-98/99 audit.
+    - **Loading:** `limit=50`, URL-encoded cursor Load more (appends), Refresh (replaces), stale-response guard.
+    - **States:** loading, empty ("No communications yet."), and an error toast ("Failed to load communications").
+    - **Rows:** SMS/Email/Status change pill + " · inbound", status, time, subject, body cut at 400 chars (D4), and the error line.
+    - **testIDs:** same as web.
+  - **b2:**
+    - The card mounts directly below the Timeline card, inside the existing admin/super_admin/manager screen gate.
+    - `LeadComposeSheet` gains an optional `onSent(row)`, fired after any successful POST like web's `LeadComposeModal`, which refetches the timeline.
+    - Strict D3b: status and note changes do NOT refetch.
+  - **Verification:**
+    - **Jest:** `td96-mobile-timeline.test.tsx` 15/15 and `td96-mobile-timeline-wiring.test.tsx` 3/3. The `td96-mobile-lead-actions` A1b check was narrowed to "no /quotes call" because the comms card now also fetches. Lead suites 7/7, 58/58.
+    - **tsc:** 629, checked pre-commit (b1) and post-commit (b2).
+    - **eslint:** clean.
+    - **Live:** `7b9bf538…` shows 2 SMS rows, `e3297985…` shows 1 status-change row, `ff623042…` shows the empty state, and Refresh sends a single `?limit=50` request.
+
+## TD-96-mobile-comm-detail (candidate, P3 mobile)
+
+An admin-only detail dialog on mobile `LeadCommunicationTimeline` rows, mirroring web's use of `/communications-detail/{id}` (`CommunicationDetailModal.jsx`; SMS/email rows only; web gate admin/super_admin/owner). It needs `react-native-webview` 13.15.0 (already installed) to render email bodies. ~100-150 LOC. Deferred under TD-96-mobile-timeline D2a.
+
+## TD-96-mobile-timeline-autorefresh (candidate, P3 mobile)
+
+An optional refetch of the lead communication timeline when the `lead` object changes (status/notes). Status changes show up as rows in this timeline. Cost: one extra request per action. Could be matched on web later for cross-platform consistency, or kept mobile-only after product review. Deferred under D3b (strict parity: refresh on load, the Refresh button and compose `onSent` only).
 
 
 ## TD-97 · Lead auto-convert on quote accept — PRE-SHIPPED (Feb-2026 reconciliation)

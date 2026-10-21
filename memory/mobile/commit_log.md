@@ -2274,3 +2274,14 @@
 - **Ops note**: scope-reality tracker says this is the 6th consecutive mobile recon that caught bugs. Batch it into td-lessons-doc-7 once there are 2-3 more data points.
 - **Files modified**: mobile/app/leads/[id].tsx, mobile/__tests__/td96-mobile-status.test.tsx (new)
 - **Web files referenced**: frontend/src/pages/leads/LeadDetail.jsx (STATUS_ORDER grid, L25-36 / L299-310 / L705-730); backend/routers/leads.py (read-only: `_CANONICAL_STATUSES`, `_STATUS_ALIASES`, `_normalize_status`, L540-542)
+
+## Iteration 172 — TD-96-mobile-timeline: lead communication timeline on mobile (D1 Option A)
+- **Commits**: `633dfd80e` (b1 component) · `eb643b208` (b2 wiring) · `td96-mobile-timeline-a-doc` (this doc)
+- **Date**: 2026-10-21
+- **Recon**: the gap was total. The endpoint was never called and nothing was hidden behind a gate, flag or separate screen. Options B (extend the customer `CommunicationTimeline`) and C (portal reuse) were rejected: different endpoint, paging and kinds, and the TD-98/99 audit says do not merge.
+- **Changes**: NEW `LeadCommunicationTimeline.tsx`, a web `CommTimelineItem` port: limit=50, cursor Load more, Refresh, loading/empty/error-toast, 400-char cut, stale guard. It mounts below the Timeline card. `LeadComposeSheet.onSent(row)` triggers a refetch (web parity). Strict D3b: no refetch on status/notes changes. No View details (D2a).
+- **Checks**: 15/15 + 3/3 new tests; lead suites 7/7, 58/58 (A1b narrowed); tsc 629 pre-commit (b1) and post-commit (b2); eslint clean; live probe on 3 leads (SMS, status_change, empty) plus the Refresh request. Hygiene precheck drift = exactly the expected files per commit (2, then 4).
+- **Candidates raised**: TD-96-mobile-comm-detail (P3), TD-96-mobile-timeline-autorefresh (P3).
+- **Ops note**: scope-reality tracker says this is the 7th consecutive mobile recon that surfaced gaps (no lead message history; compose onSent not wired; real endpoint role gate is admin/super_admin/manager/owner with tech 403). Batch into td-lessons-doc-7.
+- **Files modified**: mobile/src/components/leads/LeadCommunicationTimeline.tsx (new), mobile/app/leads/[id].tsx, mobile/src/components/leads/LeadComposeSheet.tsx, mobile/__tests__/td96-mobile-timeline.test.tsx (new), mobile/__tests__/td96-mobile-timeline-wiring.test.tsx (new), mobile/__tests__/td96-mobile-lead-actions.test.tsx
+- **Web files referenced**: frontend/src/pages/leads/LeadDetail.jsx (L205-275 loader, L612-660 card, L816-870 CommTimelineItem), frontend/src/pages/leads/LeadComposeModal.jsx (onSent L62), frontend/src/components/communications/CommunicationDetailModal.jsx (deferred); backend/routers/lead_communications.py L73-78 + L343-480 (read-only)
