@@ -93,23 +93,41 @@ def test_retired_endpoint_returns_410_with_migration_guidance():
 
 
 # ═══════════════════════════════════════════════════════════════════
-# §2 · Preserved helpers still importable (recoverable primitives
-# for the eventual TD-98-be-sources ship — operator default is
-# preserve-with-comment, see TD-98-be-cleanup-retire operator spec).
+# §2 · Still-load-bearing primitives remain importable.
+#
+# Original purpose: guard the 6 preserved helpers against accidental
+# deletion during TD-98-be-cleanup-retire.
+#
+# TD-98-be-sources update: Fork (b) rewrite deleted the 3 orphan
+# helpers (``_dispatch_to_item`` + ``_audit_to_item`` +
+# ``_strip_admin_fields``) because they had zero live callers after
+# the new Phase-B shape helpers landed. The remaining 3 primitives
+# (``_load_customer`` + ``_customer_addresses`` + ``_preview``) are
+# still load-bearing for the super-timeline helpers and must remain
+# importable; this test narrows to guard just them.
 # ═══════════════════════════════════════════════════════════════════
 def test_preserved_helpers_are_still_importable_for_td98_be_sources():
     from routers.communication_timeline import (
-        _dispatch_to_item, _audit_to_item, _strip_admin_fields,
         _load_customer, _customer_addresses, _preview,
     )
 
-    assert callable(_dispatch_to_item), (
-        "_dispatch_to_item must remain importable — preserved for "
-        "TD-98-be-sources per operator spec. If this import fails, "
-        "the retire ship inadvertently deleted a recoverable primitive."
+    assert callable(_load_customer), (
+        "_load_customer must remain importable — called by the "
+        "Phase-B super-timeline endpoints at the top of "
+        "_build_full_timeline. Deleting it would break "
+        "/customers/{cid}/timeline + /customers/me/timeline."
     )
-    assert callable(_audit_to_item)
-    assert callable(_strip_admin_fields)
-    assert callable(_load_customer)
-    assert callable(_customer_addresses)
-    assert callable(_preview)
+    assert callable(_customer_addresses), (
+        "_customer_addresses must remain importable — called by "
+        "_marketing_deliveries_to_items + "
+        "_notification_dispatch_log_to_items (TD-98-be-sources) "
+        "to build the (emails, phones) tuple for resolved_address "
+        "matching."
+    )
+    assert callable(_preview), (
+        "_preview must remain importable — called by multiple "
+        "Phase-B helpers (_job_notes_to_items / "
+        "_customer_notes_to_items / "
+        "_notification_dispatch_log_to_items / "
+        "_audit_events_to_items)."
+    )

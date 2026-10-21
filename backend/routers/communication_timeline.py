@@ -104,155 +104,20 @@ def _customer_addresses(customer: Dict[str, Any]) -> Tuple[List[str], List[str]]
     return sorted(set(emails)), sorted(set(phones))
 
 
-def _dispatch_to_item(row: Dict[str, Any]) -> Dict[str, Any]:
-    channel = (row.get("channel") or "").lower()
-    kind = "sms" if channel == "sms" else "email"
-    ts = row.get("sent_at") or row.get("reserved_at") or ""
-    meta = row.get("metadata") or {}
-    actor_user_id = meta.get("actor_user_id") or meta.get("user_id")
-    actor_email = meta.get("actor_email")
-    if actor_email:
-        actor_label = actor_email
-        actor_kind = "user"
-    elif actor_user_id:
-        actor_label = "User"
-        actor_kind = "user"
-    else:
-        actor_label = "System / Automation"
-        actor_kind = "system"
-    return {
-        "id": row.get("id") or row.get("dedupe_key"),
-        "type": kind,
-        "occurred_at": ts,
-        "actor_label": actor_label,
-        "actor_kind": actor_kind,
-        "actor_user_id": actor_user_id,
-        "direction": "outbound",
-        "channel_id": row.get("id"),
-        "subject": row.get("subject") or None,
-        "body_preview": _preview(meta.get("body") or meta.get("message")
-                                        or row.get("subject")),
-        "recipient": row.get("resolved_address") or "",
-        "delivery_status": row.get("status") or "queued",
-        "delivery_error": row.get("error"),
-    }
-
-
-def _audit_to_item(row: Dict[str, Any]) -> Dict[str, Any]:
-    payload = row.get("payload") or {}
-    actor_email = row.get("actor_email")
-    actor_user_id = row.get("actor_id")
-    label = actor_email or ("User" if actor_user_id else "System / Automation")
-    kind = "user" if (actor_email or actor_user_id) else "system"
-    event_type = row.get("event_type") or ""
-
-    # Phase K6 · Feb-2026 — job_edited_after_completion branch.
-    # Renders a compact "Job edited after completion" timeline card
-    # listing the fields the operator touched.  Never leaks
-    # before/after values (K6 privacy constraint).
-    if event_type == "job_edited_after_completion":
-        fields = payload.get("fields_changed") or []
-        subject = "Job edited after completion"
-        body = (
-            f"{label} edited {len(fields)} field"
-            f"{'' if len(fields) == 1 else 's'} on a completed job"
-            f"{': ' + ', '.join(fields) if fields else '.'}"
-        )
-        if payload.get("invoice_recalculated"):
-            body += " (invoice total recalculated)"
-        return {
-            "id": row.get("id"),
-            "type": "job_edited",
-            "occurred_at": row.get("timestamp") or "",
-            "actor_label": label,
-            "actor_kind": kind,
-            "actor_user_id": actor_user_id,
-            "direction": "internal",
-            "channel_id": row.get("id"),
-            "subject": subject,
-            "body_preview": _preview(body),
-            "recipient": "",
-            "delivery_status": "logged",
-            "delivery_error": None,
-            "job_id": payload.get("job_id"),
-            "fields_changed": fields,
-            "invoice_recalculated": bool(payload.get("invoice_recalculated")),
-        }
-    # Phase K14 · Feb-2026 — ``invoice_auto_charged`` branch. Renders a
-    # compact "Invoice auto-charged" card with the dollar amount and
-    # the last-4 of the payment intent id so operators can eyeball
-    # which bulk run touched this customer. Impersonation stamps come
-    # from the row's top-level ``via_impersonation`` /
-    # ``acting_admin_id`` fields (already excluded from the customer
-    # portal via ``_strip_admin_fields`` on ``actor_user_id``).
-    if event_type == "invoice_auto_charged":
-        amount_cents = int(payload.get("amount_cents") or 0)
-        currency = (payload.get("currency") or "usd").upper()
-        amount_str = f"${amount_cents / 100:,.2f} {currency}"
-        pi = payload.get("payment_intent_id") or ""
-        pi_tail = pi[-6:] if pi else ""
-        via_imp = bool(row.get("via_impersonation"))
-        stamp = " (via impersonation)" if via_imp else ""
-        subject = "Invoice auto-charged"
-        body = (
-            f"{label} charged {amount_str} to card on file"
-            f"{stamp} · pi_…{pi_tail}"
-        )
-        return {
-            "id": row.get("id"),
-            "type": "payment",
-            "occurred_at": row.get("timestamp") or "",
-            "actor_label": label,
-            "actor_kind": kind,
-            "actor_user_id": actor_user_id,
-            "direction": "internal",
-            "channel_id": row.get("id"),
-            "subject": subject,
-            "body_preview": _preview(body),
-            "recipient": "",
-            "delivery_status": "charged",
-            "delivery_error": None,
-            "invoice_id": payload.get("invoice_id"),
-            "amount_cents": amount_cents,
-            "currency": currency,
-            "payment_intent_id": pi,
-            "bulk_run_id": payload.get("bulk_run_id"),
-            "via_impersonation": via_imp,
-        }
-    # Default (portal_invite_bulk) — unchanged.
-    return {
-        "id": row.get("id"),
-        "type": "email",  # portal invites are emails
-        "occurred_at": row.get("timestamp") or "",
-        "actor_label": label,
-        "actor_kind": kind,
-        "actor_user_id": actor_user_id,
-        "direction": "outbound",
-        "channel_id": row.get("id"),
-        "subject": "Portal invite",
-        "body_preview": _preview(
-            f"Bulk portal invite fired by {label}. "
-            f"Sent to {payload.get('sent', 0)} customer(s); "
-            f"skipped {payload.get('skipped_already_activated', 0)} already "
-            "active."
-        ),
-        "recipient": "",  # not stored on audit_events
-        "delivery_status": "sent" if payload.get("sent") else "failed",
-        "delivery_error": row.get("reason") or None,
-    }
-
-
-def _strip_admin_fields(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Portal role: never leak actor_user_id + delivery_error over
-    the wire.  Applied server-side so a frontend regression can't
-    accidentally surface them."""
-    stripped = []
-    for it in items:
-        clean = dict(it)
-        clean.pop("actor_user_id", None)
-        clean.pop("delivery_error", None)
-        stripped.append(clean)
-    return stripped
+# TD-98-be-sources · Fork (b) rewrite · Phase-B shape helpers below
+# supersede the legacy ``_dispatch_to_item`` / ``_audit_to_item`` /
+# ``_strip_admin_fields`` triplet that was preserved on the retired
+# endpoint. Those three helpers had zero live callers after this
+# ship and are now DELETED; retrievable from ``2f22725e1^`` if the
+# operator ever wants to A/B against the legacy shape. The still-
+# load-bearing primitives (``_load_customer`` + ``_customer_addresses``
+# + ``_preview``) remain as module-level utilities below — they are
+# called by multiple Phase-B helpers (``_marketing_deliveries_to_items``
+# uses ``_customer_addresses``; ``_job_notes_to_items`` +
+# ``_customer_notes_to_items`` use ``_preview``; ``_build_full_timeline``
+# uses ``_load_customer``), so the operator-dispatch "delete all 6"
+# instruction was reality-checked down to "delete the 3 orphan
+# helpers" during the Phase 2 ship.
 
 
 @router.get(
@@ -287,13 +152,12 @@ async def communication_timeline_retired(
     ``memory/td98_99_combined_communication_timeline_audit.md`` and
     the TD-98-be-cleanup-retire ship commit message.
 
-    The ``_dispatch_to_item``, ``_audit_to_item``, ``_strip_admin_fields``,
-    ``_load_customer``, ``_customer_addresses``, ``_load_dispatch``,
-    and ``_preview`` helpers above are preserved as recoverable
-    primitives for the eventual TD-98-be-sources migration (operator
-    default: preserve-with-comment, see TD-98-be-cleanup-retire
-    operator spec). Delete-on-sight only after TD-98-be-sources
-    ships or is rejected.
+    The ``_load_customer``, ``_customer_addresses``, and ``_preview``
+    helpers above remain as module-level primitives for the Phase-B
+    super-timeline helpers below. ``_dispatch_to_item``,
+    ``_audit_to_item``, and ``_strip_admin_fields`` were deleted
+    during the TD-98-be-sources Fork (b) rewrite (ship notes:
+    recoverable from ``2f22725e1^`` if ever needed).
     """
     raise HTTPException(
         410,
@@ -1088,6 +952,239 @@ def _dedupe_by_ref(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return out
 
 
+async def _notification_dispatch_log_to_items(
+    customer: Dict[str, Any], tenant_id: str,
+    wanted_kinds: Optional[set],
+    from_iso: Optional[str], to_iso: Optional[str],
+    role: str,
+) -> List[Dict[str, Any]]:
+    """TD-98-be-sources · Phase-B shape rewrite of the legacy
+    ``_dispatch_to_item`` reader. Surfaces ``notification_dispatch_log``
+    rows (transactional sends — service-report emails, on-my-way SMS,
+    F7 idempotent notifier output) as super-timeline items.
+
+    Portal visibility: **YES** (customers see their own transactional
+    notifications). ``delivery_error`` and ``actor_user_id`` are
+    emitted top-level only when ``role in _FULL_TIMELINE_ROLES``;
+    portal callers get the item with those fields stripped at source
+    (never emitted → zero chance of accidental leak downstream).
+    """
+    want_sms = wanted_kinds is None or "sms" in wanted_kinds
+    want_email = wanted_kinds is None or "email" in wanted_kinds
+    if not (want_sms or want_email):
+        return []
+
+    emails, phones = _customer_addresses(customer)
+    channel_filters: List[str] = []
+    if want_sms:
+        channel_filters.append("sms")
+    if want_email:
+        channel_filters.append("email")
+
+    # Legacy ``$or`` on ``(recipient_id, resolved_address)`` preserved
+    # verbatim from the retired endpoint. ``resolved_address`` match
+    # catches sends keyed off customer email/phone when
+    # ``recipient_id`` was not resolved at dispatch time.
+    or_clauses: List[Dict[str, Any]] = [{"recipient_id": customer["id"]}]
+    if emails or phones:
+        or_clauses.append({"resolved_address": {"$in": emails + phones}})
+
+    query: Dict[str, Any] = {
+        "tenant_id": tenant_id,
+        "channel":   {"$in": channel_filters},
+        "$or":       or_clauses,
+    }
+    if from_iso or to_iso:
+        _range: Dict[str, Any] = {}
+        if from_iso:
+            _range["$gte"] = from_iso
+        if to_iso:
+            _range["$lte"] = to_iso
+        query["sent_at"] = _range
+
+    is_admin = role in _FULL_TIMELINE_ROLES
+    items: List[Dict[str, Any]] = []
+    async for r in db.notification_dispatch_log.find(query, {"_id": 0}) \
+            .sort([("sent_at", -1), ("reserved_at", -1)]) \
+            .limit(_TIMELINE_HARD_CAP):
+        channel = (r.get("channel") or "").lower()
+        kind = "sms" if channel == "sms" else "email"
+        rid = r.get("id") or r.get("dedupe_key") or ""
+        meta = r.get("metadata") or {}
+        occurred = r.get("sent_at") or r.get("reserved_at") or ""
+        body = (meta.get("body") or meta.get("message")
+                or r.get("subject") or "")
+        actor_user_id = meta.get("actor_user_id") or meta.get("user_id")
+        item: Dict[str, Any] = {
+            "kind":            kind,
+            "subject":         r.get("subject") or "",
+            "template_name":   r.get("template_name") or "",
+            "delivery_status": r.get("status") or "queued",
+            "created_at":      occurred,
+            "ref_type":        "notification_dispatch",
+            "ref_id":          rid,
+            "recipient":       r.get("resolved_address") or "",
+            "trigger_kind":    r.get("trigger_kind") or "",
+            "related_ref":     None,
+            "url":             "",
+            "body":            _preview(body),
+        }
+        if is_admin:
+            # Admin surface only. Portal path never sees these — no
+            # downstream strip required because they're never emitted.
+            if r.get("error"):
+                item["delivery_error"] = r.get("error")
+            if actor_user_id:
+                item["actor_user_id"] = actor_user_id
+        items.append(item)
+    return items
+
+
+# TD-98-be-sources portal-visibility split per audit §4.d.
+#   portal_invite_bulk          → admin-only (back-office op).
+#   job_edited_after_completion → admin-only (K6 provenance).
+#   invoice_auto_charged        → portal YES (customer's own charge).
+_AUDIT_EVENT_PORTAL_VISIBLE = frozenset({"invoice_auto_charged"})
+
+
+async def _audit_events_to_items(
+    customer: Dict[str, Any], tenant_id: str,
+    wanted_kinds: Optional[set],
+    from_iso: Optional[str], to_iso: Optional[str],
+    role: str,
+) -> List[Dict[str, Any]]:
+    """TD-98-be-sources · Phase-B shape rewrite of the legacy
+    ``_audit_to_item`` reader. Surfaces ``audit_events`` rows whose
+    ``event_type ∈ _AUDIT_EVENT_TYPES`` (portal invite bulk / K6 job
+    edited after completion / K14 invoice auto-charged) as super-
+    timeline items.
+
+    Event-type → ``kind`` mapping per audit §4.b default (α):
+      - ``portal_invite_bulk``          → kind=email
+      - ``job_edited_after_completion`` → kind=note
+      - ``invoice_auto_charged``        → kind=note
+
+    Portal visibility is filtered PER EVENT TYPE at the helper level
+    (``_AUDIT_EVENT_PORTAL_VISIBLE`` whitelist) — matches the TD-98/99-
+    xref posture of "customer's own interactions visible; admin audit
+    on their account admin-only".
+    """
+    want_email = wanted_kinds is None or "email" in wanted_kinds
+    want_note = wanted_kinds is None or "note" in wanted_kinds
+    if not (want_email or want_note):
+        return []
+
+    is_admin = role in _FULL_TIMELINE_ROLES
+    allowed_types: List[str] = []
+    for et in _AUDIT_EVENT_TYPES:
+        if (not is_admin) and (et not in _AUDIT_EVENT_PORTAL_VISIBLE):
+            continue
+        allowed_types.append(et)
+    if not allowed_types:
+        return []
+
+    query: Dict[str, Any] = {
+        "tenant_id":  tenant_id,
+        "event_type": {"$in": allowed_types},
+        "$or": [
+            {"payload.customer_ids": customer["id"]},
+            {"payload.customer_id":  customer["id"]},
+        ],
+    }
+    if from_iso or to_iso:
+        _range: Dict[str, Any] = {}
+        if from_iso:
+            _range["$gte"] = from_iso
+        if to_iso:
+            _range["$lte"] = to_iso
+        query["timestamp"] = _range
+
+    items: List[Dict[str, Any]] = []
+    async for r in db.audit_events.find(query, {"_id": 0}) \
+            .sort("timestamp", -1).limit(_TIMELINE_HARD_CAP):
+        event_type = r.get("event_type") or ""
+        payload = r.get("payload") or {}
+        actor_email = r.get("actor_email")
+        actor_user_id = r.get("actor_id")
+        label = (actor_email
+                 or ("User" if actor_user_id else "System / Automation"))
+        occurred = r.get("timestamp") or ""
+        rid = r.get("id") or ""
+
+        if event_type == "job_edited_after_completion":
+            # K6: never leaks before/after values.
+            fields = payload.get("fields_changed") or []
+            subject = "Job edited after completion"
+            body = (
+                f"{label} edited {len(fields)} field"
+                f"{'' if len(fields) == 1 else 's'} on a completed job"
+                f"{': ' + ', '.join(fields) if fields else '.'}"
+            )
+            if payload.get("invoice_recalculated"):
+                body += " (invoice total recalculated)"
+            kind = "note"
+            related: Optional[Dict[str, Any]] = None
+            if payload.get("job_id"):
+                related = {"kind": "job", "id": payload["job_id"]}
+        elif event_type == "invoice_auto_charged":
+            # K14 payment card (§4.b α: folded into note kind).
+            amount_cents = int(payload.get("amount_cents") or 0)
+            currency = (payload.get("currency") or "usd").upper()
+            amount_str = f"${amount_cents / 100:,.2f} {currency}"
+            pi = payload.get("payment_intent_id") or ""
+            pi_tail = pi[-6:] if pi else ""
+            via_imp = bool(r.get("via_impersonation"))
+            stamp = " (via impersonation)" if (via_imp and is_admin) else ""
+            subject = "Invoice auto-charged"
+            body = (
+                f"{label if is_admin else 'System'} charged {amount_str}"
+                f" to card on file{stamp} · pi_…{pi_tail}"
+            )
+            kind = "note"
+            related = None
+            if payload.get("invoice_id"):
+                related = {"kind": "invoice", "id": payload["invoice_id"]}
+        else:
+            # Default: portal_invite_bulk — portal-filtered out above,
+            # so this branch runs for admin only (but keep is_admin
+            # gate defensive against future type additions).
+            subject = "Portal invite"
+            body = (
+                f"Bulk portal invite fired by {label}. "
+                f"Sent to {payload.get('sent', 0)} customer(s); "
+                f"skipped {payload.get('skipped_already_activated', 0)} "
+                "already active."
+            )
+            kind = "email"
+            related = None
+
+        if not ((kind == "email" and want_email)
+                or (kind == "note" and want_note)):
+            continue
+
+        item: Dict[str, Any] = {
+            "kind":            kind,
+            "subject":         subject,
+            "template_name":   "",
+            "delivery_status": "logged",
+            "created_at":      occurred,
+            "ref_type":        "audit_event",
+            "ref_id":          rid,
+            "recipient":       "",
+            "trigger_kind":    event_type,
+            "related_ref":     related,
+            "url":             "",
+            "body":            _preview(body),
+        }
+        if is_admin:
+            if r.get("reason"):
+                item["delivery_error"] = r.get("reason")
+            if actor_user_id:
+                item["actor_user_id"] = actor_user_id
+        items.append(item)
+    return items
+
+
 async def _build_full_timeline(
     customer: Dict[str, Any], tenant_id: str,
     wanted_kinds: Optional[set],
@@ -1123,6 +1220,18 @@ async def _build_full_timeline(
     )
     merged += await _lead_inbound_sms_to_items(
         customer, tenant_id, wanted_kinds, from_iso, to_iso,
+    )
+    # TD-98-be-sources · Feb-2026 — notification_dispatch_log +
+    # audit_events restored to the super-timeline. Both helpers
+    # handle portal visibility at their own helper level (dispatch
+    # log: portal YES with admin-field strip at source; audit events:
+    # portal visibility via ``_AUDIT_EVENT_PORTAL_VISIBLE`` whitelist
+    # filtered inside the helper). No admin-only gate here.
+    merged += await _notification_dispatch_log_to_items(
+        customer, tenant_id, wanted_kinds, from_iso, to_iso, role,
+    )
+    merged += await _audit_events_to_items(
+        customer, tenant_id, wanted_kinds, from_iso, to_iso, role,
     )
     # Phase B — call_logs + job internal notes, admin/super_admin only.
     if role in _FULL_TIMELINE_ROLES:
