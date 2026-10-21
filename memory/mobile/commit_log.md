@@ -2162,3 +2162,35 @@
 - **Commit protocol**: path-scoped `git add` + precheck + `--only` commit in one shell call. b2's precheck showed 0 drift after staging, but the commit content is correct (not a TD-61 strike; the chain stays at 16).
 - **Files modified**: mobile/app/quote/new.tsx, mobile/app/income-categories.tsx, mobile/__tests__/td81-adj-{quote-categories,income-categories}.test.tsx (new)
 - **Web files referenced**: frontend/src/pages/settings/IncomeCategoriesPage.jsx, frontend/src/pages/finance/FinancePages.jsx; backend/routers/{income_categories,finances}.py + server.py (read-only)
+
+## Iteration 165 — TD-84 Phase 2 (B-smaller): Service Category row + Uncategorized banner/report
+- **Commits**: `2fbbf73d3` td84-b1-fe (+ `8a52e5c6a` cron sweep of b1 WIP = TD-61 strike #17) · `a17b05549` td84-b2-fe · `td84-a-doc` (this doc)
+- **Date**: 2026-10-21
+- **Changes**:
+  - b1: dashboard 4-tile Customers by Service Category row, with Not set as an explicit 4th tile.
+    - Uses `/dashboard/service-category-breakdown`; admin + super_admin + manager; hidden on error.
+    - `customers.tsx` reads `?service_category=` and forwards it, with a clearable chip.
+  - b2: Uncategorized banner (count > 0, admin/super_admin, inside Revenue insights).
+    - New `app/reports/uncategorized-items.tsx`: range + missing filters, customer filter, per-row assign, bulk-assign (200-row chunks).
+    - `BusinessUnitPickerSheet` gains an optional `title`.
+  - Data Integrity tile intentionally not ported (web hid it, `Dashboard.jsx:800`).
+- **Tests**:
+  - td84 service-category 6/6, td84 uncategorized 7/7, td81 bu-reclassify green.
+  - tsc 650.
+  - Full jest: 42 failed suites / 289 passed / 3 skipped. That is back at the 42 baseline (TD-81-adj run: 43). `duplicate-quote` still fails; some other pre-existing suite flipped green, but it can't be identified because the earlier fail list was lost from `/tmp`. No td84 or td81-adj suite fails.
+  - The dashboard suites in the fail list are pre-existing: `index.tsx:22 → RevenueDateRangeFilter → AppTextInput` with a theme mock lacking `inputColors`.
+- **Live**:
+  - Tiles 0/0/0/530; banner shows 80; report 516 → 366 → 1.
+  - Throwaway invoice INV-2026-002112: per-row Service assign + single-row bulk Income assign, confirmed on the server.
+  - Throwaway invoice and customer soft-deleted.
+- **Backend contract**: `/customers?service_category=` supports all 4 values. Count mismatch logged as TD-84-be-counts (P3 BE).
+- **TECH_DEBT**:
+  - TD-84 closed.
+  - Candidates: TD-84-fn-bulk-delete, TD-84-fn-csv (with aliases), TD-84-be-counts; conditional TD-84-bulk-assign.
+  - Bookmarks: TD-customer-profile-lazy-load, TD-customers-nocategory-filter.
+  - Scope-reality #8; TD-61 strike #17; TD-85 precheck one-liner.
+  - E3 dispatch conflict ((a) vs (b)) recorded for the operator.
+- **Files modified**:
+  - b1: mobile/src/components/dashboard/ServiceCategoryTileRow.tsx (new), mobile/app/(app)/index.tsx, mobile/app/(app)/customers.tsx, mobile/__tests__/td84-mobile-service-category.test.tsx (new)
+  - b2: mobile/src/lib/uncategorized.ts, mobile/src/components/dashboard/UncategorizedBanner.tsx, mobile/src/components/reports/UncategorizedRow.tsx, mobile/app/reports/uncategorized-items.tsx (all new), mobile/src/components/dashboard/BusinessUnitPickerSheet.tsx, mobile/app/(app)/index.tsx, mobile/__tests__/td84-mobile-uncategorized.test.tsx (new)
+- **Web files referenced**: frontend/src/components/dashboard/ServiceCategoryTileRow.jsx, frontend/src/pages/admin/Dashboard.jsx, frontend/src/pages/reports/UncategorizedItemsReport.jsx, frontend/src/components/income/CategoryPicker.jsx, frontend/src/components/admin/DataIntegrityTile.jsx; backend/routers/{dashboard_service_category,income_categories,customers,service_categories}.py (read-only)

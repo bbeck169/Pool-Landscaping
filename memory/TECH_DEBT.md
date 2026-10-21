@@ -519,12 +519,72 @@ Source: `memory/mobile_dashboard_parity_audit.md` (`92f064b38`). The operator ke
   - The backend ignores that param and returns its default bare list (213 rows), so 15 of 67 groups show "(unknown customer)" on web.
   - Mobile `app/properties.tsx` falls back to `GET /customers/{id}?slim=1` for each missing ID and resolves all 67.
   - Future backend fix candidate; web benefits as soon as the endpoint honors `ids_in`. Not a mobile ship regression. **Priority:** P3 — backend.
-- **TD-84 · Mobile dashboard — web tiles outside the operator list not ported.**
-  - These web tiles are not in the operator's 10-tile list and were skipped on purpose:
-    - `Customers by Service Category` row (`ServiceCategoryTileRow`; would also need mobile `customers.tsx` to read `?service_category=`)
-    - `Uncategorized line-items` banner (`/reports/uncategorized-count`)
-    - `Data Integrity` tile (super_admin)
-  - **Priority:** on request only.
+- **TD-84 · Mobile dashboard — web tiles outside the operator list. Phase 2 (B-smaller) SHIPPED (Oct-2026, closed).**
+  - **Decisions:**
+    - E1: B-smaller.
+    - E2: drop Data Integrity.
+    - E3: (b) per-row assign + bulk-assign.
+    - E4: mirror the web role model (the backend gate is authoritative).
+  - **E3 dispatch conflict (open, operator to resolve):** one later dispatch said E3 = (a), per-row only. The other two dispatches said (b), and b2 had already shipped with (b). Bulk-assign is left in place. If (a) is confirmed, removing it is one small revert-forward commit: drop the `BulkActionBar` actions, the select toggle and the `assignBulk` path in `app/reports/uncategorized-items.tsx`, plus test U5.
+  - **`2fbbf73d3` `td84-b1-fe` (+ cron-swept `8a52e5c6a`, see TD-61 strike #17):** web `ServiceCategoryTileRow.jsx` parity.
+    - Reads `GET /dashboard/service-category-breakdown` and renders 4 tiles: Pool / Landscaping / Both / **Not set**. Not set is an explicit 4th tile (`kpi-service-category-unset`), not an implied fallback; this future-proofs the pending "No Category" customers-filter request.
+    - Pool, Landscaping and Both show active jobs + MTD revenue lines; Not set shows customers only.
+    - Skeletons while loading; hidden on any error.
+    - Mounted right after the KPI grid, gated `isManagerPlus` (admin / super_admin / manager = backend `require_admin_or_manager`).
+    - Tap → `/(app)/customers?service_category=<key>`. `customers.tsx` reads the route param (same pattern as the onboarding tiles), forwards it to `GET /customers`, shows a clearable "Service: X" chip, resets it on Clear all, and ignores out-of-enum values via an own-property guard. Test S4 caught a `"toString" in LABELS` prototype leak.
+    - The commit message could not carry the "explicit 4th tile" flag, because the bulk of b1 had already been committed under the cron's title. It is recorded here instead.
+  - **`a17b05549` `td84-b2-fe`:**
+    - **Banner:** `GET /reports/uncategorized-count`; shown when count > 0. Placed inside Revenue insights above the donuts (web placement). Admin / super_admin only, which equals the backend `_require_admin`; on web, managers get a 403 and see no banner. It refetches on focus.
+    - **New screen `app/reports/uncategorized-items.tsx`:**
+      - `GET /reports/uncategorized-items?range=&missing=`.
+      - Range: All / This Month / Last Month / This Quarter. Missing: Income / Service / Either / Both.
+      - Customer filter.
+      - Per-row Income / Service assign via `POST …/{invoice_id}/{idx}/assign`.
+      - Bulk-assign via `BulkSelectToolkit` → `POST …/bulk-assign`, chunked at the 200-row backend cap.
+      - Pickers come from `/income-categories` + `/service-categories`, archived entries hidden. They reuse `BusinessUnitPickerSheet` with a new optional `title` prop (default unchanged for the TD-81 caller).
+      - Non-admins are redirected with **no** fetch.
+    - **Deferred (not ported):**
+      - Custom date range (needs a range picker).
+      - Per-row 5-second Undo: mobile's toast has no action slot and `api.del` takes no body.
+      - Client-side "Mark done" dismiss.
+  - **Data Integrity tile — intentionally NOT ported (E2).** Web hid it: `frontend/src/pages/admin/Dashboard.jsx:800` is commented out ("user request 2026-02-09"). It is also not the "6–8 drift signals" the audit described; it is one F9 status pill plus an F5 sentinel reset for super_admin. Mobile matches web's current state. This is **not** a parity gap, so future parity audits should not flag it. Re-surfacing it on either platform needs its own product ticket.
+  - **Backend contract check (`/customers?service_category=`):** fully supported, so this is not a STOP case.
+    - Enum `pool | landscaping | both | unset`; `pool` and `landscaping` union-include `both` (same rule as the tiles).
+    - `unset` = field null or missing.
+    - Invalid values are ignored server-side (unfiltered), and mobile drops them too.
+  - **Tests:**
+    - `td84-mobile-service-category` 6/6.
+    - `td84-mobile-uncategorized` 7/7, including the scope guard: no `bulk-hard-delete`, `exportCsv` or `api.del` in the screen.
+    - `td81-mobile-bu-reclassify` green (picker regression).
+    - Adjacent dashboard suites green.
+    - tsc 650 (= baseline). Lint clean.
+    - Full jest: see the commit_log iteration 165 entry.
+  - **Live (Expo web, admin, 430 pt):**
+    - Tiles 0 / 0 / 0 / 530; banner "80 line items are uncategorized."; banner tap → report.
+    - All / Either 516 → This Month / Service 366 → customer filter 1.
+    - Throwaway: customer `a24a0722…` (no email), draft invoice `INV-2026-002112` with one line item missing a service category. The backend defaulted income to "Pool".
+      - Per-row Service → "Repair (Demo)". Toast: "Categorized as Repair (Demo) · row fully categorized".
+      - Then Select → that row only → Set Income → Pool. Toast: "Bulk-assigned 1 row — income = Pool"; the bar closed.
+    - Server: both category ids set, the row left the report (516 → 515), and the `/customers?service_category=unset` chip renders.
+    - Cleanup: invoice soft-deleted (200); customer soft-deleted (`mode: soft`, recoverable). List total is back to 213.
+  - **Priority:** closed.
+- **TD-84-fn-bulk-delete (candidate, P3 mobile)** · aliases `TD-84-bulk-hard-delete`, `TD-84-fn-delete-csv` (part 1).
+  - Scope: bulk hard-delete of uncategorized line items (web `…/bulk-hard-delete` + its undo).
+  - It is destructive, so it needs its own confirmation-UX ship.
+- **TD-84-fn-csv (candidate, P3 mobile)** · aliases `TD-84-csv-export`, `TD-84-fn-delete-csv` (part 2).
+  - Scope: CSV export of the uncategorized report. `src/utils/exportCsv.ts` already exists.
+- **TD-84-bulk-assign** — only applies if the operator resolves E3 to (a). In that case bulk-assign comes out of b2 and is re-raised here as a P3 candidate. Otherwise it is already shipped.
+- **TD-84-be-counts (candidate, P3 backend) · Service Category breakdown counts disagree with the Customers list.**
+  - `routers/dashboard_service_category.py` Step 1 counts **every** tenant customer, including soft-deleted and merged ones. The list hides those by default.
+  - Result: "Not set" tile = 530, while `/customers?service_category=unset` = 213 (208 active).
+  - It also files `""` and invalid values under unset, while the list's `unset` matches only null or missing.
+  - Web shows the same number. Same family as TD-80 (Active Accounts count mismatch).
+- **Backlog bookmarks (do NOT act; reality-check pending; P3 unless the operator escalates with a TD prefix):**
+  - `TD-customer-profile-lazy-load` — section-level lazy-load for web `CustomerDetail.jsx`. Likely web scope.
+  - `TD-customers-nocategory-filter` — a "No Category" option on the Customers list category filter.
+    - Mobile already reaches the Not set cohort through `?service_category=unset` (TD-84 b1 tile + chip).
+    - Web counterpart open.
+  - **Classification conflict:** one dispatch logged these two as injections V9 and V10; a later one bookmarked them as backlog and logged V9 as "customer excel importer AI + lead profile update priority". No part of any of them was implemented.
 - **TD-85 · Dirty working tree in the Expo pod blocks the `wc -l == 0` precheck.** **CLOSED (td85 · Feb-2026).**
   - The pod always carries about 1,900 changed or untracked paths: backend `.pyc` caches, generated Expo files (`mobile/.expo/types/router.d.ts`), test artifacts (`mobile/artifacts/offline-mode-verification.txt` is rewritten by Jest), and `*.env.example`.
   - So the TD-61 session-hygiene check could never pass. What actually protects commits is the `--only --` discipline, which is enforced; the `wc -l == 0` guideline was effectively a no-op here.
@@ -803,6 +863,17 @@ When a ticket's framing uses cleanup/retire/reap/remove/deprecate vocabulary AND
 4. Report findings to operator with: (a) each source, (b) replacement reader status, (c) feature-regression severity, (d) history-preservation migration options.
 
 Applies to any ticket whose scope includes endpoint retirement, route-handler deletion, or data-collection drop. Protects against: silent feature regression under cleanup framing.
+
+### Occurrence #8 — TD-84 audit wrong on all 3 surfaces (Oct-2026, mobile-track-reported)
+
+The `td84_out_of_list_tiles_audit.md` audit (written about 14 days before this ship) sized the work at A 0 / B ~600 / C ~2550 LOC. Codified Step 2 (file-inventory recon on the **target** platform) found:
+
+- **Service Category row:** the audit said it used the existing `/dashboard` fields with "no new BE". It actually has its own endpoint, `GET /dashboard/service-category-breakdown`. Mobile `customers.tsx` also did not read `?service_category=`.
+- **Uncategorized banner:** the audit cited `/reports/uncategorized-summary`. It is actually `GET /reports/uncategorized-count` (`Dashboard.jsx:471`), plus `/reports/uncategorized-items` with per-row assign, bulk-assign and bulk-hard-delete endpoints.
+- **Data Integrity tile:** the audit said to port "6–8 drift signals with fix links". Web had **hidden** it (`Dashboard.jsx:800`, "user request 2026-02-09"), and it is really one status pill plus a sentinel reset. Porting it would have quietly undone an operator product decision.
+- **"Shared primitives ~200 LOC":** these already existed on mobile (TD-81 `k48.ts` + `BusinessUnitPickerSheet`, the TD-82 `BulkSelectToolkit`, `exportCsv`). This is the recurring "primitives already exist" pattern.
+
+Shipped: B-smaller, about 700 LOC including tests across 7 new and 4 modified files, versus the audit's B ~600 for read-only tiles. **Pattern enrichment:** audits older than about 2 weeks can describe surfaces that have since been **retired**, not just renamed. Step 2 must check that the cited web code is still mounted (not commented out), not only that the file exists. This is the 4th consecutive mobile recon that changed the scope.
 
 ### TD-61 strike #16 — `41044b2c1` (Feb-2026, NEW CRON BEHAVIOR CLASS)
 
@@ -1132,3 +1203,19 @@ Shipped under commits `td98-99-xref-a-doc`, `td98-99-xref-b-be`, `td98-99-xref-c
 - **TD-92-fn** · `impersonation_ended` audit event not emitted on the mobile-browser "End session" path.
   - Shipped under `td92c-fe` — the mobile-browser-no-admin branch of the impersonation banner renders an "End session" button that clears `sessionStorage.portal_token` + portal-scoped localStorage cache and routes to `/portal/login`, but does NOT call `POST /auth/revert-impersonation` (deliberately — no admin session exists on this device to restore, and skipping the call prevents an admin JWT from being deposited into the device's localStorage). The admin-same-tab branch still fires `impersonation_ended` via the existing revert path, so operator audit visibility is unchanged for that flow. The mobile flow instead ends via sessionStorage expiry (tab close, 30-min TTL, or explicit "End session" click) — all three leave no `impersonation_ended` row in `audit_logs`. A future follow-up could emit a new BE event (e.g. `impersonation_session_ended_portal_tab`) via a lightweight telemetry endpoint called from `endPortalSession`, OR surface the end-of-session via the existing `/admin/access-history` cross-reference against the 30-min TTL expiry. **Priority:** P3 — low-priority follow-up; `impersonation_started` audit emission is unaffected, so start-event visibility is complete.
 
+
+### TD-61 strike #17 — `8a52e5c6a` (Oct-2026, mid-edit sweep of unstaged work)
+
+- **Author:** `Emergent Agent <agent@emergent.dev>`.
+- **Title:** another track's chat text ("### Ticket 1: TD-98-be-cleanup-retire · RECEIPT"), with an `Emergent-Commit-Key` footer.
+- **Time:** 2026-10-21 05:36:39Z.
+- **Swept:** TD-84 b1 files that were **unstaged and still being edited** (no `git add` had run yet):
+  - `mobile/app/(app)/customers.tsx` (+18)
+  - `mobile/app/(app)/index.tsx` (+5)
+  - `mobile/src/components/dashboard/ServiceCategoryTileRow.tsx` (104 LOC, new)
+  - the Jest noise file
+- **How it was found:** the precheck in the b1 sequence reported 3 drift rows, not 4. `2fbbf73d3` then committed only the remainder: the test, the remaining `customers.tsx` hunks and the own-property fix.
+- **Impact:** HEAD's tree equals the working copy (0-line diff), so no work was lost. b1's attribution is split across two commits.
+- **Classification:** strike #17. The chain goes **16 → 17**. No revert, no history rewrite (TD-61 policy).
+- **Behaviour note:** this is wider than strike #16 (staged work). It sweeps **unstaged edits mid-implementation**, before any stage step, so no "tight stage-commit sequence" can close this window. The only thing that shortens it is shorter edit-to-commit cycles; b2 was written, tested and committed in about 4 minutes and landed clean.
+- **TD-85 precheck observation (one line):** the precheck's drift count is only meaningful relative to the expected path list. TD-81-adj b2 reported 0 rows after staging, yet its commit landed correctly (false negative). TD-84 b1 reported 3 of 4, which is how this sweep was detected. So compare `material-drift rows` against the intended path count before every commit.
