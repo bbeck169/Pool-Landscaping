@@ -25,6 +25,7 @@ import { colors, spacing, radius, font, fontSize, money } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import EbitPanel from "@/src/components/admin/EbitPanel";
 import AppTextInput from "@/src/components/ui/AppTextInput";
+import { useToast } from "@/src/components/ToastProvider";
 
 const RANGE_OPTIONS = [
   { key: "this_month", label: "This Month" },
@@ -39,6 +40,7 @@ const fmtPct = (n: number) => `${Number(n || 0).toFixed(1)}%`;
 const ADMIN_ROLES = ["admin", "super_admin", "manager"];
 
 export default function ProfitReport() {
+  const { showToast } = useToast(); // TD-96-mobile-toast-sweep (undefined since 4a8d04429)
   const { user } = useAuth();
   const isAdmin = ADMIN_ROLES.includes(user?.role || "");
 

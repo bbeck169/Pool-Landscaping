@@ -7,8 +7,10 @@ import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import { Loading, PrimaryButton } from "@/src/components/ui";
 import AppTextInput from "@/src/components/ui/AppTextInput";
+import { useToast } from "@/src/components/ToastProvider";
 
 export default function EstimateSettings() {
+  const { showToast } = useToast(); // TD-96-mobile-toast-sweep (undefined since 4a8d04429)
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [overhead, setOverhead] = useState("15");

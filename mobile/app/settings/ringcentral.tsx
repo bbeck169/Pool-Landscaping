@@ -27,6 +27,7 @@ import { useAuth } from "@/src/auth";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import AppTextInput from "@/src/components/ui/AppTextInput";
+import { useToast } from "@/src/components/ToastProvider";
 
 type RingCentralConfig = {
   webhook_url?: string | null;
@@ -35,6 +36,7 @@ type RingCentralConfig = {
 };
 
 export default function RingCentralSettings() {
+  const { showToast } = useToast(); // TD-96-mobile-toast-sweep (undefined since 4a8d04429)
   const { user } = useAuth();
   // Mirror the web ``<AdminOnly>`` route guard verbatim.
   const isAdmin = user?.role === "admin" || (user?.role as any) === "super_admin";

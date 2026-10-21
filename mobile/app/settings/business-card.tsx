@@ -10,6 +10,7 @@ import { useAuth } from "@/src/auth";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import AppTextInput from "@/src/components/ui/AppTextInput";
+import { useToast } from "@/src/components/ToastProvider";
 
 const FIELDS = [
   { key: "company_name", label: "Company name", kb: "default" as const },
@@ -23,6 +24,7 @@ const FIELDS = [
 ];
 
 export default function BusinessCardSettings() {
+  const { showToast } = useToast(); // TD-96-mobile-toast-sweep (undefined since 4a8d04429)
   const { user } = useAuth();
   const isAdmin = user?.role === "admin" || user?.role === "super_admin";
   const [draft, setDraft] = useState<any>(null);
