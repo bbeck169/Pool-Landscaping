@@ -301,6 +301,23 @@ async def get_lead(lid: str,
         {"tenant_id": tenant["id"], "recipient_type": "lead",
          "recipient_id": lid},
     ))
+    # TD-96-g2 · Feb-2026 — additive ``linked_quotes_count`` mirrors the
+    # ``GET /leads/{lid}/quotes`` ``$or`` semantics so the lead-detail
+    # Linked-Quotes panel stays visible after close-won reparent (the
+    # reparent pipeline flips ``recipient_type`` → "customer" while
+    # retaining ``converted_from_lead_id = <lid>`` for provenance — see
+    # ``_run_close_won_pipeline``). ``quotes_count`` continues to report
+    # pre-conversion lead-recipient docs only so legacy callers remain
+    # unchanged; this new field strictly supersets it (count-wise).
+    # Cheap double-count on the ``(tenant_id, recipient_type,
+    # recipient_id)`` + ``(tenant_id, converted_from_lead_id)`` indexes.
+    row["linked_quotes_count"] = int(await db.quotes.count_documents(
+        {"tenant_id": tenant["id"],
+         "$or": [
+             {"recipient_type": "lead", "recipient_id": lid},
+             {"converted_from_lead_id": lid},
+         ]},
+    ))
     return row
 
 
