@@ -18,14 +18,24 @@ Scope:
       - customers → name, email, phone (with digit-normalized
         matching so "555-1234" stored matches "5551234" typed), and
         address / billing_address
-      - jobs → title, customer_name
+      - jobs → title, customer_name, address (TD-90-search-address-gaps
+        · Feb-2026 — matches on the persisted ``jobs.address`` snapshot;
+        FK-ladder-resolved current property address is NOT in the match
+        set because the resolver is a read-time display concern — see
+        ``services/address_resolver.py`` and the recon doc for the
+        perf + mental-model rationale)
       - invoices (db.quotes where doc_type=="invoice") →
         invoice_number, customer_name, title
       - quotes (db.quotes where doc_type=="quote") →
         quote_number, customer_name, title
-      - leads → name, email, phone; filtered to ACTIVE statuses only
-        (``new``, ``contacted``, ``quoted``).  Closed-won / closed-lost
-        leads are excluded so the drop-down doesn't surface dead deals.
+      - leads → name, email, phone, address, service_address (TD-90-
+        search-address-gaps · Feb-2026 — both ``address`` and
+        ``service_address`` are declared schema fields on ``LeadIn``;
+        the Google-Places autofill path writes either one depending on
+        the entry point so both are matched for recall); filtered to
+        ACTIVE statuses only (``new``, ``contacted``, ``quoted``).
+        Closed-won / closed-lost leads are excluded so the drop-down
+        doesn't surface dead deals.
   * ``limit`` caps top-N per entity (default 5, max 25). Global
     typing latency stays low even on tenants with 10k customers.
   * Regex is escaped so a user typing ``$100`` won't blow up the
@@ -144,8 +154,14 @@ async def _search_customers(tenant_id: str, q: str, limit: int) -> List[dict]:
 
 
 async def _search_jobs(tenant_id: str, q: str, limit: int) -> List[dict]:
-    query = _tenant_filter(tenant_id, q, ["title", "customer_name"])
-    proj = {"_id": 0, "id": 1, "title": 1, "customer_name": 1, "status": 1}
+    # TD-90-search-address-gaps · Feb-2026 — ``address`` added to the
+    # match set. The field holds the persisted snapshot address; the
+    # read-time FK-ladder resolver (``services/address_resolver.py``)
+    # intentionally stays out of search so matching stays index-
+    # cheap and operator mental model (historical form) is preserved.
+    query = _tenant_filter(tenant_id, q, ["title", "customer_name", "address"])
+    proj = {"_id": 0, "id": 1, "title": 1, "customer_name": 1,
+            "status": 1, "address": 1}
     docs = await db.jobs.find(query, proj).limit(limit).to_list(limit)
     return [
         {
@@ -227,15 +243,23 @@ async def _search_leads(tenant_id: str, q: str, limit: int) -> List[dict]:
     # INCOME-DRILLDOWN follow-up · Feb-2026 — active statuses only.
     # Closed leads (``closed_won`` / ``closed_lost``) don't surface
     # in quick-find so the operator sees only in-flight deals.
+    # TD-90-search-address-gaps · Feb-2026 — ``address`` and
+    # ``service_address`` added to the match set. Both are declared
+    # schema fields on ``LeadIn``; the Google-Places autofill path
+    # writes either one depending on the entry point so both are
+    # matched for recall. Hit shape unchanged.
     query = {
         "tenant_id": tenant_id,
         "status": {"$in": _ACTIVE_LEAD_STATUSES},
         "$and": [
             _not_deleted(),
-            {"$or": _build_or_regex(q, ["name", "email", "phone"])},
+            {"$or": _build_or_regex(
+                q, ["name", "email", "phone", "address", "service_address"],
+            )},
         ],
     }
-    proj = {"_id": 0, "id": 1, "name": 1, "email": 1, "phone": 1, "status": 1}
+    proj = {"_id": 0, "id": 1, "name": 1, "email": 1, "phone": 1,
+            "status": 1, "address": 1, "service_address": 1}
     docs = await db.leads.find(query, proj).limit(limit).to_list(limit)
     return [
         {
