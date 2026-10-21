@@ -506,6 +506,43 @@ Lead-recipient docs are strictly `doc_type="quote"` scope. Invoice-facing surfac
 - **Priority:** P2 (candidate, not scheduled).
 
 
+## TD-97 · Lead auto-convert on quote accept — PRE-SHIPPED (Feb-2026 reconciliation)
+
+Audit doc: `memory/td97_lead_auto_convert_on_quote_accept_audit.md`.
+
+**Closed as pre-shipped.** TD-97 reconciliation audit (ships `td97-audit`, `td97a-doc`, `td97b-be`) confirmed the full auto-convert-on-quote-accept pipeline was shipped in commit `3f153049b` (P2 #4 backend · Oct 2026).
+
+### What's live
+
+- **Hook**: `_mark_accepted` in `routers/estimate_viewer.py:512-570` is the sole funnel for all four production acceptance paths:
+  - `POST /quotes/{qid}/accept` (auth'd admin/manager) → `routers/estimate_viewer.py:753`
+  - `POST /portal/quotes/via-token/accept` (legacy query-token magic-link) → `routers/estimate_viewer.py:1110`
+  - `POST /portal/quotes/{token}/approve` (Phase A primary portal path-based) → `routers/estimate_viewer.py:1404`
+  - `POST /quotes/bulk-accept` → `routers/quotes.py:3973`
+- **Pipeline**: `_run_close_won_pipeline` in `routers/leads.py:667-836` transfers lead timeline, notes, service-category inheritance (P2 #6), stamps `converted_customer_id`, reparents ALL lead-recipient quotes via `update_many`.
+- **Idempotency**: two-layer (pipeline short-circuit on `converted_customer_id` + reparent filter scoped to `recipient_type="lead"`).
+- **Audit log**: `event="lead.converted_via_quote"` with `{entity_kind:"lead", entity_id, lead_id, quote_id, actor_user_id, tenant_id, created_at}` on the true transition only. Replays produce no row.
+- **Pytest coverage**: `backend/tests/test_lead_auto_convert_on_quote_accept.py` (3 cases, green in isolation) + `backend/tests/test_td97_lead_auto_convert_entrypoint_invariant.py` (shipped under `td97b-be`, locks the four-entrypoint invariant + multi-outstanding-quote reparent + deprecated-bypass control).
+
+### Known deprecated bypass — NOT a bug
+
+`POST /quotes/{qid}/decision` in `routers/quotes.py:1985-2062` is marked `deprecated=True`, customer-role-only, slated for removal after Phase C ships. It flips `status="accepted"` directly without calling `_mark_accepted` — therefore does NOT auto-convert. Operators migrated to `/portal/quotes/via-token/{token}/approve`, which routes through the hook. The deprecation is documented in the endpoint's own docstring; the `td97b-be` regression smoke carries a dedicated test case covering the bypass behavior so a future ship cannot silently expand it.
+
+### Audit log naming note (cosmetic)
+
+Operator spec §3 asked for `triggered_by:"quote_accept"`; shipped shape uses `event:"lead.converted_via_quote"` + `quote_id` field. Semantic equivalence. No action required — kept as the shipped contract.
+
+**Priority:** closed (pre-shipped).
+
+
+## TD-97-fn (candidate) · Quote-page toast/banner on auto-convert
+
+- **Current state:** When an admin accepts a lead-recipient quote via `_mark_accepted`, the lead auto-converts to a customer behind the scenes, but the admin's current view (quote page) does NOT render a toast / banner / inline notice. The admin only sees the conversion if they navigate to the lead page afterwards — where `conversion-banner` renders inline off `lead.converted_customer_id` + the Closed-Won status pill.
+- **Why deferred:** The server-side behavior is correct and audit-logged. The missing UX is an improvement, not a bug — no customer impact, no data loss. Operator explicitly decided NOT to fold into TD-98/99 (shared timeline refactor) to keep that ticket's scope narrow.
+- **When to ship:** Standalone P3 candidate. Approach would be: on `POST /quotes/{qid}/accept` + `POST /quotes/bulk-accept` admin-side responses, surface the conversion result inline (`{auto_converted_lead_id, auto_converted_customer_id, was_merged}`) so the FE can render a one-shot sonner toast "Lead X auto-converted to customer Y → open customer". Portal-side paths (unauth magic-link accept) do not need the toast — the customer isn't an operator.
+- **Priority:** P3 (candidate, not scheduled).
+
+
 ## Mobile TD-90 / TD-91 notes (Oct-2026)
 - **TD-90-fn** · lead route picks up duplicate ?id= on web preview; harmless, future tiny fix if ever confusing.
 - **TD-91** · mobile Portal Access "View as customer" shipped; header retains "Switch to customer view" for in-app swap. Details:
