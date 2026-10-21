@@ -2305,3 +2305,14 @@
 - **Candidate raised**: TD-tech-secondary-role-empty-fallback (P3 BE).
 - **Files modified**: mobile/src/hooks/useGlobalSearch.ts, mobile/src/lib/globalSearchRoutes.ts, mobile/__tests__/td90-global-search-hook.test.ts, mobile/__tests__/td90-global-search-ui.test.tsx
 - **Web files referenced**: frontend/src/hooks/useGlobalSearchResults.js, frontend/src/components/GlobalSearchBar.jsx (c64864f3d); backend/routers/global_search.py (907f2d1a6, read-only)
+
+## Iteration 175 — TD-82-mobile-calendar-bulk: calendar bulk delete → canonical /jobs/bulk-delete
+- **Commits**: `eaff2b3f1` (td82-mobile-calendar-bulk) · `td82-mobile-calendar-bulk-doc` (this doc)
+- **Date**: 2026-10-21
+- **Recon**: the only mobile shim caller was `app/(app)/schedule/calendar.tsx:617` (not `app/calendar.tsx`). L575/589 (Complete/Move) use per-job PUTs, not the shim. Canonical envelope `{ok, deleted_count, deleted, failed[{id, reason, status_code}]}` per `_generic_bulk_delete`; same `require_admin_or_manager` gate.
+- **Changes**: NEW `src/lib/jobsBulkDelete.ts` (`bulkDeleteJobs` → `POST /jobs/bulk-delete {ids}`, count `deleted_count ?? deleted.length ?? ids.length`); `calendar.tsx` `bulkDelete` uses it with unchanged toast wording.
+- **Checks**: new test 8/8 (incl. regression lock on the legacy path); adjacent suites 6/6, 54/54; tsc 629 post-commit; eslint clean; live canonical envelope probe (nonexistent id) + tech 403. Hygiene drift = exactly the 3 expected files.
+- **Unblocks**: TD-82 Phase 2B (shim → 410 Gone), ready for web-track dispatch.
+- **Candidate raised**: TD-82-mobile-calendar-bulk-partial-toast (P3 mobile).
+- **Files modified**: mobile/app/(app)/schedule/calendar.tsx, mobile/src/lib/jobsBulkDelete.ts (new), mobile/__tests__/td82-mobile-calendar-bulk.test.ts (new)
+- **Web files referenced**: frontend/src/pages/schedule/CalendarSchedule.jsx L650-664 (e57734f00); backend/routers/jobs.py L4253-4300 (shim, 470112f3d), backend/routers/bulk_crm.py L105-139 + L444 (read-only)
