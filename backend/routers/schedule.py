@@ -25,6 +25,13 @@ from pydantic import BaseModel
 from config import db, logger
 from utils import now_iso, get_current_user, new_id
 from routers.tenants import get_current_tenant
+# TD-schedule-address · Feb-2026 — shared FK-ladder resolver so the
+# schedule page returns the CURRENT address (not the denormalized
+# snapshot captured at job creation). Mirrors the auto-visit email
+# resolve-at-read-time precedent.
+from services.address_resolver import (
+    resolve_job_address_from_batches as _resolve_job_address_from_batches,
+)
 
 router = APIRouter()
 
@@ -342,9 +349,17 @@ async def schedule_today(request: Request,
             # ``latitude`` fields are null but the linked customer
             # has geocoded coords. Preview data shows ~1,031 of 1,527
             # jobs missing own coords are rescuable via this fallback.
+            # TD-schedule-address · Feb-2026 — projection extended
+            # with ``primary_property_id`` + ``service_address`` +
+            # ``address`` + ``billing_address`` so the shared
+            # FK-ladder resolver (`resolve_job_address_from_batches`)
+            # can run rungs 2+3 off the same batch (no extra
+            # ``customers`` round-trip for address lookup).
             {"_id": 0, "id": 1, "gate_code": 1, "notes": 1, "access_notes": 1,
               "service_notes": 1,
-              "service_lat": 1, "service_lng": 1},
+              "service_lat": 1, "service_lng": 1,
+              "primary_property_id": 1,
+              "service_address": 1, "address": 1, "billing_address": 1},
         ).to_list(500):
             cust_map[c["id"]] = c
     _timings.append(f"custs;dur={(_t.perf_counter()-_t_custs)*1000:.1f}")
@@ -359,7 +374,16 @@ async def schedule_today(request: Request,
     # ``/api/jobs`` correctly plotted.
     from services.geo_resolver import build_property_coord_lookup
     _t_props = _t.perf_counter()
-    pids = [j.get("property_id") for j in jobs if j.get("property_id")]
+    # TD-schedule-address · Feb-2026 — pids batch now ALSO includes
+    # ``customer.primary_property_id`` so the FK-ladder resolver's
+    # rung 2 (``customer.primary_property_id → db.properties.address``)
+    # runs off the already-batched prop_map. Dedupe is handled inside
+    # ``build_property_coord_lookup``.
+    pids: list = [j.get("property_id") for j in jobs if j.get("property_id")]
+    for _c in cust_map.values():
+        _ppid = _c.get("primary_property_id")
+        if _ppid:
+            pids.append(_ppid)
     prop_map: dict = await build_property_coord_lookup(db, tid, pids)
     _timings.append(f"props;dur={(_t.perf_counter()-_t_props)*1000:.1f}")
 
@@ -454,7 +478,15 @@ async def schedule_today(request: Request,
             ),
             "customer_name": j.get("customer_name"),
             "customer_id": j.get("customer_id"),
-            "address": j.get("address") or j.get("site_address"),
+            # TD-schedule-address · Feb-2026 — resolve CURRENT address
+            # live via FK ladder (``job.property_id`` →
+            # ``customer.primary_property_id`` → customer address
+            # fields → ``job.address`` snapshot). Mirrors the
+            # auto-visit email path's resolver. Uses already-batched
+            # ``cust_map`` + ``prop_map`` — zero extra round-trips.
+            "address": _resolve_job_address_from_batches(
+                j, cust_map, prop_map,
+            ),
             "city": j.get("city"),
             "state": j.get("state"),
             "zip": j.get("zip"),

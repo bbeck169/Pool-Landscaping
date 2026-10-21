@@ -45,32 +45,12 @@ from utils import new_id, now_iso
 # after the recurring template stamped the job.  We now resolve
 # the CURRENT address off ``db.properties`` and fall back to the
 # text field only when the property_id is missing or unresolvable.
-def _format_property_address(prop: Mapping[str, Any]) -> str:
-    """Compose ``"line1, city, STATE POSTAL"`` from a property doc.
-
-    Returns an empty string when the property has no usable address
-    fragments — the caller then falls back to ``job.address``.
-    """
-    addr = prop.get("address")
-    if not isinstance(addr, dict):
-        return ""
-    line1 = (addr.get("line1") or "").strip()
-    line2 = (addr.get("line2") or "").strip()
-    city = (addr.get("city") or "").strip()
-    state = (addr.get("state") or "").strip()
-    postal = (addr.get("postal_code") or "").strip()
-    street = ", ".join(p for p in (line1, line2) if p)
-    tail = " ".join(p for p in (state, postal) if p).strip()
-    # Mirror the customer-side composition (see
-    # ``routers.customers._mirror_address_to_primary_property``).
-    parts: List[str] = []
-    if street:
-        parts.append(street)
-    if city:
-        parts.append(city)
-    if tail:
-        parts.append(tail)
-    return ", ".join(parts)
+# TD-schedule-address · Feb-2026 — moved ``_format_property_address``
+# into the shared ``services.address_resolver`` module so the
+# schedule-page endpoint can mirror the same FK-ladder compose
+# semantics. The alias below preserves the private-name call site
+# below without any behavior change.
+from services.address_resolver import format_property_address as _format_property_address  # noqa: E402, F401
 
 
 async def _resolve_visit_email_address(

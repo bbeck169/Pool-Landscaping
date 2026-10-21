@@ -385,9 +385,15 @@ async def build_property_coord_lookup(
     unique_ids = list({pid for pid in ids})
     cursor = db.properties.find(
         {"tenant_id": tenant_id, "id": {"$in": unique_ids}},
+        # TD-schedule-address · Feb-2026 — projection extended with
+        # ``address`` (sub-doc) + ``deleted_at`` so the shared
+        # ``services.address_resolver.resolve_job_address_from_batches``
+        # can run the FK-ladder compose off the same batch result
+        # (no second ``properties`` round-trip for address lookup).
         {"_id": 0, "id": 1,
          "latitude": 1, "longitude": 1,
-         "lat": 1, "lng": 1},
+         "lat": 1, "lng": 1,
+         "address": 1, "deleted_at": 1},
     )
     rows = await cursor.to_list(len(unique_ids))
     return {r["id"]: r for r in rows if r.get("id")}
