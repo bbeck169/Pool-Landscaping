@@ -919,11 +919,168 @@ async def _customer_notes_to_items(
     return items
 
 
+# ═════════════════════════════════════════════════════════════════════
+# TD-98/99-xref · Feb-2026 — Cross-visibility aggregator
+# Surface pre-conversion lead-era comms (SMS + email + inbound SMS)
+# on the converted customer's super-timeline. Join via reverse
+# lookup: ``leads.find({converted_customer_id: cid, tenant_id})``
+# → ``$in`` on ``lead_communications.lead_id`` and
+# ``sms_inbound.matched_lead_id``.
+# Edge cases:
+#   * Multi-lead-to-one-customer (merge branch of
+#     ``_run_close_won_pipeline``) handled naturally by ``$in``.
+#   * Hard-deleted leads cannot sever the join —
+#     ``_hard_delete_lead`` refuses converted leads at
+#     ``routers/leads.py:1274``.
+#   * Zero converted leads → helpers short-circuit (empty ``$in``)
+#     with no DB roundtrip past the empty list check.
+#   * Tenant isolation preserved at BOTH the reverse-lookup query
+#     AND the ``$in`` collection query.
+# Portal-safety: helpers never emit ``actor_user_id`` or
+# ``delivery_error`` top-level — admin provenance
+# (``sent_by_user_id``) is normalized into the ``actor`` object via
+# ``_resolve_display_name`` which the Phase B pipeline already
+# treats as portal-safe.
+# ═════════════════════════════════════════════════════════════════════
+async def _converted_lead_ids_for_customer(
+    customer_id: str, tenant_id: str,
+) -> List[str]:
+    """Reverse-lookup for all leads converted to this customer in
+    this tenant. Returns empty list when the customer has no
+    pre-conversion lead history (never-was-a-lead path)."""
+    lead_ids: List[str] = []
+    async for lead in db.leads.find(
+        {"tenant_id": tenant_id, "converted_customer_id": customer_id},
+        {"_id": 0, "id": 1},
+    ):
+        lid = lead.get("id")
+        if lid:
+            lead_ids.append(lid)
+    return lead_ids
+
+
+async def _lead_communications_to_items(
+    customer: Dict[str, Any], tenant_id: str,
+    wanted_kinds: Optional[set],
+    from_iso: Optional[str], to_iso: Optional[str],
+    role: str,
+) -> List[Dict[str, Any]]:
+    """TD-98/99-xref · lead-era outbound SMS + email surfacing on the
+    converted customer's super-timeline. Writes stay lead-scoped
+    (TD-96 §6 touch-map); this read joins via
+    ``leads.converted_customer_id``."""
+    want_sms = wanted_kinds is None or "sms" in wanted_kinds
+    want_email = wanted_kinds is None or "email" in wanted_kinds
+    if not (want_sms or want_email):
+        return []
+
+    lead_ids = await _converted_lead_ids_for_customer(
+        customer["id"], tenant_id,
+    )
+    if not lead_ids:
+        return []
+
+    channel_filters: List[str] = []
+    if want_sms:
+        channel_filters.append("sms")
+    if want_email:
+        channel_filters.append("email")
+
+    query: Dict[str, Any] = {
+        "tenant_id": tenant_id,
+        "lead_id":   {"$in": lead_ids},
+        "channel":   {"$in": channel_filters},
+    }
+    if from_iso or to_iso:
+        _range: Dict[str, Any] = {}
+        if from_iso:
+            _range["$gte"] = from_iso
+        if to_iso:
+            _range["$lte"] = to_iso
+        query["created_at"] = _range
+
+    items: List[Dict[str, Any]] = []
+    async for r in db.lead_communications.find(query, {"_id": 0}) \
+            .sort("created_at", -1).limit(_TIMELINE_HARD_CAP):
+        channel = (r.get("channel") or "").lower()
+        kind = "sms" if channel == "sms" else "email"
+        rid = r.get("id") or ""
+        items.append({
+            "kind":            kind,
+            "subject":         r.get("subject") or "",
+            "template_name":   "",
+            "delivery_status": r.get("status") or "queued",
+            "created_at":      r.get("created_at") or "",
+            "ref_type":        "lead_communication",
+            "ref_id":          rid,
+            "recipient":       r.get("to_identity") or "",
+            "trigger_kind":    "",
+            "related_ref":     {"kind": "lead",
+                                  "id":   r.get("lead_id") or ""},
+            "url":             "",
+            # Pre-populated body so FE DefaultRow + the shared
+            # CommunicationDetailModal both work without an extra
+            # fetch. Portal path strips nothing additional — body
+            # was already visible to the recipient at send time.
+            "body":            r.get("body") or "",
+        })
+    return items
+
+
+async def _lead_inbound_sms_to_items(
+    customer: Dict[str, Any], tenant_id: str,
+    wanted_kinds: Optional[set],
+    from_iso: Optional[str], to_iso: Optional[str],
+) -> List[Dict[str, Any]]:
+    """TD-98/99-xref · lead-era inbound SMS (from ``sms_inbound``
+    matched to the converted lead) surfacing on the customer
+    super-timeline."""
+    if wanted_kinds is not None and "sms" not in wanted_kinds:
+        return []
+
+    lead_ids = await _converted_lead_ids_for_customer(
+        customer["id"], tenant_id,
+    )
+    if not lead_ids:
+        return []
+
+    query: Dict[str, Any] = {
+        "tenant_id":       tenant_id,
+        "matched_lead_id": {"$in": lead_ids},
+    }
+    if from_iso or to_iso:
+        _range: Dict[str, Any] = {}
+        if from_iso:
+            _range["$gte"] = from_iso
+        if to_iso:
+            _range["$lte"] = to_iso
+        query["received_at"] = _range
+
+    items: List[Dict[str, Any]] = []
+    async for r in db.sms_inbound.find(query, {"_id": 0}) \
+            .sort("received_at", -1).limit(_TIMELINE_HARD_CAP):
+        rid = r.get("id") or ""
+        items.append({
+            "kind":            "sms",
+            "subject":         "",
+            "template_name":   "",
+            "delivery_status": "received",
+            "created_at":      r.get("received_at") or "",
+            "ref_type":        "lead_sms_inbound",
+            "ref_id":          rid,
+            "recipient":       r.get("from_identity")
+                                or r.get("from_number") or "",
+            "trigger_kind":    "",
+            "related_ref":     {"kind": "lead",
+                                  "id":   r.get("matched_lead_id") or ""},
+            "url":             "",
+            "body":            r.get("message_text")
+                                or r.get("body") or "",
+        })
+    return items
+
+
 def _normalise_existing_item(item: Dict[str, Any]) -> Dict[str, Any]:
-    """Backfill the B-required fields onto items produced by the
-    pre-B pulls. Existing fields stay put — this only ADDS
-    ``id / source_type / occurred_at / summary / detail / actor``
-    when they aren't already set."""
     if "source_type" in item and "occurred_at" in item:
         return item
     kind = (item.get("kind") or "").lower()
@@ -1004,6 +1161,20 @@ async def _build_full_timeline(
         customer, tenant_id, wanted_kinds, from_iso, to_iso, role,
     )
     merged = marketing + quote_items
+    # TD-98/99-xref · Feb-2026 — Cross-visibility aggregator.
+    # Surface pre-conversion lead-era comms (outbound SMS/email +
+    # inbound SMS matched to the converted lead) on both admin and
+    # portal paths. Portal visibility is intentional: these ARE the
+    # customer's own historical interactions with the company. The
+    # helpers never emit admin-only fields (actor_user_id,
+    # delivery_error) top-level, so no additional stripping is
+    # required beyond the Phase B defaults.
+    merged += await _lead_communications_to_items(
+        customer, tenant_id, wanted_kinds, from_iso, to_iso, role,
+    )
+    merged += await _lead_inbound_sms_to_items(
+        customer, tenant_id, wanted_kinds, from_iso, to_iso,
+    )
     # Phase B — call_logs + job internal notes, admin/super_admin only.
     if role in _FULL_TIMELINE_ROLES:
         merged += await _call_logs_to_items(
