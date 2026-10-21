@@ -4255,33 +4255,56 @@ async def soft_delete_job(jid: str,
 async def bulk_soft_delete_jobs(body: BulkSoftDeleteIn,
                                   user: dict = Depends(require_admin_or_manager),
                                   tenant: dict = Depends(get_current_tenant)):
-    """Feb-2026 · Schedule multi-select — bulk soft-delete wrapper.
+    """TD-82-calendar-consolidate · Feb-2026 — THIN SHIM.
 
-    Iterates the shared helper so per-job guardrails still apply.
-    Caps at 100 rows per call to keep the request bounded. Response
-    surfaces both successes and failures so the UI can toast a summary
-    like "Deleted 8 of 10 (2 failed)".
+    Historical endpoint retained ONLY so mobile ``app/calendar.tsx``
+    keeps working during the two-phase retire. All delete work
+    delegates to the canonical ``POST /jobs/bulk-delete`` handler
+    in ``routers/bulk_crm.py:444`` via its shared
+    ``_generic_bulk_delete`` helper + ``_job_locked`` lock-reason
+    predicate. Nothing in this shim performs its own soft-delete
+    logic any more — any divergence between the two code paths is
+    now impossible.
+
+    Response envelope is reshaped BIT-FOR-BIT back to the legacy
+    shape ``{ok, count, deleted, failed[{job_id,reason,status_code}]}``
+    so that existing callers (mobile ``calendar.tsx:617`` + legacy
+    pytest harnesses) see no change.
+
+    Legacy constraints preserved:
+      * 100-row cap (tighter than the shared ``_CAP=400`` ceiling).
+      * ``job_ids``-named body field.
+      * ``failed[].job_id`` key (not canonical ``failed[].id``).
+      * ``count`` key (not canonical ``deleted_count``).
+
+    TODO(TD-82-mobile-calendar-bulk): convert to 410 Gone once
+    mobile migrates. Phase 2B dispatched by operator after mobile
+    follow-up ticket closes.
     """
+    from routers.bulk_crm import _generic_bulk_delete, _job_locked
+
     ids = list(body.job_ids or [])
     if not ids:
         raise HTTPException(400, "job_ids is empty")
     if len(ids) > 100:
         raise HTTPException(400, "bulk soft-delete capped at 100 rows per call")
 
-    deleted: List[str] = []
-    failed: List[Dict[str, Any]] = []
-    for jid in ids:
-        try:
-            r = await _perform_soft_delete_job(jid, user, tenant)
-            deleted.append(r["job_id"])
-        except HTTPException as e:
-            failed.append({"job_id": jid, "reason": str(e.detail),
-                              "status_code": e.status_code})
-        except Exception as e:                                # noqa: BLE001
-            failed.append({"job_id": jid, "reason": str(e), "status_code": 500})
-
-    return {"ok": True, "count": len(deleted),
-              "deleted": deleted, "failed": failed}
+    canonical = await _generic_bulk_delete(
+        "jobs", "job.soft_delete", ids, user, tenant, _job_locked,
+    )
+    # Reshape canonical ``{ok, deleted_count, deleted, failed[{id,...}]}``
+    # back to legacy ``{ok, count, deleted, failed[{job_id,...}]}``.
+    legacy_failed = [
+        {"job_id": f.get("id"), "reason": f.get("reason"),
+         "status_code": f.get("status_code")}
+        for f in canonical.get("failed", [])
+    ]
+    return {
+        "ok": canonical.get("ok", True),
+        "count": canonical.get("deleted_count", 0),
+        "deleted": canonical.get("deleted", []),
+        "failed": legacy_failed,
+    }
 
 
 # ═════════════════════════════════════════════════════════════════════════

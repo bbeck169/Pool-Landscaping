@@ -199,6 +199,14 @@ def test_can_delete_recently_completed_job(admin_headers, recent_completed_job):
 
 # ─── Bulk soft-delete ────────────────────────────────────────────────
 def test_bulk_soft_delete_returns_per_id_results(admin_headers):
+    """TD-82-calendar-consolidate · Feb-2026 — handler is now a thin
+    shim over the canonical ``_generic_bulk_delete`` + ``_job_locked``
+    predicate from ``routers/bulk_crm.py``. Legacy behavior that
+    locked old-completed jobs without an invoice is retired —
+    ``_job_locked`` only rejects (a) active-timer jobs and (b)
+    completed jobs with a non-null ``invoice_id``. Historic completed
+    jobs with no invoice soft-delete through the canonical pipeline
+    (and now this test asserts that new behavior)."""
     tid = _super_admin_tenant_id()
     good = _seed_job(status="scheduled")
     bad = f"pytest-nonexistent-{uuid.uuid4().hex[:8]}"
@@ -212,11 +220,17 @@ def test_bulk_soft_delete_returns_per_id_results(admin_headers):
                             headers=admin_headers, timeout=20)
         assert r.status_code == 200, r.text
         body = r.json()
+        # Legacy envelope shape preserved by shim.
+        assert set(body.keys()) == {"ok", "count", "deleted", "failed"}
+        # ``good`` + ``historic`` (completed-no-invoice) both soft-delete
+        # under canonical semantics.
         assert good["id"] in body["deleted"]
+        assert historic["id"] in body["deleted"]
         failed_ids = [f["job_id"] for f in body["failed"]]
+        # Only the fabricated non-existent id lands in ``failed``.
         assert bad in failed_ids
-        assert historic["id"] in failed_ids
-        assert body["count"] == 1
+        assert historic["id"] not in failed_ids
+        assert body["count"] == 2
     finally:
         _sync.jobs.delete_one({"id": good["id"]})
         _sync.jobs.delete_one({"id": historic["id"]})
