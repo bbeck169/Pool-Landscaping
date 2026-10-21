@@ -601,6 +601,51 @@ The original ask included "default 5 entries, View all to expand, Show less to c
 - **Priority:** P2 (candidate, not scheduled).
 
 
+## TD-98/99-xref · Cross-visibility aggregator — SHIPPING (Feb-2026)
+
+Audit doc: `memory/td98_99_xref_cross_visibility_audit.md`.
+
+**Scope**: Surface pre-conversion lead-era comms (SMS + email + inbound SMS) on the converted customer's super-timeline (`GET /customers/{cid}/timeline` + `GET /customers/me/timeline`). Join via reverse-lookup `leads.find({converted_customer_id: cid, tenant_id})` → `$in` on `lead_communications.lead_id` + `sms_inbound.matched_lead_id`.
+
+### Operator decisions recorded
+
+- **§7.1 Disposition**: 3-commit ship (`td98-99-xref-a-doc` + `td98-99-xref-b-be` + `td98-99-xref-c-fe`).
+- **§7.2 lead_status_change items**: comms-only (status transitions excluded). Raised as **TD-98/99-xref-lifecycle (P3)** below.
+- **§7.3 Portal visibility**: included on `/customers/me/timeline`. Helper naturally conforms to the existing `_strip_admin_fields` posture by never emitting `actor_user_id` or `delivery_error` top-level — admin provenance (`sent_by_user_id`) is normalized into the `actor` object via `_resolve_display_name` which the Phase B pipeline already treats as portal-safe.
+- **§7.4 Attribution chip**: skipped in Phase 1. Raised as **TD-98/99-xref-attribution (P3)** below.
+- **§8 α/β sub-decision**: conditional β adopted after pre-check. Pre-check confirmed `CustomerFullTimeline`'s `DefaultRow` currently renders SMS/email rows as **null/no-op** (plain text, no click handler) because `item.url==""` for marketing_delivery and (post-ship) lead_communication rows. Adopting β wires `CommunicationDetailModal` for `kind in {sms, email}` with `item.url` absent — zero regression on customer-era invoice/estimate rows (which keep their `Link to={item.url}` behavior). Smoke `td98-xref-row-modal.test.jsx` locks both lead-era + customer-era SMS/email now open the modal.
+
+### Edge cases documented
+
+- **Multi-lead-to-one-customer** (merge branch of `_run_close_won_pipeline`) handled naturally by `$in` on reverse-lookup result. No per-lead attribution rendered in Phase 1.
+- **Hard-deleted leads** cannot sever the join — `_hard_delete_lead` refuses converted leads via `converted_lock` at `routers/leads.py:1274`.
+- **Zero converted leads** short-circuits — empty `lead_ids` list → zero items, no DB roundtrip past the empty `$in`.
+- **Tenant isolation** preserved — both helpers require `tenant_id` match on BOTH the reverse-lookup AND the `$in` collection query.
+
+### Priority
+
+Shipped under commits `td98-99-xref-a-doc`, `td98-99-xref-b-be`, `td98-99-xref-c-fe`.
+
+
+## TD-98/99-xref-lifecycle (candidate) · Lead-era status transitions on converted customer timeline
+
+- **Current state:** TD-98/99-xref aggregator ships comms-only (SMS + email + inbound SMS). Lead `timeline[].status_change` events (`new → contacted → quoted → closed_won` etc.) do NOT surface on the converted customer super-timeline.
+- **Why deferred:** Status transitions are a different data category than comms. Mixing both into the aggregator risks UI noise and muddies the "lead comms visibility" promise. Operator explicitly scoped TD-98/99-xref to comms-only.
+- **When to ship:** If operator reports a visibility gap for lead-lifecycle context post-conversion. Two shape options then:
+  1. Dedicated `_lead_status_change_to_items` helper emitting one row per transition.
+  2. Bundled `lead_lifecycle` row ("Lead was in states: new → contacted → quoted → closed_won") per converted lead.
+- **Priority:** P3 (candidate, not scheduled).
+
+
+## TD-98/99-xref-attribution (candidate) · "Originally lead X" chip on lead-era rows
+
+- **Current state:** Lead-era rows surface on the converted customer timeline with `related_ref: {"kind": "lead", "id": <lead_id>}` set in the server response. The FE renders them identically to customer-era rows (same `KindPill`, same `DefaultRow`) with no visual indicator that they originated from the pre-conversion lead.
+- **Why deferred:** Attribution is a nice-to-have surfacing of provenance. Current ship proves the aggregator mechanics work; chip UX can layer on without any backend change.
+- **When to ship:** If operator reports confusion about where a lead-era item came from. ~15 LOC FE change to render a tiny chip inside `DefaultRow` when `item.related_ref?.kind === "lead"`.
+- **Priority bump trigger:** P2 if operator reports as visible gap.
+- **Priority:** P3 (candidate, not scheduled).
+
+
 ## Mobile TD-90 / TD-91 notes (Oct-2026)
 - **TD-90-fn** · lead route picks up duplicate ?id= on web preview; harmless, future tiny fix if ever confusing.
 - **TD-91** · mobile Portal Access "View as customer" shipped; header retains "Switch to customer view" for in-app swap. Details:
