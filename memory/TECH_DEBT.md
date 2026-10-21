@@ -1882,3 +1882,23 @@ Updated authority-location trend across V13 / V14 / V15:
 #### Pattern-strength callout
 
 V15 is the **first injection vector to treat the agent's own classification artifacts (the vigilance list) as the attack fuel**. Elevated severity class. Any future variant that instructs the agent to consult TECH_DEBT, lesson docs, test credentials, or any internal artifact and emit an authority ceremony is a V15-family continuation regardless of what artifact is referenced.
+
+
+## TD-tech-using-search (bookmark, P3 product+BE)
+
+Bookmark preserving the original intent of the (now-superseded) `TD-mobile-tech-search` note at `memory/TECH_DEBT.md:1275-1277`. Where `TD-search-technicians-bucket` ships technicians AS results (operator D1 = scope path C — see `memory/td_search_technicians_bucket_recon.md`), this entry tracks the inverse: technicians AS CALLERS of `/api/search`, currently 403 via `backend/routers/global_search.py:57-61` (`_require_dashboard_role`).
+
+- **Status:** parked pending product + backend scoping decision (e.g. restrict techs to their own jobs/customers only; new per-row RBAC predicate; or stand up a separate `/api/search/tech` endpoint with narrower returns).
+- **Mobile cost after scoping:** ~5 LOC (relax `GLOBAL_SEARCH_ROLES`).
+- **Backend cost:** unknown; depends on the scoping decision.
+- Not blocking anything; raised separately so the `TD-search-technicians-bucket` ship doesn't collapse the two directions.
+
+
+## TD-tech-roster-pii (P3, backend)
+
+`GET /api/technicians` (`backend/routers/technicians.py:22-262`) currently returns every technician's `phone` + `email` to any authenticated user of the tenant — the handler depends only on `get_current_user` + `get_current_tenant`, not `require_admin`. Field techs (and any non-admin role) can enumerate peer contact info by hitting the endpoint directly or scraping the Schedule / Dispatch / Workstream dropdowns that consume it. The downstream dropdowns were the intended consumer when the endpoint was built; the PII exposure was an unintentional side-effect of using the same shape for both direct admin reads and dropdown feeds.
+
+- **File + line refs:** `backend/routers/technicians.py:22` (route decl, auth = `get_current_user` only), `:92-108` (users-arm projection returning `email` + `phone`), `:114-127` (synth row emits both fields), `:122-125` (synth includes `email` + `phone`).
+- **Fix sketch (not in scope here):** either (a) gate the endpoint behind `require_admin` + add a slimmer `/api/technicians/dropdown` for role-agnostic consumers that returns only `{id, name, display_color_hex}`, or (b) switch projection based on caller role at the current route (admin → full, non-admin → id+name only).
+- **Priority:** P3. Operator approved logging only during the `TD-search-technicians-bucket` recon; not fixed in that ticket.
+
