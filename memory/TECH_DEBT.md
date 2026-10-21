@@ -1058,6 +1058,46 @@ Audit: `memory/mobile/td96_mobile_audit.md` (`37b3e7fc4`). Operator decisions: D
 - **Ops note:** jest failure-list baselines now live in `/root/jest-baselines/` (outside the repo, so the cron can't sweep them, and outside `/tmp`, which was cleaned twice this session).
 
 
+## TD-98-be-sources · super-timeline source-restoration — SHIPPED (Oct-2026)
+
+- **Ships:** `27964b28b` `td98-be-sources-be` (Fork (b) rewrite · delete 3 orphan helpers `_dispatch_to_item` + `_audit_to_item` + `_strip_admin_fields` + add 2 Phase-B shape helpers `_notification_dispatch_log_to_items` + `_audit_events_to_items` + wire into `_build_full_timeline` + stale docstring fix on retired endpoint + guard-test narrowed to 3 remaining primitives + pytest full matrix 16/16 green) · `99d6e2755` `td98-be-sources-fe` (`CustomerFullTimeline` admin-only `delivery_error` red Error badge in `DefaultRow` + vitest 3/3 green).
+- **Phase-B semantic contract:** `notification_dispatch_log` + `audit_events` rows now surface on `/customers/{cid}/timeline` + `/customers/me/timeline` with proper portal visibility split.
+- **Portal visibility split** (§4.d): `notification_dispatch_log` YES (customers see their own notifications sent) · `invoice_auto_charged` YES (customers see auto-charge records with impersonation stamp hidden + `actor_user_id` + `delivery_error` stripped at source) · `portal_invite_bulk` admin-only · `job_edited_after_completion` admin-only (K6 before/after invariant preserved).
+- **Event-type → kind mapping** (§4.b α default): `portal_invite_bulk → kind=email` · `job_edited_after_completion → kind=note` · `invoice_auto_charged → kind=note`. Dedicated `payment` kind (§4.b β) deferred to `TD-98-be-sources-payment-kind` candidate below.
+- **`delivery_error` fate** (§4.c x inline): preserved inline on admin-visible items; stripped at source for portal callers via `is_admin` gate inside each new helper. FE badge is defense-in-depth (`DefaultRow`'s conditional only renders when field present).
+- **Reality-check correction logged**: operator-dispatched "delete all 6 preserved helpers" narrowed to 3 during Phase 2 ship after `grep` found `_load_customer` + `_customer_addresses` + `_preview` still called by active Phase-B helpers (`_marketing_deliveries_to_items`, `_job_notes_to_items`, `_customer_notes_to_items`, `_build_full_timeline`, and the 2 new TD-98-be-sources helpers). Documented in-file + commit. **New sub-class for `td-lessons-doc-5`:** `orchestrator-dispatch-overgeneralization` — operator dispatches a plural count ("delete all 6") against a mixed set where only a subset is actually safe to delete. Distinct from §4.d's default-stance miscal (which was about assumed-missing vs. assumed-shipped); this one is about assumed-scope-breadth being wider than the ground truth supports.
+- **Priority:** closed.
+
+
+## TD-98-be-sources-payment-kind (candidate, P3 BE + FE + mobile)
+
+- **Scope:** introduce dedicated `payment` kind on the super-timeline for auto-charges (and future manual payments / refunds / failed charges). Currently `invoice_auto_charged` folds into `kind=note` per §4.b α default — functional but loses the opportunity for a dedicated payment-shaped UX (dollar amount prominence, PI-id tail, charged/refunded state semantics).
+- **BE delta:** extend `_TIMELINE_ALLOWED_KINDS`; add `payment` branch to `_normalise_existing_item.src` map; `_audit_events_to_items` emits `kind=payment` for `invoice_auto_charged` instead of `kind=note`.
+- **FE delta:** `DefaultRow` extension (OR dedicated `PaymentRow`) + chip icon + optional "Receipt" link if payment-receipt URLs are available.
+- **Mobile delta:** `normaliseTimelineItem` + render branch — raise `TD-98-be-sources-mobile-payment` sub-candidate at ship time.
+- **Est LOC:** ~60-120 BE + ~40-80 FE + ~30-50 mobile.
+- **Priority:** P3 (candidate). Blocked only on operator pick.
+
+
+## TD-96-g1-web-view (candidate, P3 web FE)
+
+- **Reporter:** mobile track recon (`ec306147c`, `fcb934448`, Oct-2026).
+- **Finding (live-tested):** web `LeadDetail.jsx:771` "View all" link navigates to `/quotes?lead=<lid>` with no `view=` param. `QuotesList.jsx` defaults to `view=open`, which excludes reparented quotes (`status="accepted"`). On 2 of 3 live preview leads with linked quotes, the "View all" page lands EMPTY despite the LeadDetail panel showing non-zero count.
+- **Fix scope:** add `&view=all` to the deep-link OR default `view=all` on QuotesList when `?lead=` is present. ~2 LOC web FE change.
+- **Priority:** P3 (candidate, web).
+
+
+## TD-96-g1-invoices (candidate, P3 BE/web)
+
+- **Reporter:** mobile track recon.
+- **Finding:** panel's `linked_quotes_count` counts converted invoices via `$or` on `converted_from_lead_id`, but `/quotes?lead_id=X&view=all` returns quote-shaped rows only (`doc_type="quote"`). Counts disagree — "View all 2" shows 1 row on 1 live case. Semantic ambiguity: does "linked quotes" mean "docs that WERE quotes" (count current + reparented including those auto-converted to invoices) or "docs that ARE quotes" (narrow)?
+- **Fork options:**
+  - (i) **Tighten** `linked_quotes_count` to quotes-only (`doc_type="quote"` filter on the `$or`). Count matches `/quotes?lead_id=` output exactly.
+  - (ii) **Expand** `/quotes?lead_id=` to include invoice-shaped reparented docs (`doc_type ∈ {quote, invoice}` when `lead_id` is set). Semantic becomes "all docs that originated from this lead".
+- **Est LOC:** ~5-15 LOC BE either fork + ~1 pytest update.
+- **Priority:** P3 (candidate, BE/web). Operator picks fork.
+
+
 ## Audit-process lessons learned · td-lessons-doc-4 batch (Oct-2026 · post-TD-96-g1/g2 ship)
 
 ### TD-61 strike #17 — edit-time-sweep behavior class · mitigation threshold codified

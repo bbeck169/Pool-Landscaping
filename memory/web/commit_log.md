@@ -18,3 +18,27 @@
   - mobile/src/components/portal/DeleteAccountSection.tsx (new component)
   - mobile/src/components/schedule/DailyRouteMap.native.tsx (new component)
   - mobile/app/_layout.tsx (Mapbox token guard)
+
+
+## Iteration 2 — TD-98-be-sources Fork (b) Rewrite (Oct 2026)
+- **Commits**: `27964b28b` (be), `99d6e2755` (fe), `<this doc>` (doc)
+- **Date**: 2026-10-21
+- **Changes**:
+  - Super-timeline source-restoration: `notification_dispatch_log` + `audit_events` now surface on `/customers/{cid}/timeline` + `/customers/me/timeline`.
+  - 3 orphan legacy helpers deleted (`_dispatch_to_item`, `_audit_to_item`, `_strip_admin_fields`); 2 new Phase-B shape helpers added (`_notification_dispatch_log_to_items`, `_audit_events_to_items`).
+  - Portal visibility split: `notification_dispatch_log` + `invoice_auto_charged` visible with field-strip; `portal_invite_bulk` + `job_edited_after_completion` admin-only.
+  - FE: `CustomerFullTimeline` admin-only red Error badge for `delivery_error` with hover title.
+  - Pytest full matrix: 16/16 green (dispatch_log 7 + audit_events 6 + integration 3). Adjacent regression 9/9 green (test_td98_be_cleanup_retire updated for Fork b).
+  - Vitest: 3/3 new + 14/14 pre-existing suite green.
+  - 4 new candidates raised: `TD-98-be-sources-payment-kind` (P3), `TD-96-g1-web-view` (P3), `TD-96-g1-invoices` (P3).
+- **Files modified**:
+  - backend/routers/communication_timeline.py (Fork b rewrite)
+  - backend/tests/test_td98_be_sources_notification_dispatch_log.py (new)
+  - backend/tests/test_td98_be_sources_audit_events.py (new)
+  - backend/tests/test_td98_be_sources_integration.py (new)
+  - backend/tests/test_td98_be_cleanup_retire.py (preservation guard narrowed)
+  - frontend/src/components/customers/CustomerFullTimeline.jsx (delivery_error badge)
+  - frontend/src/components/customers/__tests__/td98-be-sources-delivery-error-badge.test.jsx (new)
+  - memory/TECH_DEBT.md (CLOSED entries + 3 new P3 candidates)
+  - memory/web/commit_log.md (this entry)
+- **TD-61 chain**: 18 (unchanged; zero in-cycle rogue strikes across all 3 commits).
