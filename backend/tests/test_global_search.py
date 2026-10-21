@@ -258,7 +258,8 @@ def test_search_empty_query_returns_empty_groups(admin_ctx):
                     headers=_auth(tok), timeout=30)
     r.raise_for_status()
     body = r.json()
-    assert body == {"customers": [], "jobs": [], "invoices": [], "leads": []}
+    assert body == {"customers": [], "jobs": [], "invoices": [],
+                     "quotes": [], "leads": [], "technicians": []}
 
 
 def test_search_role_gate_rejects_technician():

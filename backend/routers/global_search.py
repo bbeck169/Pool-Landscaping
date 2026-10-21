@@ -1,11 +1,12 @@
 """Feb 2026 · Dashboard global-search endpoint.
 
-`GET /api/search?q=<query>&limit=5&entities=customers,jobs,invoices,quotes,leads`
+`GET /api/search?q=<query>&limit=5&entities=customers,jobs,invoices,quotes,leads,technicians`
 
 Returns a compact grouped result set so the Dashboard's quick-find
 search bar can render "Customers · N / Jobs · N / Invoices · N /
-Quotes · N / Leads · N" without hitting five separate endpoints
-(and without duplicating tenant/soft-delete scoping in the frontend).
+Quotes · N / Leads · N / Technicians · N" without hitting six
+separate endpoints (and without duplicating tenant/soft-delete
+scoping in the frontend).
 
 Scope:
   * Tenant-scoped via ``get_current_tenant``.
@@ -45,7 +46,8 @@ from utils import get_current_user
 router = APIRouter()
 
 
-_VALID_ENTITIES = ("customers", "jobs", "invoices", "quotes", "leads")
+_VALID_ENTITIES = ("customers", "jobs", "invoices", "quotes", "leads",
+                     "technicians")
 
 # Canonical lead statuses that count as "active" for the drop-down —
 # mirrors ``routers.leads._CANONICAL_STATUSES`` minus the closed
@@ -246,12 +248,70 @@ async def _search_leads(tenant_id: str, q: str, limit: int) -> List[dict]:
     ]
 
 
+async def _search_technicians(tenant_id: str, q: str, limit: int) -> List[dict]:
+    """TD-search-technicians-bucket · Feb-2026.
+
+    Technicians live across TWO sources (``db.technicians`` + ``db.users``
+    with role in ``ASSIGNABLE_ROLES``). We delegate the union + dedupe +
+    inactive/deleted exclusion to the shared helper
+    ``services.technicians_core.fetch_tenant_technician_roster`` so this
+    bucket and ``/api/technicians`` resolve against the same roster
+    truth.
+
+    Match semantics mirror the existing buckets:
+      * name   — case-insensitive substring (``_build_or_regex`` family).
+      * email  — case-insensitive substring.
+      * phone  — digit-normalized substring via ``_phone_digit_regex``
+                 (≥3 digits), so ``5551234`` matches ``(555) 123-4567``.
+
+    Filtering is applied in Python over the already-deduped roster — a
+    tenant with 10k techs is well under the Python-filter budget, and
+    this preserves dedupe correctness (a user whose tech-row email
+    matches must appear exactly once even if the users-row email also
+    would match).
+    """
+    from services.technicians_core import fetch_tenant_technician_roster
+    docs, _ = await fetch_tenant_technician_roster(tenant_id)
+
+    needle = (q or "").strip().lower()
+    phone_digits = re.sub(r"\D", "", q or "")
+
+    def _phone_hit(stored_phone: str) -> bool:
+        if len(phone_digits) < 3:
+            return False
+        return phone_digits in re.sub(r"\D", "", stored_phone or "")
+
+    out: List[dict] = []
+    for d in docs:
+        rid = d.get("id")
+        if not rid:
+            continue
+        name = (d.get("name") or "").lower()
+        email = (d.get("email") or "").lower()
+        if not (needle and (needle in name or needle in email
+                              or _phone_hit(d.get("phone") or ""))):
+            continue
+        role = d.get("role") or ""
+        phone_display = d.get("phone") or ""
+        secondary_parts = [p for p in (role, phone_display) if p]
+        secondary = " · ".join(secondary_parts) or (d.get("email") or "")
+        out.append({
+            "id": rid,
+            "primary": d.get("name") or "(unnamed)",
+            "secondary": secondary,
+        })
+        if len(out) >= limit:
+            break
+    return out
+
+
 _ENTITY_HANDLERS = {
     "customers": _search_customers,
     "jobs": _search_jobs,
     "invoices": _search_invoices,
     "quotes": _search_quotes,
     "leads": _search_leads,
+    "technicians": _search_technicians,
 }
 
 
@@ -260,7 +320,7 @@ async def global_search(
     q: str = Query("", description="Search string; empty returns empty groups"),
     limit: int = Query(5, ge=1, le=25),
     entities: str = Query(
-        "customers,jobs,invoices,quotes,leads",
+        "customers,jobs,invoices,quotes,leads,technicians",
         description="Comma-separated entity list to search",
     ),
     user: dict = Depends(get_current_user),
