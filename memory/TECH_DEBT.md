@@ -1127,7 +1127,32 @@ Quote(s) with the legacy `approved` status exist (1 observed on preview). Web's 
 - **Priority:** closed.
 
 
-## TD-98-be-sources-mobile-payment (candidate, P3 mobile)
+## TD-98-be-sources-mobile-payment: CLOSED (`22f5f51e3`, Oct-2026)
+
+- **Changes:** prod +11/−2.
+  - **`mobile/src/lib/customerTimeline.ts`:**
+    - `TimelineKind` gains `"payment"`.
+    - `TIMELINE_BASE_CHIPS` becomes `[all, email, sms, invoice, estimate, payment]`. It's a BASE chip, not admin-gated, so portal, admin, manager and technician all see it (web `_BASE_CHIPS` + BE §4.d parity).
+    - `TimelineItem.total` = `typeof raw.total === "number" ? raw.total : 0`. Before this, the adapter dropped `total` entirely.
+  - **`mobile/src/components/customers/CommunicationTimeline.tsx`:**
+    - `KIND_META.payment` = `{Payment, Ionicons "card" ≙ web CreditCard, bg #D1FAE5, fg #065F46, dot #059669}`. The chip label is "Payments" via the existing `chipLabel`.
+    - The existing `Row` (the DefaultRow equivalent; no PaymentRow per web D4) renders a `$X.XX` money chip (`toFixed(2)`) after the time when `total > 0`. testID: `timeline-money-<id>`.
+    - A payment row's headline is the BE `summary` ("Invoice auto-charged · logged", via `_normalise_existing_item` setdefault). The body is the charge sentence. `url=''`, so there's no link. The "logged" status pill shows.
+- **Parity note (flagged at ship):** the money chip is kind-agnostic, exactly like web DefaultRow. The BE already emits numeric `total` on invoice/estimate rows, so **mobile invoice/estimate timeline rows now show `$X.XX` too**. Web already did this; it's new on mobile. Seen live on `drift-dt-fd70e7` ($10.00 estimates, $100.00 invoices).
+- **testIDs:** kept the existing mobile patterns (`communication-timeline-chip-payment`, `timeline-row-<id>`, `timeline-pill-payment`). The dispatch's suggested `timeline-chip-payment` / `timeline-row-payment-<id>` would have broken the established mobile naming.
+- **Verification:**
+  - **Jest:** NEW `__tests__/td98-mobile-payment.test.tsx` 13/13.
+    - Chips: BASE placement; the chip shows for admin, customer, technician and manager; call/note stay gated for portal and technician; the Payments chip refetches with `kind=payment`.
+    - Payment row: pill + money + summary + body + no link.
+    - Money: hidden for 0 / missing / negative / string totals; `toFixed` formatting; invoice money parity.
+    - Regression on note/sms rows, plus the adapter `total`.
+  - **Existing tests:** `td98-cleanup-timeline-adapter` H2 chip lists +payment. Timeline-related suites 12/13, 121/121; `route-entry-classifier` is baseline-failing.
+  - **tsc:** 629 post-commit.
+  - **Live (admin):** the chip row is `[all, email, sms, invoice, estimate, payment, call, note]`. There are no `invoice_auto_charged` events on preview, so payment-row rendering is unit-tested only.
+- **Siblings remain open P3 bookmarks** (no scope creep): `TD-98-be-sources-payment-kind-ach`, `TD-98-payment-failed-kind`, `TD-98-be-sources-webhook-feed`, `TD-98-manual-payment-audit`, `TD-98-payment-row-component`.
+
+Original candidate note:
+
 
 Mobile parity for the web `payment` kind shipped above (`2f35d291d` + `_pending_fe_sha_`). Mobile needs:
 - `mobile/src/lib/customerTimeline.ts:17` — extend `TimelineKind` union with `"payment"`.

@@ -2316,3 +2316,12 @@
 - **Candidate raised**: TD-82-mobile-calendar-bulk-partial-toast (P3 mobile).
 - **Files modified**: mobile/app/(app)/schedule/calendar.tsx, mobile/src/lib/jobsBulkDelete.ts (new), mobile/__tests__/td82-mobile-calendar-bulk.test.ts (new)
 - **Web files referenced**: frontend/src/pages/schedule/CalendarSchedule.jsx L650-664 (e57734f00); backend/routers/jobs.py L4253-4300 (shim, 470112f3d), backend/routers/bulk_crm.py L105-139 + L444 (read-only)
+
+## Iteration 176 — TD-98-be-sources-mobile-payment: payment kind on mobile customer timeline
+- **Commits**: `22f5f51e3` (td98-be-sources-mobile-payment) · `td98-be-sources-mobile-payment-doc` (this doc)
+- **Date**: 2026-10-21
+- **Changes**: `customerTimeline.ts` (payment kind, BASE chip, `total` passthrough); `CommunicationTimeline.tsx` (`KIND_META.payment` + `$X.XX` money chip on the existing Row when `total > 0`). Prod +11/−2.
+- **Recon flags**: (1) the adapter previously dropped `total`; (2) the money chip is kind-agnostic like web, so invoice/estimate rows now show amounts on mobile too (web parity, verified live); (3) kept the existing mobile testID patterns instead of the dispatch's suggested names.
+- **Checks**: new 13/13; adapter H2 updated; timeline-related suites 12/13, 121/121 (1 baseline); tsc 629 post-commit; live chip row + money chips on `drift-dt-fd70e7`. Hygiene drift = exactly the 4 expected files.
+- **Files modified**: mobile/src/lib/customerTimeline.ts, mobile/src/components/customers/CommunicationTimeline.tsx, mobile/__tests__/td98-mobile-payment.test.tsx (new), mobile/__tests__/td98-cleanup-timeline-adapter.test.ts
+- **Web files referenced**: frontend/src/components/customers/CustomerFullTimeline.jsx (28bdef72c: _KIND_META.payment, _BASE_CHIPS, DefaultRow money L255-271); backend/routers/communication_timeline.py L896-925 + L1135-1160 (2f35d291d, read-only)
