@@ -275,18 +275,26 @@ export default function LeadDetail() {
   }, [lead?.id]);
 
   // P2 #4 · Feb-2026 — fetch linked-quotes mini-list after the lead
-  // resolves AND only when the quotes_count badge indicates there's
+  // resolves AND only when a non-zero count badge indicates there's
   // something to show (avoids an empty network call for brand-new leads).
+  // TD-96-g2 · Feb-2026 — gate on ``linked_quotes_count`` (post-conversion
+  // ``$or`` count) so the panel stays visible after close-won reparent
+  // flips ``recipient_type`` → "customer". Falls back to the legacy
+  // ``quotes_count`` for the deploy window where the detail response
+  // may not yet carry the new field.
   useEffect(() => {
     if (!lead?.id) return;
-    if (!(lead.quotes_count > 0)) {
+    const count = (lead.linked_quotes_count != null
+      ? lead.linked_quotes_count
+      : lead.quotes_count);
+    if (!(count > 0)) {
       setLinkedQuotes(null);
       return;
     }
     api.get(`/leads/${lead.id}/quotes?limit=10`).then((res) => {
       setLinkedQuotes(res || { items: [], total: 0, limit: 10 });
     }).catch(() => { setLinkedQuotes(null); });
-  }, [lead?.id, lead?.quotes_count]);
+  }, [lead?.id, lead?.quotes_count, lead?.linked_quotes_count]);
 
   const setStatus = async (status) => {
     setBusy(true);
