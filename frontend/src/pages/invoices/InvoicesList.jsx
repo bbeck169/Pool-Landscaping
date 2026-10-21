@@ -122,6 +122,39 @@ export default function InvoicesList() {
   };
   // Feb-2026 · Bulk-pay iteration 1 — card-on-file filter + sort state.
   const cardFilter = params.get("card") || "any"; // any | yes | no
+  // TD-93 · Feb-2026 — date-range filter.  ``date_field`` toggle
+  // selects which backing field the range applies to:
+  // ``created_at`` (default — canonical "invoice date") or
+  // ``due_date``.  Both bounds inclusive; empty bound = open-ended
+  // on that side.  Passed through verbatim to both the list
+  // endpoint (`GET /quotes`) and the summary endpoint
+  // (`GET /payments/summary`).  Summary response echoes
+  // ``range_active`` + ``date_field`` so the dynamic tile labels
+  // don't have to re-derive from URL state.
+  const dateFrom = params.get("date_from") || "";
+  const dateTo = params.get("date_to") || "";
+  const dateField = params.get("date_field") || "created_at";
+  const setDateFrom = (v) => {
+    const s = new URLSearchParams(params);
+    if (v) s.set("date_from", v);
+    else s.delete("date_from");
+    setParams(s, { replace: true });
+    setSelected(new Set());
+  };
+  const setDateTo = (v) => {
+    const s = new URLSearchParams(params);
+    if (v) s.set("date_to", v);
+    else s.delete("date_to");
+    setParams(s, { replace: true });
+    setSelected(new Set());
+  };
+  const setDateField = (v) => {
+    const s = new URLSearchParams(params);
+    if (v && v !== "created_at") s.set("date_field", v);
+    else s.delete("date_field");
+    setParams(s, { replace: true });
+  };
+  const rangeActive = Boolean(dateFrom || dateTo);
   // Feb-2026 · Item 2 — customer-scoped filter. URL-persisted so
   // filtered views are shareable / bookmarkable.
   const customerFilter = params.get("customer_id") || null;
@@ -217,8 +250,24 @@ export default function InvoicesList() {
     // stable ``error_code=invalid_payment_status`` we surface as
     // an empty grid rather than a client-side coerced fallback.
     qs.set("payment_status", paymentStatusFilter);
+    // TD-93 · Feb-2026 — date-range filter.  ``date_from`` /
+    // ``date_to`` as YYYY-MM-DD; ``date_field`` strictly enum of
+    // ``created_at`` | ``due_date`` on the BE.  Only emit the
+    // params that are actually set so default behaviour (no
+    // range) stays byte-identical.
+    if (dateFrom) qs.set("date_from", dateFrom);
+    if (dateTo) qs.set("date_to", dateTo);
+    if (rangeActive) qs.set("date_field", dateField);
     api.get(`/quotes?${qs.toString()}`).then((r) => setRows(r || [])).catch(() => setRows([]));
-    api.get("/payments/summary").then(setSummary).catch(() => {});
+    // TD-93 · Feb-2026 — summary endpoint also honors the range.
+    const summaryQs = new URLSearchParams();
+    if (dateFrom) summaryQs.set("date_from", dateFrom);
+    if (dateTo) summaryQs.set("date_to", dateTo);
+    if (rangeActive) summaryQs.set("date_field", dateField);
+    const summaryPath = summaryQs.toString()
+      ? `/payments/summary?${summaryQs.toString()}`
+      : "/payments/summary";
+    api.get(summaryPath).then(setSummary).catch(() => {});
     // Bulk-pay iteration 1 · pull PM enrichment from /invoices/overview.
     // /overview only returns outstanding invoices (paid excluded), which
     // is exactly the set we'd want to bulk-charge anyway. Rows not in
@@ -239,7 +288,8 @@ export default function InvoicesList() {
   useEffect(() => {
     loadRows();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedCategories.join("|"), customerFilter, paymentStatusFilter]);
+  }, [selectedCategories.join("|"), customerFilter, paymentStatusFilter,
+      dateFrom, dateTo, dateField]);
 
   // Phase 14b — load category dropdown options once (admin surfaces only).
   useEffect(() => {
@@ -568,16 +618,18 @@ export default function InvoicesList() {
         <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-4">
           <SummaryTile
             icon={TrendingUp} tone={colors.success}
-            label="Collected this month"
+            label={rangeActive ? "Collected in range" : "Collected this month"}
             value={money(summary.collected_this_month)}
             testid="inv-tile-collected"
             active={activeTile === "collected"}
             onClick={() => toggleTile("collected")}
-            ariaLabel="Filter invoices to paid this calendar month"
+            ariaLabel={rangeActive
+              ? "Filter invoices to paid in the selected date range"
+              : "Filter invoices to paid this calendar month"}
           />
           <SummaryTile
             icon={Clock} tone="#A16207"
-            label="Outstanding"
+            label={rangeActive ? "Outstanding (in range)" : "Outstanding"}
             value={money(summary.outstanding_total)}
             sub={`${summary.outstanding_count} inv`}
             testid="inv-tile-outstanding"
@@ -587,7 +639,7 @@ export default function InvoicesList() {
           />
           <SummaryTile
             icon={AlertCircle} tone={colors.error}
-            label="Overdue count"
+            label={rangeActive ? "Overdue count (in range)" : "Overdue count"}
             value={String(summary.overdue?.length ?? 0)}
             testid="inv-tile-overdue"
             active={activeTile === "overdue"}
@@ -751,6 +803,37 @@ export default function InvoicesList() {
           <option value="any">Card on file: Any</option>
           <option value="yes">Card on file: Yes</option>
           <option value="no">Card on file: No</option>
+        </NavyFilterBar.Select>
+
+        {/* TD-93 · Feb-2026 — date-range filter + By-field toggle.
+            Same NavyFilterBar.DatePicker primitive used by
+            ChemicalApplicationsList + WorkstreamPage + NotesArchive.
+            BE validates ``date_field`` against the whitelist
+            [created_at, due_date]; any other value → 400 with
+            ``error_code=invalid_date_field``.  Both bounds
+            inclusive; open-ended range (only one bound set) is
+            accepted and behaves as the half-interval. */}
+        <NavyFilterBar.DatePicker
+          label="From"
+          value={dateFrom}
+          onChange={setDateFrom}
+          data-testid="inv-filter-date-from"
+        />
+        <NavyFilterBar.DatePicker
+          label="To"
+          value={dateTo}
+          onChange={setDateTo}
+          data-testid="inv-filter-date-to"
+        />
+        <NavyFilterBar.Select
+          label="By"
+          value={dateField}
+          onChange={setDateField}
+          data-testid="inv-filter-date-field"
+          ariaLabel="Date field for the From/To filter"
+        >
+          <option value="created_at">Invoice date</option>
+          <option value="due_date">Due date</option>
         </NavyFilterBar.Select>
 
         {/* Phase 14b · Feb-2026 — Category multi-select. Renders

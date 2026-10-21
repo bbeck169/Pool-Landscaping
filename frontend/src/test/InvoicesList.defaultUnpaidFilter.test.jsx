@@ -66,8 +66,12 @@ describe("FIN-PARITY-B · InvoicesList default unpaid filter", () => {
 
   // ─── 3. useEffect refetches when the filter changes ────────
   it("useEffect deps include paymentStatusFilter so dropdown re-fetches", () => {
+    // TD-93 · Feb-2026 — dependency list extended with
+    // ``dateFrom``, ``dateTo``, ``dateField`` so the date-range
+    // filter triggers refetch on change.  Match the pre-TD-93
+    // prefix verbatim; TD-93 appends after.
     expect(INVOICES).toMatch(
-      /\[selectedCategories\.join\("\|"\),\s*customerFilter,\s*paymentStatusFilter\]/,
+      /\[selectedCategories\.join\("\|"\),\s*customerFilter,\s*paymentStatusFilter,[\s\S]{0,120}dateFrom,\s*dateTo,\s*dateField\]/,
     );
   });
 
