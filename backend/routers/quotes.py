@@ -431,7 +431,28 @@ async def list_quotes(user: dict = Depends(get_current_user),
                                         "declined", "all"],
                 },
             )
-        q["doc_type"] = "quote"
+        # TD-96-g1-invoices · Feb-2026 — relax ``doc_type="quote"``
+        # forcing when the caller passed ``lead_id`` AND ``view=all``.
+        # The ``lead_id`` filter at :496 scopes by lineage (any doc
+        # whose current recipient is this lead OR which was
+        # reparented from this lead on close-won — see TD-96-g2 and
+        # the ``_run_close_won_pipeline`` reparent step at
+        # ``routers/leads.py:828-842``, which carries BOTH quote-
+        # shaped AND invoice-shaped docs forward with
+        # ``converted_from_lead_id`` stamped). ``view=all`` is the
+        # "no lifecycle narrowing" signal. When BOTH are set, the
+        # operator asks for "every doc that originated from this
+        # lead" — so we drop the ``doc_type="quote"`` scope and let
+        # invoice-shaped reparented docs surface alongside the
+        # quotes. Lifecycle views (``open`` / ``accepted`` /
+        # ``converted`` / ``declined``) keep ``doc_type="quote"``
+        # because those statuses only live on quote-shaped docs.
+        # Also preserves prior behavior when ``view=all`` is set
+        # WITHOUT ``lead_id`` (standalone quotes dashboard "All" tab
+        # stays quote-only — the operator mental model there is
+        # "all quotes", not "all docs").
+        if not (lead_id and _view == "all"):
+            q["doc_type"] = "quote"
         _view_and = q.get("$and", [])
         if _view == "open":
             _view_and.append(
