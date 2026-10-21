@@ -152,7 +152,16 @@ describe("LeadDetail · Linked Quotes mini-list", () => {
     const viewAll = screen.getByTestId("lead-linked-quotes-view-all");
     expect(viewAll.textContent).toContain("15");
     fireEvent.click(viewAll);
-    expect(navigateMock).toHaveBeenCalledWith("/quotes?lead=lead-abc");
+    // TD-96-g1-web-view · Feb-2026 — "View all" link must now carry
+    // ``&view=all`` so the QuotesList lead-scoped mixed-shape path
+    // activates (BE guard at routers/quotes.py:434 drops ``doc_type=quote``
+    // only when both ``lead_id`` AND ``view=all`` are set). Without
+    // ``view=all``, QuotesList defaults ``view`` → "open" and the
+    // reparented invoices stay hidden.
+    expect(navigateMock).toHaveBeenCalledWith("/quotes?lead=lead-abc&view=all");
+    // Regression guard — plain ``?lead=`` without ``&view=all`` must not
+    // be routed to (would silently hide invoices).
+    expect(navigateMock).not.toHaveBeenCalledWith("/quotes?lead=lead-abc");
   });
 
   it("does NOT render View all when items.length == total", async () => {

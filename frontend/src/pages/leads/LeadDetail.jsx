@@ -776,7 +776,7 @@ export default function LeadDetail() {
               {linkedQuotes.total > (linkedQuotes.items || []).length ? (
                 <button
                   type="button"
-                  onClick={() => nav(`/quotes?lead=${lead.id}`)}
+                  onClick={() => nav(`/quotes?lead=${lead.id}&view=all`)}
                   className="mt-3 w-full text-xs font-semibold text-indigo-600 hover:underline"
                   data-testid="lead-linked-quotes-view-all"
                 >
