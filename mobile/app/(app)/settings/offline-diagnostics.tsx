@@ -25,6 +25,7 @@ import {
   hydrateToday,
 } from "@/src/services/routeHydrator";
 import type { HydrationMeta } from "@/src/services/routeHydrator";
+import { useToast } from "@/src/components/ToastProvider";
 
 function _fmtBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -38,6 +39,7 @@ function _fmtTime(iso: string): string {
 }
 
 export default function OfflineDiagnosticsScreen() {
+  const { showToast } = useToast(); // TD-96-mobile-toast-sweep (undefined since 4a8d04429)
   const router = useRouter();
   const { user } = useAuth();
   const online = useOnline();

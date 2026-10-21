@@ -9,8 +9,10 @@ import { colors, font, fontSize, spacing, radius } from "@/src/theme";
 import { listReviews, updateReview } from "@/src/api/reviews";
 import { ReviewCardNative } from "@/src/components/reviews/ReviewCardNative";
 import AppTextInput from "@/src/components/ui/AppTextInput";
+import { useToast } from "@/src/components/ToastProvider";
 
 export default function ReviewsRecentScreen() {
+  const { showToast } = useToast(); // TD-96-mobile-toast-sweep (undefined since 4a8d04429)
   const insets = useSafeAreaInsets();
   const [rows, setRows] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);

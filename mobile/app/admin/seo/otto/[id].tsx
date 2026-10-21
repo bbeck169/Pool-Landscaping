@@ -13,6 +13,7 @@ import { Header } from "@/src/components/widgets";
 import {
   AdminOnlyGate, BrandPill, SeverityDot, CenterLoader,
 } from "../_shared";
+import { useToast } from "@/src/components/ToastProvider";
 
 const STATUS_TONE: Record<string, "brand" | "green" | "amber" | "red" | "grey"> = {
   pending: "amber", applied: "green", dismissed: "grey",
@@ -27,6 +28,7 @@ export default function OttoDetailMobile() {
 }
 
 function Inner() {
+  const { showToast } = useToast(); // TD-96-mobile-toast-sweep (undefined since 4a8d04429)
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const [fix, setFix] = useState<any>(null);

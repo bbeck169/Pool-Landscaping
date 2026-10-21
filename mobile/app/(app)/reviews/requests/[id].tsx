@@ -10,8 +10,10 @@ import { getRequest, resendRequest } from "@/src/api/reviews";
 import { OutcomePillNative } from "@/src/components/reviews/OutcomePillNative";
 import { StarRatingDisplayNative } from "@/src/components/reviews/StarRatingDisplayNative";
 import { formatCustomerName } from "@/src/utils/formatCustomerName";
+import { useToast } from "@/src/components/ToastProvider";
 
 export default function ReviewsRequestDetailScreen() {
+  const { showToast } = useToast(); // TD-96-mobile-toast-sweep (undefined since 4a8d04429)
   const { id } = useLocalSearchParams<{ id: string }>();
   const insets = useSafeAreaInsets();
   const [data, setData] = useState<any>(null);

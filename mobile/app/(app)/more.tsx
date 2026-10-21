@@ -23,8 +23,10 @@ import MarcoVoiceSettings from "@/src/components/marco/MarcoVoiceSettings";
 // one-file change.
 import { ADMIN_NAV, OWNER_NAV, QUICK_ACCESS, canSeeEntry, filterNavByIndustries, type NavEntry, type NavGroup } from "@/src/nav/adminNav";
 import { useIndustries } from "@/src/hooks/useIndustries";
+import { useToast } from "@/src/components/ToastProvider";
 
 export default function More() {
+  const { showToast } = useToast(); // TD-96-mobile-toast-sweep (undefined since 4a8d04429)
   const { user, logout } = useAuth();
   const router = useRouter();
   const [pushEnabled, setPushEnabled] = useState(true);
