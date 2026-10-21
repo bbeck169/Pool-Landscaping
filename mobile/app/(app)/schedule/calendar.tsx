@@ -55,6 +55,7 @@ import WeatherWidget from "@/src/components/weather/WeatherWidget";
 import RainFlag from "@/src/components/weather/RainFlag";
 import WeekStrip from "@/src/components/schedule/WeekStrip";
 import { showConfirm } from "@/src/components/ConfirmModal";
+import { bulkDeleteJobs } from "@/src/lib/jobsBulkDelete";
 import { useToast } from "@/src/components/ToastProvider";
 // Phase 23 · 2026-08-02 — Service / Repair progress ring tiles above the grid.
 import JobTrackerTiles from "./JobTrackerTiles";
@@ -614,8 +615,8 @@ function ScheduleCalendarInner() {
       onConfirm: async () => {
         setBusy(true);
         try {
-          await api.post("/jobs/bulk-soft-delete", { job_ids: [...checked] });
-          showToast(`${checked.size} job${checked.size === 1 ? "" : "s"} removed.`);
+          const { count } = await bulkDeleteJobs([...checked]); // TD-82-mobile-calendar-bulk · canonical /jobs/bulk-delete
+          showToast(`${count} job${count === 1 ? "" : "s"} removed.`);
           setChecked(new Set());
           await load(true);
         } catch (e: any) {
