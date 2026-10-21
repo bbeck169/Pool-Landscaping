@@ -37,6 +37,8 @@ import { api } from "@/api";
 import { useAuth } from "@/auth";
 import { PhoneLink } from "@/components/customer/PhoneLink";
 import { colors } from "@/theme";
+import CommunicationDetailModal
+  from "@/components/communications/CommunicationDetailModal";
 
 
 // ═══════════════════════════════════════════════════════════════════
@@ -224,8 +226,19 @@ function NoteRow({ item, index, meta }) {
 }
 
 
-function DefaultRow({ item, index, meta }) {
+function DefaultRow({ item, index, meta, onOpenDetail }) {
   const hasUrl = !!item.url;
+  // TD-98/99-xref · Feb-2026 — Conditional β adopted post-pre-check.
+  // SMS/email rows with no ``url`` are currently null/no-op; wiring
+  // them to the shared CommunicationDetailModal is purely additive.
+  // Customer-era marketing_delivery rows (url=="") + lead-era
+  // lead_communication rows + lead_sms_inbound rows all qualify.
+  // Non-SMS/email rows (invoice, estimate) retain their Link
+  // navigation unchanged — zero regression.
+  const kind = (item.kind || item.source_type || "").toLowerCase();
+  const canOpenModal = !hasUrl
+                        && (kind === "sms" || kind === "email")
+                        && item.ref_id;
   const money = typeof item.total === "number" && item.total > 0
     ? `$${item.total.toFixed(2)}`
     : "";
@@ -271,6 +284,17 @@ function DefaultRow({ item, index, meta }) {
           >
             {item.subject} <ExternalLink size={12} />
           </Link>
+        ) : canOpenModal ? (
+          <button
+            type="button"
+            onClick={() => onOpenDetail && onOpenDetail(item.ref_id)}
+            className="inline-flex items-center gap-1 text-left hover:underline cursor-pointer"
+            style={{ color: colors.onSurface, background: "transparent",
+                      padding: 0, border: 0, font: "inherit" }}
+            data-testid={`timeline-open-detail-${index}`}
+          >
+            {item.subject || "(no subject)"}
+          </button>
         ) : item.subject}
       </div>
       {item.recipient ? (
@@ -284,13 +308,14 @@ function DefaultRow({ item, index, meta }) {
 }
 
 
-function Row({ item, index }) {
+function Row({ item, index, onOpenDetail }) {
   const kind = (item.kind || item.source_type || "email").toLowerCase();
   const meta = _KIND_META[kind] || _KIND_META.email;
   let inner;
   if (kind === "call") inner = <CallRow item={item} index={index} meta={meta} />;
   else if (kind === "note") inner = <NoteRow item={item} index={index} meta={meta} />;
-  else inner = <DefaultRow item={item} index={index} meta={meta} />;
+  else inner = <DefaultRow item={item} index={index} meta={meta}
+                              onOpenDetail={onOpenDetail} />;
   return (
     <li
       className="flex items-start gap-3 py-3"
@@ -339,6 +364,11 @@ export default function CustomerFullTimeline({ scope = "admin", customerId }) {
   const [activeKind, setActiveKind] = useState("all");
   const [loading, setLoading]       = useState(true);
   const [err, setErr]               = useState("");
+  // TD-98/99-xref · Feb-2026 — Row-level detail modal for SMS/email
+  // rows (customer-era marketing_delivery + lead-era lead_communication
+  // + lead_sms_inbound). Rows with ``item.url`` (invoice, estimate)
+  // retain their existing Link navigation.
+  const [detailRowId, setDetailRowId] = useState(null);
 
   const kindCsv = useMemo(
     () => (activeKind === "all" ? "" : activeKind),
@@ -445,7 +475,8 @@ export default function CustomerFullTimeline({ scope = "admin", customerId }) {
         <ul className="list-none" data-testid="timeline-list">
           {items.map((it, i) => (
             <Row key={`${it.ref_type || it.source_type}-${it.ref_id || it.id}-${i}`}
-                  item={it} index={i} />
+                  item={it} index={i}
+                  onOpenDetail={setDetailRowId} />
           ))}
         </ul>
       )}
@@ -480,6 +511,13 @@ export default function CustomerFullTimeline({ scope = "admin", customerId }) {
           Next →
         </button>
       </div>
+
+      {/* TD-98/99-xref · shared row-level detail modal (SMS/email) */}
+      <CommunicationDetailModal
+        open={!!detailRowId}
+        rowId={detailRowId}
+        onClose={() => setDetailRowId(null)}
+      />
     </div>
   );
 }
