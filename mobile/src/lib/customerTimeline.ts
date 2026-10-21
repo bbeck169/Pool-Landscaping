@@ -1,8 +1,8 @@
 /**
  * TD-98-be-cleanup · mobile migration · pure super-timeline helpers.
  *
- * Mobile moves off the legacy `GET /customers/{cid}/communication-timeline`
- * onto the endpoints web `CustomerFullTimeline.jsx` uses:
+ * Mobile moves off the retired legacy per-customer "communication timeline"
+ * endpoint (TD-98-be-cleanup) onto the endpoints web `CustomerFullTimeline.jsx` uses:
  *   admin scope  → GET /customers/{cid}/timeline   (admin/manager/super_admin)
  *   portal scope → GET /customers/me/timeline       (customer; page mode only)
  * Envelope `{items, page, page_size, total, total_pages, next_before}`.
