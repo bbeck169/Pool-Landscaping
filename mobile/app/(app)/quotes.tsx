@@ -24,7 +24,7 @@ import QuotesBulkToolbar, { bulkOutcomeMessage } from "@/src/components/quotes/Q
 // ── Phase 3 lifecycle view filter (mirrors web QuotesList.jsx) ────
 const VIEW_FILTERS = [
   { key: "open",      label: "Open" },
-  { key: "converted", label: "Converted" },
+  { key: "accepted",  label: "Accepted" }, // TD-96-g1-mobile-labels · web 89d49b4dc ($or: accepted | converted)
   { key: "declined",  label: "Declined" },
   { key: "all",       label: "All" },
 ];
@@ -60,7 +60,8 @@ export default function Quotes() {
   const leadFilter = typeof params?.lead === "string" && params.lead ? params.lead : null;
   const viewParam = typeof params?.view === "string" ? params.view : "";
   useEffect(() => {
-    if (VIEW_FILTERS.some((f) => f.key === viewParam)) setView(viewParam);
+    const v = viewParam === "converted" ? "accepted" : viewParam; // legacy deep-link rewrite (web parity)
+    if (VIEW_FILTERS.some((f) => f.key === v)) setView(v);
   }, [viewParam]);
   const [leadName, setLeadName] = useState<string | null>(null);
   useEffect(() => {

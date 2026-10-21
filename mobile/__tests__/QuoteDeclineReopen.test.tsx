@@ -114,8 +114,9 @@ const mockBack = jest.fn();
 jest.mock("expo-router", () => ({
   useRouter: () => ({ push: mockPush, replace: jest.fn(), back: mockBack }),
   useFocusEffect: (cb: any) => { cb(); },
-  useLocalSearchParams: () => ({ id: "q-test-1" }),
+  useLocalSearchParams: () => mockParams,
 }));
+let mockParams: Record<string, string> = { id: "q-test-1" };
 
 let mockUser = { role: "admin" };
 jest.mock("@/src/auth", () => ({
@@ -212,6 +213,7 @@ describe("Quotes list screen — Phase 3 filter + row actions", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockUser = { role: "admin" };
+    mockParams = { id: "q-test-1" };
     mockApiGet.mockResolvedValue([
       { id: "q1", doc_type: "quote", title: "Open quote", status: "draft", total: 500, customer_name: "Alice" },
       { id: "q2", doc_type: "quote", title: "Declined quote", status: "declined", total: 300, customer_name: "Bob" },
@@ -226,7 +228,7 @@ describe("Quotes list screen — Phase 3 filter + row actions", () => {
     await waitFor(() => {
       expect(getByTestId("quotes-list-filter")).toBeTruthy();
       expect(getByTestId("quotes-list-filter-open")).toBeTruthy();
-      expect(getByTestId("quotes-list-filter-converted")).toBeTruthy();
+      expect(getByTestId("quotes-list-filter-accepted")).toBeTruthy();
       expect(getByTestId("quotes-list-filter-declined")).toBeTruthy();
       expect(getByTestId("quotes-list-filter-all")).toBeTruthy();
     });
@@ -241,16 +243,30 @@ describe("Quotes list screen — Phase 3 filter + row actions", () => {
     });
   });
 
-  it("tapping Converted re-fetches with ?view=converted", async () => {
+  // TD-96-g1-mobile-labels · web QUOTES-TAB-COLLAPSE-CONVERTED (89d49b4dc) parity.
+  it("tapping Accepted re-fetches with ?view=accepted; no Converted tab", async () => {
     const Quotes = require("@/app/(app)/quotes").default;
-    const { getByTestId } = render(<Quotes />);
+    const { getByTestId, queryByTestId } = render(<Quotes />);
 
-    await waitFor(() => getByTestId("quotes-list-filter-converted"));
-    fireEvent.press(getByTestId("quotes-list-filter-converted"));
+    await waitFor(() => getByTestId("quotes-list-filter-accepted"));
+    expect(queryByTestId("quotes-list-filter-converted")).toBeNull();
+    fireEvent.press(getByTestId("quotes-list-filter-accepted"));
 
     await waitFor(() => {
-      expect(mockApiGet).toHaveBeenCalledWith("/quotes?view=converted");
+      expect(mockApiGet).toHaveBeenCalledWith("/quotes?view=accepted");
     });
+    expect(mockApiGet).not.toHaveBeenCalledWith("/quotes?view=converted");
+  });
+
+  it("legacy ?view=converted deep link is rewritten to the Accepted view", async () => {
+    mockParams = { view: "converted" };
+    const Quotes = require("@/app/(app)/quotes").default;
+    render(<Quotes />);
+
+    await waitFor(() => {
+      expect(mockApiGet).toHaveBeenCalledWith("/quotes?view=accepted");
+    });
+    expect(mockApiGet).not.toHaveBeenCalledWith("/quotes?view=converted");
   });
 
   it("shows Decline button on open-view rows when role allows", async () => {
