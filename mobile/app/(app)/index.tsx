@@ -22,6 +22,7 @@ import RevenueForecastTile from "@/src/components/dashboard/RevenueForecastTile"
 import RevenueDateRangeFilter, { type RevenueRange } from "@/src/components/dashboard/RevenueDateRangeFilter";
 import RevenueByCategoryTile from "@/src/components/dashboard/RevenueByCategoryTile";
 import IncomeByServiceCategoryTile from "@/src/components/dashboard/IncomeByServiceCategoryTile";
+import ServiceCategoryTileRow from "@/src/components/dashboard/ServiceCategoryTileRow";
 import AppTextInput from "@/src/components/ui/AppTextInput";
 import MassMessagingCard from "@/src/components/dashboard/MassMessagingCard";
 import DashboardActionCards from "@/src/components/dashboard/DashboardActionCards";
@@ -192,6 +193,10 @@ export default function Dashboard() {
               value={data[k.field] ?? 0} onPress={() => router.push(k.href(isRevenueAdmin) as any)} />
           ))}
         </View>
+
+        {/* TD-84 b1 · web P2 #6 Customers by Service Category row, directly
+            after the KPI grid. Endpoint is admin + manager; hidden on error. */}
+        {isManagerPlus ? <ServiceCategoryTileRow width={kpiWidth} /> : null}
 
         {/* Phase 39B · Action Cards (manager+). */}
         {isManagerPlus ? <DashboardActionCards /> : null}

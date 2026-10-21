@@ -73,6 +73,10 @@ export default function Customers() {
     setStatusFilter(statusParam as any);
     router.setParams({ tab: undefined, status: undefined } as any);
   }, [statusParam]); // eslint-disable-line react-hooks/exhaustive-deps
+  // TD-84 b1 · web CustomersList `?service_category=` (dashboard Service
+  // Category tiles). Route-param driven like the onboarding tiles; values
+  // outside pool/landscaping/both/unset are ignored (backend parity).
+  const serviceCategory = parseServiceCategory((routeParams as any)?.service_category);
 
   // P43c corrected — Portal status tri-state ("" = any, "activated" = Signed in, "not_activated" = Never signed in).
   const [portalFilter, setPortalFilter] = useState<"" | "activated" | "not_activated">("");
@@ -132,6 +136,7 @@ export default function Customers() {
       if (pendingMergeCandidates) qp.set("pending_merge_candidates", "true");
       // Temp-password parity — "Never logged in" filter.
       if (neverLoggedInFilter) qp.set("first_access", "never");
+      if (serviceCategory) qp.set("service_category", serviceCategory);
       // Phase 9-M — onboarding tile filter (mutually exclusive, route-param driven).
       if (tileKey === "activated") qp.set("portal_activated", "1");
       else if (tileKey === "signed_in") qp.set("first_access", "any");
@@ -164,7 +169,7 @@ export default function Customers() {
       setRefreshing(false);
       setLoadingMore(false);
     }
-  }, [statusFilter, portalFilter, missingAddressFilter, noPaymentFilter, missingEmailFilter, missingPhoneFilter, includeMerged, pendingMergeCandidates, neverLoggedInFilter, tileKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [statusFilter, portalFilter, missingAddressFilter, noPaymentFilter, missingEmailFilter, missingPhoneFilter, includeMerged, pendingMergeCandidates, neverLoggedInFilter, tileKey, serviceCategory]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadMore = useCallback(() => {
     if (loadingMore) return;
@@ -309,6 +314,7 @@ export default function Customers() {
     setPendingMergeCandidates(false);
     setNeverLoggedInFilter(false);
     if (tileKey) router.setParams(tileParamsFor(null) as any);
+    if (serviceCategory) router.setParams({ service_category: undefined } as any);
     setPage(1);
   };
 
@@ -368,6 +374,16 @@ export default function Customers() {
       {/* Dispatch A — Portal Onboarding Health Tile (admin-only) */}
       {isAdmin ? (
         <PortalOnboardingHealthTile activeKey={tileKey} onToggle={handleTileToggle} />
+      ) : null}
+      {serviceCategory ? (
+        <Pressable
+          onPress={() => { router.setParams({ service_category: undefined } as any); setPage(1); }}
+          style={cs.serviceCategoryChip} testID="customers-service-category-chip"
+          accessibilityRole="button" accessibilityLabel={`Clear service category filter ${SERVICE_CATEGORY_LABELS[serviceCategory]}`}
+        >
+          <Text style={cs.serviceCategoryChipText}>Service: {SERVICE_CATEGORY_LABELS[serviceCategory]}</Text>
+          <Ionicons name="close" size={14} color={colors.brand} />
+        </Pressable>
       ) : null}
       {/* P45 — Single "More filters" trigger replacing individual chip rows. */}
       <Pressable
