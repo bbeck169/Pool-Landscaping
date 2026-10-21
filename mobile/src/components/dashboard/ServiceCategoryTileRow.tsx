@@ -19,7 +19,7 @@ export const SERVICE_CATEGORY_LABELS: Record<ServiceCategoryKey, string> = {
 };
 /** Route-param guard — values outside the enum are ignored (backend parity). */
 export const parseServiceCategory = (v: unknown): ServiceCategoryKey | null =>
-  typeof v === "string" && v in SERVICE_CATEGORY_LABELS ? (v as ServiceCategoryKey) : null;
+  typeof v === "string" && Object.prototype.hasOwnProperty.call(SERVICE_CATEGORY_LABELS, v) ? (v as ServiceCategoryKey) : null;
 
 type Bucket = { customers?: number; active_jobs?: number; mtd_revenue?: number };
 const TILES: { key: ServiceCategoryKey; icon: any; bg: string; border: string; iconBg: string; stats: boolean }[] = [

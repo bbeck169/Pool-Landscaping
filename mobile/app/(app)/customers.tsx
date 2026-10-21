@@ -19,6 +19,7 @@ import RestoreCustomerButton from "@/src/components/customers/RestoreCustomerBut
 import PortalOnboardingHealthTile, {
   type TileKey, type TileParams, tileKeyFromParams, tileParamsFor,
 } from "@/src/components/customers/PortalOnboardingHealthTile";
+import { parseServiceCategory, SERVICE_CATEGORY_LABELS } from "@/src/components/dashboard/ServiceCategoryTileRow";
 import AppTextInput from "@/src/components/ui/AppTextInput";
 import { PhoneLink, AddressLink } from "@/src/components/customer";
 
@@ -827,6 +828,12 @@ const styles = StyleSheet.create({
 
 // Ship 2 · extra styles for soft-deleted UX
 const cs = StyleSheet.create({
+  serviceCategoryChip: {
+    flexDirection: "row", alignItems: "center", alignSelf: "flex-start", gap: 6, minHeight: 36,
+    marginHorizontal: spacing.lg, marginTop: spacing.sm, paddingHorizontal: spacing.md,
+    borderRadius: radius.pill, borderWidth: 1, borderColor: colors.brand, backgroundColor: colors.surface,
+  },
+  serviceCategoryChipText: { fontFamily: font.semibold, fontSize: fontSize.sm, color: colors.brand },
   rowDeleted: {
     opacity: 0.6,
   },
