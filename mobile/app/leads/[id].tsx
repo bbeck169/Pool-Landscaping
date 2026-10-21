@@ -44,6 +44,12 @@ const STATUS_COLORS: Record<string, { bg: string; fg: string; label: string }> =
   "on_hold": { bg: "#F1F5F9", fg: "#475569", label: "On Hold" },
   "archived": { bg: "#E5E7EB", fg: "#374151", label: "Archived" },
 };
+// TD-96-mobile-status · web parity (LeadDetail.jsx STATUS_ORDER minus closed_*): canonical snake_case only.
+const STATUS_TILES = [
+  ["new", "refresh-outline", "#1E3A8A"],
+  ["contacted", "chatbubble-outline", "#A16207"],
+  ["quoted", "document-text-outline", "#3730A3"],
+] as const;
 
 const SOURCE_LABELS: Record<string, string> = {
   website_form: "Website form", admin_manual: "Manual entry",
@@ -129,7 +135,7 @@ export default function LeadDetailScreen() {
     try {
       const updated = await api.patch(`/leads/${id}`, { status });
       setLead(updated);
-      showToast(`Marked ${status}`);
+      showToast(`Marked ${STATUS_COLORS[status]?.label || status}`);
     } catch (e: any) { Alert.alert("Failed", e.message); }
     finally { setBusy(false); }
   };
@@ -302,16 +308,11 @@ export default function LeadDetailScreen() {
           <View style={st.actionsCard} testID="lead-actions">
             <Text style={st.sectionLabel}>ACTIONS</Text>
             <View style={st.actionsGrid}>
-              {lead.status === "New" && (
-                <ActionBtn icon="chatbubble-outline" label="Contacted" color="#A16207" onPress={() => setStatus("Contacted")} busy={busy} testID="lead-action-contacted" />
-              )}
-              {["New", "Contacted"].includes(lead.status) && (
-                <ActionBtn icon="document-text-outline" label="Quoted" color="#3730A3" onPress={() => setStatus("Quoted")} busy={busy} testID="lead-action-quoted" />
-              )}
-              <ActionBtn icon="pause-outline" label="On Hold" color="#475569" onPress={() => setStatus("On Hold")} busy={busy} testID="lead-action-onhold" />
+              {STATUS_TILES.map(([s, icon, color]) => (
+                <ActionBtn key={s} icon={icon} label={STATUS_COLORS[s].label} color={color} onPress={() => setStatus(s)} busy={busy} disabled={lead.status === s} testID={`lead-status-${s}`} />
+              ))}
               <ActionBtn icon="checkmark-circle-outline" label="Close Won" color="#166534" onPress={closeWon} busy={busy} testID="lead-action-close-won" />
               <ActionBtn icon="close-circle-outline" label="Close Lost" color="#991B1B" onPress={() => setLostOpen(true)} busy={busy} testID="lead-action-close-lost" />
-              <ActionBtn icon="archive-outline" label="Archive" color="#6B7280" onPress={() => setStatus("Archived")} busy={busy} testID="lead-action-archive" />
             </View>
           </View>
         )}
