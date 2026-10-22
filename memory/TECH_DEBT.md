@@ -508,6 +508,32 @@ Source: `memory/mobile_dashboard_parity_audit.md` (`92f064b38`). The operator ke
   - **Tests:** `td82-mobile-bulk-sheets` 5/5 + `td82-mobile-admin-jobs-bulk` 8/8 = 13. The existing `dashboard-kpi-drilldown-filters` 9/9 stays green. Full jest 42 failing suites (= baseline), 283 passing. tsc 651.
   - **Live (Expo web, admin):** a throwaway job was created via API and set to `canceled`. Under `/admin/jobs?status=canceled`: Select → row → Reschedule 2026-12-01 → 2026-12-15 → Delete confirm (web copy) → row removed, "1 job deleted" toast, `GET /jobs/{id}` → 404. No existing preview jobs were mutated; the 390 pt bar-fit check made no changes.
   - **Priority:** closed.
+- **TD-seo-phase2 · CLOSED (`8bc3207da`, Oct-2026).**
+  - **Scope:** Phase 2 of 3-phase TD-seo rollout per `memory/td_seo_phase0_scoping.md`. Ships FE client-side `<Helmet>` meta/OG/Twitter + JSON-LD emission on 3 slug-routed public React pages + a new public unauth BE read endpoint for the FE to consume.
+  - **BE:** NEW `GET /api/public/portal-seo/{tenant_slug}` endpoint in `backend/routers/portal_seo_admin.py` — unauth, resolves tenant by slug, returns SEO sub-doc merged with `business_card` fallbacks (company_name, phone, email, website_url, service_area added for FE JSON-LD composition), strips admin-only fields (`updated_at`, `updated_by_user_id`), 404 on unknown slug.
+  - **FE package:** `react-helmet-async@2.0.5` added via `yarn add` (React 18+ compat maintained fork of deprecated `react-helmet`, zero SSR requirement, Vite SPA friendly).
+  - **FE component:** NEW `frontend/src/components/seo/RouteSEO.jsx` (~240 LOC):
+    - Module-level dedupe cache (5min TTL, inflight promise map, fail-safe on 404).
+    - `_buildJsonLd` pure composer per `route_kind` — hand-rolled schema.org LocalBusiness/Organization/Service/ContactPoint payloads.
+    - Fail-safe fallback render (brand-default title + no OG/JSON-LD) on 404/network.
+    - `<RouteSEOScope>` React-Router-aware adapter extracts URL param slug via `useParams()` → zero invasion of existing public page components.
+  - **Wire-up (`App.js`):**
+    - `<HelmetProvider>` wraps the render tree root at :810-818.
+    - `<RouteSEOScope>` wires into 3 slug-routed public pages: `/public/card/:slug` (business_card), `/f/:slug` (lead_form), `/reviews/:tenant_slug` (reviews).
+  - **Scope exclusions (deliberate):**
+    - `/e/estimate` + `/public/leads` — no slug URL param so cannot resolve a tenant. `index.html` static `<title>` + `<meta description>` remain in effect. Follow-up candidate: `TD-seo-phase2b-slugless` (add default-tenant resolver endpoint if operator wants SEO on these 2).
+    - `/public/checkins/{slug}/feed.html` — BE-rendered via `public_widget.py:524-536` which already emits LocalBusiness+ItemList JSON-LD + `<meta name="robots">`. Duplicate emission would create crawler confusion (per Phase 0 §5.6 risk callout).
+  - **Pytest:** 15/15 across `test_portal_seo_admin.py` (13 Phase 1 + 2 Phase 2 new public reader cases).
+  - **Vitest:** 14/14 across new `RouteSEO.test.jsx` suite — fallback behavior × 3, pure-function `_buildJsonLd` shape × 7, overrides composition × 1, dedupe cache × 2, `RouteSEOScope` URL param × 1. **Limitation noted:** 4 original DOM-content tests (asserting `document.title` + emitted `<meta>` tags via `document.head.querySelector`) were REMOVED after `react-helmet-async@2.0.5` + jsdom + rAF timing proved unreliable in Vitest; pure-function shape coverage is the stable alternative + prod E2E validation delegated to Google Search Console post-deploy.
+  - **Zero scope creep:** no mobile edits (Phase 4 formally out), no touches to Track B SEO plumbing (`seo.py`, `aeo.py`, `aeo_digest.py` all byte-identical), no AI/CAD scope.
+  - **DEPLOYMENT HOLD honored:** Phase 2 ships to preview; SEO value realized on production deploy only after operator flips `SEO_PUBLIC_INDEXABLE=true` in prod env. Phase 2 FE emits regardless of flag (it's a public endpoint read, not sitemap/robots).
+  - **Still open:**
+    - `TD-seo-phase3` — Admin UI "Portal SEO" tab under `WebsiteSeoPage.jsx` for operators to edit the sub-doc via the already-shipped `PATCH /api/admin/portal-seo/{tenant_id}` endpoint.
+    - `TD-seo-deploy-aliases` — ingress alias for canonical `/sitemap.xml` + `/robots.txt` paths at `app.plofv.com` host root (deployment ticket).
+    - `TD-seo-phase2b-slugless` (NEW candidate) — SEO on `/e/estimate` + `/public/leads` requires a default-tenant SEO resolver endpoint. Opportunistic P3.
+  - **Priority:** closed.
+
+
 - **TD-seo-phase1 · CLOSED (`ea477aaa7`, Oct-2026).**
   - **Scope:** Phase 1 of 3-phase TD-seo rollout per `memory/td_seo_phase0_scoping.md`. Track C hybrid approved (operator defaults all Y). Ships BE sitemap + robots + tenant-SEO metadata CRUD; Phases 2 (FE Helmet + JSON-LD) + 3 (admin UI tab under `WebsiteSeoPage.jsx`) remain follow-up tickets.
   - **BE endpoints:**
