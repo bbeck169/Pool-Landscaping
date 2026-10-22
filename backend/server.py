@@ -4142,6 +4142,40 @@ async def _run_boot_sequence():
         _p38_1_factory,
         must_succeed=False,
     )
+    # Ticket 287998 · Oct-2026 — one-shot repair of jobs / recurring
+    # templates whose ``property_id`` belongs to a DIFFERENT customer.
+    # Idempotent (marker in ``migrations_applied`` + conditional writes),
+    # backs up every touched doc to ``repair_287998_backup``, bounded by
+    # ``STARTUP_TIMEOUT_S`` and never blocks boot.  Kill switch:
+    # ``T287998_DISABLE=1``.
+    async def _t287998_factory():
+        from migrations.t287998_repair_cross_customer_property_links import (
+            run_bounded as _t287998_run,
+            STARTUP_EXECUTE_MODE as _t287998_execute,
+        )
+        _res = await _t287998_run(bool(_t287998_execute))
+        logger.info(
+            "[t287998-cross-customer-property-repair] boot pass — "
+            "scanned=%s mismatched=%s repointed=%s cleared=%s "
+            "address_rewritten=%s skipped_merged=%s dry_run=%s "
+            "skipped_by_marker=%s marker_stamped=%s",
+            _res.get("scanned"),
+            _res.get("mismatched"),
+            _res.get("repointed"),
+            _res.get("cleared"),
+            _res.get("address_rewritten"),
+            _res.get("skipped_merged"),
+            _res.get("dry_run"),
+            _res.get("skipped_by_marker"),
+            _res.get("marker_stamped"),
+        )
+        return _res
+
+    await _run_structural_migration(
+        "t287998_repair_cross_customer_property_links",
+        _t287998_factory,
+        must_succeed=False,
+    )
     # ── Phase P46 · Feb-2026 · bulk_charge_runs index swap ────────
     # One-shot ops equivalent of the hardened ``ensure_indexes`` in
     # ``routers/invoices_bulk_charge.py``.  Runs alongside P38 /
