@@ -2375,4 +2375,39 @@ Original approval-request note:
 
 - **TD-invoice-pay-now-stripe-unreachable** (production Pay Now "couldn't reach the payment provider" error) is still blocked on operator diagnostic paste from the Phase 0 recon's D1-D7 (`memory/td_invoice_pay_now_stripe_unreachable_phase0_recon.md`). The BE change here (D4) touches the same `stripe_charge.py` file but addresses a DIFFERENT concern — Link disable, not config drift. The config-drift root cause was not touched.
 
+## TD-weather-null-coords-guard · SHIPPED (preview) · Feb-2026
+
+**Status:** SHIPPED to preview. Production logs showed /api/weather/{current,daily,alerts,radar,hourly} being hit with `lat=null&lon=null` string literals (BE 422s them).
+
+**What shipped (commit `8ad95759e`):**
+
+- `frontend/src/components/Weather/WeatherWidget.jsx` — `load()` early-returns when `lat == null || lon == null` before the Promise.all of five `/api/weather/*` calls.
+- `frontend/src/hooks/useWeatherHourly.js` — `_fetch(lat, lon)` early-returns null when either is nullish. Hook-level `enabled && lat != null && lon != null` key guard retained.
+- `frontend/src/test/td-weather-null-coords-guard.test.jsx` — new 7-case source-inspection guard. Weather regression sweep 48/48 pass.
+
+**Scope note:** BE weather endpoints untouched (FE-only fix per operator). Mobile weather path (`/app/mobile/`) explicitly out of scope.
+
+## TD-offline-bundle-perf · Phase 2 Lane A SHIPPED (preview) · Feb-2026
+
+**Status:** Phase 2 Lane A SHIPPED. Production slow-request logs reported `/api/mobile/offline-bundle duration_ms=2798 status=200` — the handler's 10 Mongo queries ran strictly sequentially and round-trip latency compounded.
+
+**What shipped:**
+
+- **BE commit `4f7892489` · td-offline-bundle-perf · BE · Phase 2 Lane A (asyncio.gather).**
+  `backend/routers/mobile_sync.py` — added `import asyncio`, four collector helpers (`_collect_bundle_customers` / `_collect_bundle_reports` / `_collect_bundle_full_table` / `_collect_bundle_sorted_capped`), and refactored `mobile_offline_bundle` to run the 9 post-jobs queries under a single `asyncio.gather`. `db.jobs` stays sequential (its result produces `customer_ids` + `job_ids`). Response shape byte-identical; dict insertion order preserved. Error-propagation preserved (`return_exceptions=False` default).
+- **Tests · `backend/tests/test_td_offline_bundle_perf_gather.py`.**
+  Unit-level stub DB + 8 cases: shape byte-identity, customer-mapping preservation, source-level `asyncio.gather` presence, dependency ordering (`db.jobs` before gather), gather-called-once-with-9-awaitables, error propagation, latency floor, serial-vs-concurrent ratio. 8/8 pass + 16 regression (`test_mobile_sync_offline_bundle_jobs.py` + `test_phase_o4_mobile_sync_op_types.py` + `test_phase_o4_offline_bundle.py`) = 24/24 PASS.
+- **Measured latency (deterministic fake-DB floor, 80 ms per query):** serial baseline 722.0 ms → Lane A concurrent 160.9 ms → **4.49× speedup**. Prod expectation per Phase 0 recon: ~2.8 s → ~500-600 ms (≈ 5-6×).
+- **Phase 0 recon:** `memory/td_offline_bundle_perf_recon.md` (commit `e83b316f1`).
+
+**D6 severity note:** if the mobile client enforces a hard-fail timeout at 3 s on the bundle fetch, Lane A elevates from P2 performance to P1 correctness. Operator-side confirmation of the mobile timeout policy is still open.
+
+**Deferred lanes (P3 candidates):**
+
+- **TD-offline-bundle-quotes-index (Lane B, P3 BE migration — OPERATOR DECISION REQUIRED).** New migration file `backend/migrations/quotes_tenant_doctype_updated_at_desc_index_v1.py` creating `(tenant_id, doc_type, updated_at DESC)` on `db.quotes` to drop the in-memory sort stage that follows the `tenant_id` IXSCAN on queries #6 + #7. Production index-build window required; operator needs to confirm background-build vs maintenance-window. Projected win: ~15-20% further latency drop on mature tenants. LOC estimate: ~90.
+- **TD-offline-bundle-projection-trim (Lane C, P3 BE — operator decision partial).** Add field-slicing projection to the four largest-payload queries (service_reports #3, invoices #6, quotes #7, pricebook_items #10). Needs a mobile-client field-usage audit first to pick the minimum projection without breaking consumers. Projected win: ~5-10% further. LOC estimate: ~15 BE + 1 doc.
+- **TD-offline-bundle-tenant-cache (Lane D, P3 BE — OPERATOR DECISION REQUIRED).** Short-TTL in-memory LRU keyed by `(tenant_id, tech_id)` or a Mongo-side `offline_bundle_cache` TTL doc to collapse pull-to-refresh storms. Operator must choose TTL (60 s vs 120 s) and invalidation points (invoice create/update, quote create/update, pricebook write). LOC estimate: ~60.
+- **Lane E — operator-side gzip check.** `curl -s -H 'Accept-Encoding: gzip' -I https://app.plofv.com/api/mobile/offline-bundle` on an authed console; share `Content-Encoding: gzip` header. Zero code. Operator can run.
+
+
 
