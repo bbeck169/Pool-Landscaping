@@ -30,6 +30,11 @@ from .models import TenantAIUsageCapExceeded
 
 PROVIDER_META_COLLECTION = "tenant_ai_provider"
 USAGE_COLLECTION = "tenant_ai_usage"
+# TD-ai-phase1 · Oct-2026 — per-call audit log for AI draft reply +
+# future compose-surface AI endpoints. One row per successful LLM
+# call; populated only when ``record_usage`` is invoked with
+# ``actor_user_id`` set.
+DRAFT_CALLS_COLLECTION = "ai_draft_calls"
 
 SOFT_WARN_RATIO = 0.8
 
@@ -93,6 +98,16 @@ async def record_usage(
     *, tenant_id: str, provider: str,
     tokens_prompt: int, tokens_completion: int,
     period_yyyymm: Optional[str] = None,
+    # TD-ai-phase1 · Oct-2026 — per-call audit extension. All optional
+    # for backward compat with existing callers (maps + calendars
+    # dispatcher + ai dispatcher) which only $inc the monthly rollup.
+    # When ``actor_user_id`` is non-empty, we ALSO insert a per-call
+    # audit row into ``ai_draft_calls`` so AI compose draft history is
+    # queryable without parsing the rollup counters.
+    actor_user_id: Optional[str] = None,
+    recipient_type: Optional[str] = None,
+    recipient_id: Optional[str] = None,
+    prompt_hash: Optional[str] = None,
     db=None,
 ) -> Dict[str, Any]:
     """Atomically increment the tenant's monthly token counters."""
@@ -113,6 +128,24 @@ async def record_usage(
         },
         upsert=True,
     )
+    # TD-ai-phase1 · per-call audit insert (additive, best-effort).
+    if actor_user_id:
+        try:
+            await db[DRAFT_CALLS_COLLECTION].insert_one({
+                "tenant_id":         tenant_id,
+                "provider":          provider,
+                "actor_user_id":     actor_user_id,
+                "recipient_type":    recipient_type,
+                "recipient_id":      recipient_id,
+                "prompt_hash":       prompt_hash,
+                "tokens_prompt":     int(tokens_prompt),
+                "tokens_completion": int(tokens_completion),
+                "tokens_total":      total,
+                "created_at":        now_iso(),
+            })
+        except Exception:
+            # Audit insert must never block the monthly rollup caller.
+            pass
     row = await db[USAGE_COLLECTION].find_one(
         {"tenant_id": tenant_id, "provider": provider, "period_yyyymm": period},
         {"_id": 0},

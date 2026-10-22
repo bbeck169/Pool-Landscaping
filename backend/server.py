@@ -1287,6 +1287,18 @@ api_router.include_router(_public_sitemap_router.router)
 from routers import portal_seo_admin as _portal_seo_admin_router  # noqa: E402
 api_router.include_router(_portal_seo_admin_router.router)
 
+# TD-ai-phase1 · Oct-2026 — AI draft-reply endpoint for the admin
+# compose surface. POST /api/ai/draft-reply returns an operator-
+# reviewed SMS/email draft; role-gated admin+super_admin+owner+manager
+# via require_admin_or_manager. Uses the existing LLM chokepoint
+# (services.llm_provider.call_llm_with_fallback) + context allowlist
+# in services.ai.compose_context + 10s per-actor rate-limit +
+# 60s short-TTL cache + extended record_usage audit (actor + recipient
+# + prompt_hash). See memory/td_ai_phase0_scoping.md §3 for the full
+# architecture rationale.
+from routers import ai_draft_reply as _ai_draft_reply_router  # noqa: E402
+api_router.include_router(_ai_draft_reply_router.router)
+
 # Phase 9 · Feb-2026 — LLMs.txt Auto-Publish (Netlify / Vercel / CF Pages).
 from routers import llmstxt_publish as _llmstxt_pub_router  # noqa: E402
 api_router.include_router(_llmstxt_pub_router.router)
