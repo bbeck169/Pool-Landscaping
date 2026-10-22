@@ -24,6 +24,7 @@ startup):
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
@@ -784,6 +785,53 @@ async def _max_updated_at(cursor) -> Optional[str]:
     return latest or None
 
 
+# TD-offline-bundle-perf · Phase 2 Lane A · Feb-2026 — collector
+# helpers used by ``mobile_offline_bundle`` to run the 9 post-jobs
+# Mongo queries concurrently under a single ``asyncio.gather``.
+# Each helper returns a plain ``list[dict]`` so the handler can
+# unpack the gather tuple directly into its response shape without
+# any additional transformation.  Behaviour matches the pre-refactor
+# ``async for … append`` loops byte-for-byte.
+async def _collect_bundle_customers(customer_ids: List[str],
+                                    tenant_id: str) -> List[Dict[str, Any]]:
+    if not customer_ids:
+        return []
+    out: List[Dict[str, Any]] = []
+    async for c in db.customers.find(
+            {"id": {"$in": customer_ids}, "tenant_id": tenant_id},
+            {"_id": 0, "id": 1, "name": 1, "phone": 1,
+              "address": 1, "address_line_1": 1, "updated_at": 1}):
+        out.append({
+            "id": c.get("id"), "name": c.get("name"),
+            "phone": c.get("phone"),
+            "address": c.get("address_line_1") or c.get("address") or "",
+            "updated_at": c.get("updated_at"),
+        })
+    return out
+
+
+async def _collect_bundle_reports(job_ids: List[str],
+                                  tenant_id: str) -> List[Dict[str, Any]]:
+    if not job_ids:
+        return []
+    return [r async for r in db.service_reports.find(
+        {"tenant_id": tenant_id, "job_id": {"$in": job_ids},
+          "submitted_at": None},
+        {"_id": 0})]
+
+
+async def _collect_bundle_full_table(coll: Any,
+                                     tenant_id: str) -> List[Dict[str, Any]]:
+    return [d async for d in coll.find({"tenant_id": tenant_id}, {"_id": 0})]
+
+
+async def _collect_bundle_sorted_capped(coll: Any,
+                                        filt: Dict[str, Any],
+                                        limit: int) -> List[Dict[str, Any]]:
+    return [d async for d in coll.find(filt, {"_id": 0})
+            .sort("updated_at", -1).limit(limit)]
+
+
 @router.get("/mobile/offline-bundle", operation_id="mobile.offlineBundle")
 async def mobile_offline_bundle(tech_id: str = "me",
                                      user: dict = Depends(get_current_user),
@@ -830,82 +878,66 @@ async def mobile_offline_bundle(tech_id: str = "me",
 
     # Contact info — name + phone + service address only, no other PII.
     customer_ids = list({j.get("customer_id") for j in jobs if j.get("customer_id")})
-    customers = []
-    if customer_ids:
-        async for c in db.customers.find(
-                {"id": {"$in": customer_ids}, "tenant_id": tenant_id},
-                {"_id": 0, "id": 1, "name": 1, "phone": 1,
-                  "address": 1, "address_line_1": 1, "updated_at": 1}):
-            customers.append({
-                "id": c.get("id"), "name": c.get("name"),
-                "phone": c.get("phone"),
-                "address": c.get("address_line_1") or c.get("address") or "",
-                "updated_at": c.get("updated_at"),
-            })
-
     # In-progress service reports for those jobs.
     job_ids = [j["id"] for j in jobs]
-    reports = []
-    if job_ids:
-        async for r in db.service_reports.find(
-                {"tenant_id": tenant_id, "job_id": {"$in": job_ids},
-                  "submitted_at": None},
-                {"_id": 0}):
-            reports.append(r)
 
-    # Chemistry test types + chemicals catalog (small — full copy).
-    chemistry_types = []
-    async for c in db.chemistry_test_types.find({"tenant_id": tenant_id}, {"_id": 0}):
-        chemistry_types.append(c)
-    chemicals_catalog = []
-    async for c in db.chemicals_catalog.find({"tenant_id": tenant_id}, {"_id": 0}):
-        chemicals_catalog.append(c)
-
-    # Phase O4 · Feb-2026 — five new collections cached for offline
-    # invoicing / quoting / lead capture. ``updated_at`` DESC so the
-    # freshest rows survive the cap when the tenant is large.
+    # TD-offline-bundle-perf · Phase 2 Lane A · Feb-2026 — parallelize
+    # the 9 post-jobs queries via ``asyncio.gather``.  Before this
+    # change these ran strictly sequentially via back-to-back
+    # ``async for`` loops; latency compounded 10x and matched the
+    # ~2.8 s slow-request warnings almost exactly (see
+    # memory/td_offline_bundle_perf_recon.md section 2).
     #
-    # Note: invoices/quotes/pricebook are tenant-wide (not scoped to
-    # a single tech's route) because a tech on-site might invoice
-    # ANY customer they're servicing that day, and the pricebook is
-    # a catalog. The caps below keep the payload bounded regardless.
+    # Query-dependency audit (locked by test_offline_bundle_gather
+    # _dependency_audit in test_td_offline_bundle_perf_gather.py):
+    #   * db.jobs  (#1)  — stays SEQUENTIAL above; its result
+    #                      produces ``customer_ids`` (for #2) and
+    #                      ``job_ids`` (for #3).
+    #   * db.customers (#2) — depends on #1's ``customer_ids``.
+    #   * db.service_reports (#3) — depends on #1's ``job_ids``.
+    #   * db.chemistry_test_types (#4) — tenant-scoped only.
+    #   * db.chemicals_catalog (#5) — tenant-scoped only.
+    #   * db.quotes invoice-slice (#6) — tenant-scoped only.
+    #   * db.quotes quote-slice (#7) — tenant-scoped only.
+    #   * db.income_categories (#8) — tenant-scoped only.
+    #   * db.service_categories (#9) — tenant-scoped only.
+    #   * db.pricebook_items (#10) — tenant-scoped only.
+    # Response shape is BYTE-IDENTICAL — the dict insertion order
+    # at the bottom is preserved; the customers mapping is still
+    # applied inside ``_collect_bundle_customers``.
     #
-    # CRM quirk: invoices and quotes both live in ``db.quotes`` —
-    # ``doc_type`` distinguishes ("invoice" vs "quote").  Filter
-    # accordingly (defaulting missing ``doc_type`` to "quote" so
-    # legacy rows written before the discriminator was added still
-    # appear on the quotes tab, matching finances.py's read pattern).
-    invoices: List[Dict[str, Any]] = []
-    async for i in db.quotes.find(
+    # Error handling: ``asyncio.gather(..., return_exceptions=False)``
+    # (default) means the first exception propagates and sibling
+    # tasks are cancelled — matches the pre-refactor behaviour where
+    # any single ``async for`` raise would bubble up to FastAPI's
+    # exception handler.  Mobile clients continue to receive proper
+    # HTTP errors, not silently-degraded bundles.
+    (customers, reports, chemistry_types, chemicals_catalog,
+     invoices, quotes, income_categories, service_categories,
+     pricebook_items) = await asyncio.gather(
+        _collect_bundle_customers(customer_ids, tenant_id),
+        _collect_bundle_reports(job_ids, tenant_id),
+        _collect_bundle_full_table(db.chemistry_test_types, tenant_id),
+        _collect_bundle_full_table(db.chemicals_catalog, tenant_id),
+        _collect_bundle_sorted_capped(
+            db.quotes,
             {"tenant_id": tenant_id, "doc_type": "invoice"},
-            {"_id": 0}).sort("updated_at", -1).limit(BUNDLE_MAX_INVOICES):
-        invoices.append(i)
-
-    quotes: List[Dict[str, Any]] = []
-    async for q in db.quotes.find(
+            BUNDLE_MAX_INVOICES,
+        ),
+        _collect_bundle_sorted_capped(
+            db.quotes,
             {"tenant_id": tenant_id,
               "$or": [{"doc_type": "quote"}, {"doc_type": {"$exists": False}}]},
-            {"_id": 0}).sort("updated_at", -1).limit(BUNDLE_MAX_QUOTES):
-        quotes.append(q)
-
-    # Categories — small tables, full copy. Two distinct taxonomies:
-    #   income_categories = P&L taxonomy on invoice line items
-    #   service_categories = job-type taxonomy on the pricebook
-    income_categories: List[Dict[str, Any]] = []
-    async for c in db.income_categories.find(
-            {"tenant_id": tenant_id}, {"_id": 0}):
-        income_categories.append(c)
-
-    service_categories: List[Dict[str, Any]] = []
-    async for c in db.service_categories.find(
-            {"tenant_id": tenant_id}, {"_id": 0}):
-        service_categories.append(c)
-
-    pricebook_items: List[Dict[str, Any]] = []
-    async for p in db.pricebook_items.find(
+            BUNDLE_MAX_QUOTES,
+        ),
+        _collect_bundle_full_table(db.income_categories, tenant_id),
+        _collect_bundle_full_table(db.service_categories, tenant_id),
+        _collect_bundle_sorted_capped(
+            db.pricebook_items,
             {"tenant_id": tenant_id},
-            {"_id": 0}).sort("updated_at", -1).limit(BUNDLE_MAX_PRICEBOOK_ITEMS):
-        pricebook_items.append(p)
+            BUNDLE_MAX_PRICEBOOK_ITEMS,
+        ),
+    )
 
     # ``versions`` — per-collection freshness fingerprint so the
     # mobile client can decide when to re-fetch the bundle without
