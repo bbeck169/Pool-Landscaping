@@ -255,3 +255,30 @@ def test_patch_empty_body_returns_400():
                      json={},
                      headers=_auth(tok), timeout=10)
     assert r.status_code == 400
+
+
+# ─── §9 · TD-seo-phase2 · public unauth read endpoint ───────────────
+def test_public_portal_seo_returns_fallback_shape_no_auth():
+    """Phase 2 public reader: anonymous GET resolves tenant by slug
+    and returns SEO sub-doc merged with business_card fallbacks.
+    No bearer token required."""
+    t = _mk_tenant(with_seo=True)
+    r = httpx.get(
+        f"{BASE}/api/public/portal-seo/{t['slug']}", timeout=10)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["tenant_slug"] == t["slug"]
+    assert body["og_title"] == "Pre-existing OG Title"
+    # company_name + logo surface from business_card fallbacks.
+    assert body["company_name"] == "SEO Admin Co."
+    assert body["og_image_url"] == "https://example.com/logo.png"
+    # Admin-only fields NOT surfaced on the public reader.
+    assert "updated_at" not in body
+    assert "updated_by_user_id" not in body
+
+
+def test_public_portal_seo_404_on_unknown_slug():
+    r = httpx.get(
+        f"{BASE}/api/public/portal-seo/tenant-does-not-exist-{uuid.uuid4().hex}",
+        timeout=10)
+    assert r.status_code == 404

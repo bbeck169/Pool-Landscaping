@@ -150,6 +150,51 @@ async def get_portal_seo(tenant_id: str,
     return await _read_seo(tenant_id)
 
 
+async def _read_seo_public(tenant: dict) -> Dict[str, Any]:
+    """TD-seo-phase2 · Oct-2026 — public (unauth) reader. Returns the
+    SEO sub-doc merged with business_card fallbacks for the FE
+    ``<RouteSEO>`` component. Strips admin-only fields
+    (``updated_at`` + ``updated_by_user_id``) — those are PII-adjacent
+    (actor identity) and have no FE use."""
+    settings = (tenant or {}).get("settings") or {}
+    card = settings.get("business_card") or {}
+    seo = card.get("seo") or {}
+    return {
+        "tenant_slug":               (tenant or {}).get("slug") or "",
+        "og_title":                  seo.get("og_title") or card.get("company_name"),
+        "og_description":            seo.get("og_description") or card.get("tagline"),
+        "og_image_url":              seo.get("og_image_url") or card.get("logo_url"),
+        "twitter_card":              seo.get("twitter_card") or "summary_large_image",
+        "twitter_site":              seo.get("twitter_site"),
+        "canonical_base_url":        seo.get("canonical_base_url"),
+        "meta_description_override": seo.get("meta_description_override"),
+        "service_areas":             seo.get("service_areas") or [],
+        "json_ld_overrides":         seo.get("json_ld_overrides") or {},
+        # Business card fields the FE JSON-LD composer needs.
+        "company_name":              card.get("company_name"),
+        "phone":                     card.get("phone"),
+        "email":                     card.get("email"),
+        "website_url":               card.get("website_url"),
+        "service_area":              card.get("service_area"),
+    }
+
+
+@router.get("/public/portal-seo/{tenant_slug}",
+             operation_id="publicPortalSeo.get",
+             include_in_schema=False)
+async def get_public_portal_seo(tenant_slug: str):
+    """TD-seo-phase2 · public unauth endpoint consumed by the FE
+    ``<RouteSEO>`` component to compose ``<Helmet>`` tags + JSON-LD
+    per route_kind. Returns 404 when slug does not match an active
+    tenant — FE handles the 404 by rendering minimal fallback meta."""
+    t = await db.tenants.find_one(
+        {"slug": (tenant_slug or "").strip().lower(), "active": True},
+        {"_id": 0})
+    if not t:
+        raise HTTPException(404, "Tenant not found")
+    return await _read_seo_public(t)
+
+
 @router.patch("/admin/portal-seo/{tenant_id}",
                 operation_id="adminPortalSeo.update")
 async def update_portal_seo(tenant_id: str,

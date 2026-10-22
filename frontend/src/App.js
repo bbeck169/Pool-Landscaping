@@ -1,5 +1,11 @@
 import React from "react";
 import { BrowserRouter, Routes, Route, Navigate, useParams } from "react-router-dom";
+import { HelmetProvider } from "react-helmet-async";
+// TD-seo-phase2 · Oct-2026 — client-side SEO/OG/Twitter + JSON-LD
+// emitter wired into the 3 slug-routed public pages. See
+// ``memory/TECH_DEBT.md`` TD-seo-phase2 for scope and the 2 slug-less
+// public pages (/e/estimate, /public/leads) deferred to a follow-up.
+import RouteSEO, { RouteSEOScope } from "@/components/seo/RouteSEO";
 import { AuthProvider, useAuth } from "@/auth";
 // Phase G4 · Feb-2026 — Route-level lazy loading. `<PageSkeleton />`
 // is the shared Suspense fallback used while a route chunk is being
@@ -809,6 +815,7 @@ function RoleAwareIndex() {
 
 export default function App() {
   return (
+    <HelmetProvider>
     <AuthProvider>
       <TenantThemeProvider>
       <PermissionsBridge>
@@ -854,14 +861,22 @@ export default function App() {
           <Route path="/onboarding-wizard"
                   element={<OnboardingWizard />} />
           <Route path="/tenant-picker" element={<TenantPicker />} />
-          <Route path="/public/card/:slug" element={<PublicCard />} />
+          <Route path="/public/card/:slug"
+                 element={<RouteSEOScope paramName="slug"
+                                            route_kind="business_card">
+                            <PublicCard />
+                          </RouteSEOScope>} />
           {/* Feb-2026 · Phase 20 P5 — Public NFC review card page. */}
           <Route path="/nfc/:slug" element={<NfcReviewCardPage />} />
           <Route path="/widget-demo" element={<WidgetDemoPage />} />
           {/* Phase 2 · Feb-2026 (REWORKED) — Route Replay share viewer.
               Admin/Super Admin only per policy update. */}
           <Route path="/replay/:shareId" element={<AdminOnly><AdminSharedReplayPage /></AdminOnly>} />
-          <Route path="/f/:slug" element={<PublicForm />} />
+          <Route path="/f/:slug"
+                 element={<RouteSEOScope paramName="slug"
+                                            route_kind="lead_form">
+                            <PublicForm />
+                          </RouteSEOScope>} />
           {/* Phase 15A public magic-link routes (no auth) */}
           <Route path="/csat/:token" element={<PublicCsat />} />
           <Route path="/portal/sign/:token" element={<PortalSignPage />} />
@@ -880,7 +895,11 @@ export default function App() {
 
           {/* Reviews Subsystem · Phase 2 — public flows (no auth) */}
           <Route path="/reviews/r/:token" element={<PublicReviewLanding />} />
-          <Route path="/reviews/:tenant_slug" element={<PublicReviewsWidgetPage />} />
+          <Route path="/reviews/:tenant_slug"
+                 element={<RouteSEOScope paramName="tenant_slug"
+                                            route_kind="reviews">
+                            <PublicReviewsWidgetPage />
+                          </RouteSEOScope>} />
 
           {/* Marketing M6 · Feb 2026 — magic-link review requests (no auth).
               PortalReviews reads ?token=… and hits the public verify +
@@ -1757,6 +1776,7 @@ export default function App() {
       </PermissionsBridge>
       </TenantThemeProvider>
     </AuthProvider>
+    </HelmetProvider>
   );
 }
 
