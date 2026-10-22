@@ -255,7 +255,21 @@ export default function StripeAddCardForm({
         ) : clientSecret && stripePromise ? (
           <Elements
             stripe={stripePromise}
-            options={{ clientSecret, appearance: { theme: "stripe" } }}
+            options={{
+              clientSecret,
+              appearance: { theme: "stripe" },
+              // TD-portal-add-card-disable-stripe-link · Feb-2026 —
+              // disable Stripe Link + Apple/Google Pay auto-detection
+              // so a browser-side Link session (e.g. an admin
+              // impersonating a customer whose own Chrome has the
+              // admin's personal Link cookie) can't cross-contaminate
+              // the impersonated customer's saved payment methods.
+              // Keep the `payment_method_types=["card"]` SetupIntent
+              // default on the BE as defence-in-depth — Link is a
+              // wallet overlay on card PMs and is NOT filtered by
+              // that kwarg alone.
+              wallets: { link: "never", applePay: "never", googlePay: "never" },
+            }}
           >
             <InnerForm
               apiBase={apiBase}

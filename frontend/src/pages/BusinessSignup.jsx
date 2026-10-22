@@ -328,7 +328,19 @@ export default function BusinessSignup() {
   );
   const cardFieldRef = React.useRef(null);
   return (
-    <Elements stripe={stripePromise}>
+    <Elements
+      stripe={stripePromise}
+      options={{
+        // TD-portal-add-card-disable-stripe-link · Feb-2026 —
+        // disable Link + Apple/Google Pay auto-detection on the
+        // tenant signup card-on-file form. BusinessSignup currently
+        // uses <CardElement> which is Link-immune by construction,
+        // but setting this at the <Elements> provider level is
+        // defensive: any future swap to <PaymentElement> (e.g. a
+        // Card/Bank toggle enhancement) inherits the safe default.
+        wallets: { link: "never", applePay: "never", googlePay: "never" },
+      }}
+    >
       <SignupFormInner
         stripeKeyLoaded={!!stripePromise}
         cardFieldRef={cardFieldRef} />

@@ -244,7 +244,17 @@ export default function AddCardPage() {
             ) : (
               <Elements
                 stripe={stripePromise}
-                options={{ clientSecret, appearance: { theme: "stripe" } }}
+                options={{
+                  clientSecret,
+                  appearance: { theme: "stripe" },
+                  // TD-portal-add-card-disable-stripe-link · Feb-2026 —
+                  // disable Link + Apple/Google Pay auto-detection
+                  // on the magic-link add-card page. A shared
+                  // browser (e.g. a household member with Link)
+                  // could otherwise prefill their own PM into the
+                  // target customer's saved methods.
+                  wallets: { link: "never", applePay: "never", googlePay: "never" },
+                }}
               >
                 <InnerForm token={token} onSuccess={() => setSaved(true)} />
               </Elements>
