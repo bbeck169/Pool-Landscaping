@@ -24,16 +24,44 @@ from fastapi import APIRouter, HTTPException, Depends, Query, Response
 from pydantic import BaseModel, Field
 
 from config import db, logger
-from utils import now_iso, new_id, require_admin
+from utils import now_iso, new_id, require_admin, require_admin_or_manager
 from routers.tenants import get_current_tenant
 
 router = APIRouter()
+
+
+# TD-cad-phase1 · Oct-2026 — vendor-split clarifier. The CAD surface
+# uses **Google Static Maps** (``maps.googleapis.com/maps/api/staticmap``)
+# via ``GOOGLE_MAPS_API_KEY`` — see ``_fetch_static_map_bytes`` below.
+# The project ALSO carries ``MAPBOX_ACCESS_TOKEN`` in ``.env`` but that
+# token is consumed by *other* surfaces (``routers.property``,
+# ``routers.gps_route``, ``services.maps.dispatcher``,
+# ``services.reverse_geocoder``, ``services.gps_stops_batch``) — NOT by
+# ``cad.py``. Any vendor-cleanup refactor must keep ``MAPBOX_ACCESS_TOKEN``
+# in place; removing it breaks the 5 surfaces listed above. The Phase 0
+# scoping doc (``memory/td_cad_phase0_scoping.md § 3.3``) incorrectly
+# flagged the token as dead config; this inline comment is the
+# authoritative correction.
+#
+# TD-cad-phase1 · Oct-2026 — role widening on the 5 ``/designs`` CRUD
+# endpoints: ``require_admin`` → ``require_admin_or_manager`` to let
+# the ``manager`` role (newly widened in utils.py:231 per Phase 34 Task
+# X) use the admin CAD tool. The map-tile + generate + site-plan-pdf
+# endpoints keep ``require_admin`` — they consume AI credits / Google
+# Maps quota and remain restricted to the narrower admin tier.
 
 
 class DesignIn(BaseModel):
     name: str = "Untitled design"
     customer_id: Optional[str] = None
     lead_id: Optional[str] = None
+    # TD-cad-phase1 · Oct-2026 — additive-nullable attach fields so a
+    # design can hang off a specific property OR quote in addition to
+    # the pre-existing customer/lead attach. Backward-compat: existing
+    # designs serialise without either field; the ``_design_write_dict``
+    # helper writes ``None`` for pre-existing docs on update.
+    property_id: Optional[str] = None
+    quote_id: Optional[str] = None
     canvas_w_ft: float = 60.0
     canvas_h_ft: float = 40.0
     boundary: List[Any] = Field(default_factory=list)
@@ -67,6 +95,9 @@ def _design_write_dict(body: DesignIn) -> Dict[str, Any]:
         "name": body.name or "Untitled design",
         "customer_id": body.customer_id,
         "lead_id": body.lead_id,
+        # TD-cad-phase1 · Oct-2026 — additive attach fields.
+        "property_id": body.property_id,
+        "quote_id": body.quote_id,
         "canvas_w_ft": body.canvas_w_ft,
         "canvas_h_ft": body.canvas_h_ft,
         "boundary": body.boundary,
@@ -85,8 +116,12 @@ def _design_write_dict(body: DesignIn) -> Dict[str, Any]:
 
 @router.post("/designs")
 async def create_design(body: DesignIn,
-                        user: dict = Depends(require_admin),
+                        user: dict = Depends(require_admin_or_manager),
                         tenant: dict = Depends(get_current_tenant)):
+    # TD-cad-phase1 · Oct-2026 — tenant-scoped FK validation on
+    # property_id + quote_id; cross-tenant → 404 (parity with the
+    # existing _404 behavior for a missing design doc).
+    await _validate_fk_refs(body, tenant["id"])
     now = now_iso()
     doc: Dict[str, Any] = {
         "id": new_id(),
@@ -104,13 +139,20 @@ async def create_design(body: DesignIn,
 @router.get("/designs")
 async def list_designs(customer_id: Optional[str] = Query(None),
                        lead_id: Optional[str] = Query(None),
-                       user: dict = Depends(require_admin),
+                       property_id: Optional[str] = Query(None),
+                       quote_id: Optional[str] = Query(None),
+                       user: dict = Depends(require_admin_or_manager),
                        tenant: dict = Depends(get_current_tenant)):
     q: dict = {"tenant_id": tenant["id"]}
     if customer_id:
         q["customer_id"] = customer_id
     if lead_id:
         q["lead_id"] = lead_id
+    # TD-cad-phase1 · Oct-2026 — additive filters.
+    if property_id:
+        q["property_id"] = property_id
+    if quote_id:
+        q["quote_id"] = quote_id
     docs = await db.designs.find(
         q,
         {"_id": 0, "elements": 0, "boundary": 0},
@@ -120,7 +162,7 @@ async def list_designs(customer_id: Optional[str] = Query(None),
 
 @router.get("/designs/{did}")
 async def get_design(did: str,
-                     user: dict = Depends(require_admin),
+                     user: dict = Depends(require_admin_or_manager),
                      tenant: dict = Depends(get_current_tenant)):
     d = await db.designs.find_one({"id": did, "tenant_id": tenant["id"]}, {"_id": 0})
     if not d:
@@ -138,11 +180,14 @@ async def get_design(did: str,
 
 @router.put("/designs/{did}")
 async def update_design(did: str, body: DesignIn,
-                        user: dict = Depends(require_admin),
+                        user: dict = Depends(require_admin_or_manager),
                         tenant: dict = Depends(get_current_tenant)):
     d = await db.designs.find_one({"id": did, "tenant_id": tenant["id"]})
     if not d:
         raise HTTPException(404, "Design not found")
+    # TD-cad-phase1 · Oct-2026 — same cross-tenant FK validation on
+    # update as on create.
+    await _validate_fk_refs(body, tenant["id"])
     update = _design_write_dict(body)
     update["updated_at"] = now_iso()
     await db.designs.update_one({"id": did, "tenant_id": tenant["id"]}, {"$set": update})
@@ -151,10 +196,31 @@ async def update_design(did: str, body: DesignIn,
 
 @router.delete("/designs/{did}")
 async def delete_design(did: str,
-                        user: dict = Depends(require_admin),
+                        user: dict = Depends(require_admin_or_manager),
                         tenant: dict = Depends(get_current_tenant)):
     await db.designs.delete_one({"id": did, "tenant_id": tenant["id"]})
     return {"ok": True}
+
+
+# TD-cad-phase1 · Oct-2026 — tenant-scoped FK validator. Guards both
+# POST + PUT against cross-tenant property/quote attach attempts.
+# A missing reference raises 404; a null reference (field unset) is a
+# no-op so the field remains additive-nullable per Phase 0 §3.1.
+async def _validate_fk_refs(body: "DesignIn", tenant_id: str) -> None:
+    if body.property_id:
+        p = await db.properties.find_one(
+            {"id": body.property_id, "tenant_id": tenant_id},
+            {"_id": 0, "id": 1},
+        )
+        if not p:
+            raise HTTPException(404, "Property not found")
+    if body.quote_id:
+        q = await db.quotes.find_one(
+            {"id": body.quote_id, "tenant_id": tenant_id},
+            {"_id": 0, "id": 1},
+        )
+        if not q:
+            raise HTTPException(404, "Quote not found")
 
 
 # ═══════════════════════════════════════════════════════════════════
