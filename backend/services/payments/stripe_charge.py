@@ -1577,6 +1577,17 @@ async def create_invoice_checkout_session(
         # ``checkout.session.completed`` were somehow missed.
         "payment_intent_data": pi_data,
         "client_reference_id": invoice_id,
+        # TD-portal-add-card-disable-stripe-link · Feb-2026 (D4) —
+        # explicit card-only payment method types on hosted Checkout
+        # so Stripe does NOT auto-advertise Link / Apple Pay / Google
+        # Pay on the invoice pay-now flow.  Without this kwarg hosted
+        # Checkout defaults to every PM enabled in the Stripe
+        # Dashboard, including Link — reproducing the same browser-
+        # side wallet cross-contamination leak that the FE Elements
+        # surfaces now guard against via ``wallets.link="never"``.
+        # See memory/td_portal_add_card_disable_stripe_link_phase0_recon.md
+        # section 4 Option C for the full rationale.
+        "payment_method_types": ["card"],
     }
 
     email = customer.get("email")
