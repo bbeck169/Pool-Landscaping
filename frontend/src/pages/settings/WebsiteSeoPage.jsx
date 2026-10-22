@@ -8,6 +8,12 @@ import { toast } from "sonner";
 import { RefreshCw, Search, ChevronDown, ChevronUp } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
+import PortalSeoTab from "@/pages/settings/PortalSeoTab";
+
+// TD-seo-phase3 · Oct-2026 — tab slot for Portal SEO metadata editor.
+// "external" (External Scan) remains the default tab so the existing
+// scorecard-UX is unchanged for users navigating to /settings/website-seo.
+const _SEO_TABS = ["external", "portal"];
 
 export default function WebsiteSeoPage() {
   const [url, setUrl] = React.useState("");
@@ -15,6 +21,7 @@ export default function WebsiteSeoPage() {
   const [result, setResult] = React.useState(null);
   const [history, setHistory] = React.useState([]);
   const [expanded, setExpanded] = React.useState(null);
+  const [activeTab, setActiveTab] = React.useState("external");
 
   const loadHistory = React.useCallback(async () => {
     try {
@@ -59,33 +66,69 @@ export default function WebsiteSeoPage() {
             On-page SEO scorecard for your website. Re-run any time.
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <input
-            type="url"
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-            placeholder="https://example.com"
-            className="px-3 py-1.5 text-sm rounded-md w-72"
-            style={{ backgroundColor: colors.surfaceSecondary,
-                       border: `1px solid ${colors.border}`,
-                       color: colors.onSurface }}
-            data-testid="seo-url-input"
-          />
-          <button
-            type="button"
-            onClick={run}
-            disabled={running || !url}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-md text-sm font-semibold text-white hover:brightness-95 disabled:opacity-60"
-            style={{ backgroundColor: colors.brand }}
-            data-testid="seo-run-btn"
-          >
-            <RefreshCw size={13} className={running ? "animate-spin" : ""} />
-            {running ? "Analyzing…" : "Run analysis"}
-          </button>
-        </div>
+        {activeTab === "external" ? (
+          <div className="flex items-center gap-2">
+            <input
+              type="url"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              placeholder="https://example.com"
+              className="px-3 py-1.5 text-sm rounded-md w-72"
+              style={{ backgroundColor: colors.surfaceSecondary,
+                         border: `1px solid ${colors.border}`,
+                         color: colors.onSurface }}
+              data-testid="seo-url-input"
+            />
+            <button
+              type="button"
+              onClick={run}
+              disabled={running || !url}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-md text-sm font-semibold text-white hover:brightness-95 disabled:opacity-60"
+              style={{ backgroundColor: colors.brand }}
+              data-testid="seo-run-btn"
+            >
+              <RefreshCw size={13} className={running ? "animate-spin" : ""} />
+              {running ? "Analyzing…" : "Run analysis"}
+            </button>
+          </div>
+        ) : null}
       </div>
 
-      {result ? (
+      {/* TD-seo-phase3 — tab bar. "External Scan" (default) preserves
+          the existing scorecard UX byte-identically. "Portal SEO"
+          opens the Phase 1 BE admin API editor. */}
+      <div className="flex items-center gap-1 border-b"
+           style={{ borderColor: colors.border }}
+           data-testid="website-seo-tabbar"
+           role="tablist">
+        {_SEO_TABS.map((t) => {
+          const label = t === "external" ? "External Scan" : "Portal SEO";
+          const active = activeTab === t;
+          return (
+            <button
+              key={t}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              onClick={() => setActiveTab(t)}
+              className="px-3 py-2 text-sm font-semibold border-b-2 -mb-px"
+              style={{
+                color: active ? colors.brand : colors.muted,
+                borderColor: active ? colors.brand : "transparent",
+              }}
+              data-testid={`seo-tab-${t}`}
+            >
+              {label}
+            </button>
+          );
+        })}
+      </div>
+
+      {activeTab === "portal" ? (
+        <PortalSeoTab />
+      ) : null}
+
+      {activeTab === "external" && result ? (
         <div className="grid md:grid-cols-3 gap-4">
           <div className="rounded-xl p-4"
                style={{ backgroundColor: colors.surface,
@@ -158,7 +201,7 @@ export default function WebsiteSeoPage() {
             )}
           </div>
         </div>
-      ) : (
+      ) : activeTab === "external" ? (
         <div className="rounded-xl p-6 text-center text-sm"
              style={{ backgroundColor: colors.surfaceSecondary,
                         border: `1px dashed ${colors.border}`,
@@ -166,9 +209,9 @@ export default function WebsiteSeoPage() {
              data-testid="seo-empty">
           Enter a URL above and click "Run analysis" to score your site.
         </div>
-      )}
+      ) : null}
 
-      {history.length > 0 ? (
+      {activeTab === "external" && history.length > 0 ? (
         <div className="rounded-xl p-4"
              style={{ backgroundColor: colors.surface,
                         border: `1px solid ${colors.border}` }}
