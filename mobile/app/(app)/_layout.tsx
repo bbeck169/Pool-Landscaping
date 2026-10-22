@@ -14,6 +14,7 @@ import { registerForPushNotifications } from "@/src/services/pushNotifications";
 import { useUnreadCount } from "@/src/hooks/useUnreadCount";
 // FLEET-B · Fleet status chip in the tab bar area.
 import FleetStatusChip from "@/src/components/fleet/FleetStatusChip";
+import FleetPermissionBanner from "@/src/components/fleet/FleetPermissionBanner";
 // Landscape-tech clock-in gate — parity with web f5dd1eb0a.
 import LandscapeTechClockInGate from "@/src/components/LandscapeTechClockInGate";
 
@@ -72,6 +73,7 @@ export default function AppLayout() {
             <FleetStatusChip />
           </View>
         )}
+        {showFleetRow && <FleetPermissionBanner />}
       </View>
       <View style={{ flex: 1 }}>
     <Tabs
