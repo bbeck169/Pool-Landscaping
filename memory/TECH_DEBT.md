@@ -2350,3 +2350,29 @@ Original approval-request note:
 - **TD-fleet-emitter-role-gate (P2 mobile, product decision):** `useFleetEmitter` and `FleetStatusChip` gate on `technician`/`tech` only. The `landscaper`, `landscape_tech`, `pool_tech` and `tech_both` roles never auto-start, and their chip is hidden. Preview test accounts are all `technician`, so this was not observed live.
 - **TD-fleet-chip-admin-off (P3 mobile):** the chip renders for admin/super_admin "for debugging", but admins never start the emitter, so admins always see a red "Off · Fleet tracking is not running". Likely a source of operator confusion.
 
+## TD-portal-add-card-disable-stripe-link · SHIPPED (preview) · Feb-2026
+
+**Status:** Phase 2 SHIPPED to preview. Production deploy is operator's call.
+
+**What shipped:**
+
+- **FE commit `d8f70e277` · td-portal-add-card-disable-stripe-link · FE · Phase 2 (D1-D3, D5).**
+  Three `<Elements>` provider options updated to pass
+  `wallets: { link: "never", applePay: "never", googlePay: "never" }`:
+    * `frontend/src/components/payments/StripeAddCardForm.jsx` (portal /payment-method + admin Customer Detail Payments tab via `PaymentMethodTiles`).
+    * `frontend/src/pages/public/AddCardPage.jsx` (magic-link add-card `/portal/add-card`).
+    * `frontend/src/pages/BusinessSignup.jsx` (tenant signup card-on-file — `<CardElement>` is Link-immune by construction today, defensive for future `<PaymentElement>` swap).
+  D5 honoured: `<PaymentElement>` retained on both surfaces that use it; regression test asserts no swap to `<CardElement>` so the Card/Bank tabs UX from the operator's desired-state screenshot is preserved. Vitest 14/14 pass + 58/58 regression sweep (phase47c, payment-method-tiles, portal-identity-and-add-card, admin-card-capture-panel-ach, payment-method-tiles-portal-placement, phase-signup-\*).
+- **BE commit `dbf0ab8e5` · td-portal-add-card-disable-stripe-link · BE · Phase 2 (D4).**
+  `services.payments.stripe_charge.create_invoice_checkout_session` now passes `payment_method_types=["card"]` into `stripe.checkout.Session.create`. Hosted Checkout no longer auto-advertises Link / Apple Pay / Google Pay on the invoice pay-now flow. Pytest 4/4 pass; pre-existing failures in `test_phase47_direct_stripe_payment_link.py::test_create_invoice_checkout_session_happy_path`, `test_checkout_preflight.py::test_checkout_preflight_returns_ok_true_when_stripe_configured`, `test_stripe_save_on_first_payment.py::test_webhook_save_flag_attaches_pm_as_default`, `test_request_payment_link_error_mapping.py::test_happy_path_returns_payment_url` confirmed PRE-EXISTING via `git stash` of the Phase 2 diff — unrelated to this ticket (stale response-shape assertions after `save_for_future_billing` key was added by a prior ticket + missing DB fixtures). Left alone per single-concern commit policy.
+- **Phase 0 recon:** `memory/td_portal_add_card_disable_stripe_link_phase0_recon.md` (commit `27a6f2916`).
+
+**D6 operator belt-and-braces recommendation (NOT shipped, operator-controlled):** disable Stripe Link account-wide in the Stripe Dashboard (Settings → Payment methods → Link → disable). This would be redundant with D1-D4 on these four surfaces, but any FUTURE Stripe Elements / hosted Checkout surface built in the app would inherit the safe default without needing a per-surface `wallets.link = "never"`. Operator preference; not blocking.
+
+**D7 verification:** admin "charge saved card" + autobilling paths were confirmed to NOT mount Stripe Elements or create new hosted Checkout Sessions. They operate on PaymentMethods already attached to the Stripe Customer via `PaymentIntent.create(off_session=True)` or `confirm`, which never surfaces Link to a browser. **Unaffected by this ticket.**
+
+**Flagged for operator (not acted on):**
+
+- **TD-invoice-pay-now-stripe-unreachable** (production Pay Now "couldn't reach the payment provider" error) is still blocked on operator diagnostic paste from the Phase 0 recon's D1-D7 (`memory/td_invoice_pay_now_stripe_unreachable_phase0_recon.md`). The BE change here (D4) touches the same `stripe_charge.py` file but addresses a DIFFERENT concern — Link disable, not config drift. The config-drift root cause was not touched.
+
+
