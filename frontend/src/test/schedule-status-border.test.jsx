@@ -6,7 +6,9 @@
  *
  *   1. ``getStatusBorderColor(status)`` — the helper that decides the
  *      colored left border on each grid job card.
- *         completed  → red (#DC2626)
+ *         completed  → gray recede (#F3F4F6, Tailwind gray-100 — per
+ *                      Phase K74.1 finished-state treatment, see
+ *                      TD-schedule-status-border-palette)
  *         anything-else / falsy → blue (#2563EB)
  *      The card renders with ``data-status-color=<hex>`` so tests can
  *      assert on the exact color without depending on Tailwind class
@@ -132,10 +134,14 @@ const jobsFixture = [
 
 // ─── 1. getStatusBorderColor helper ──────────────────────────────────
 describe("Schedule · getStatusBorderColor()", () => {
-  it("returns red for completed jobs", () => {
-    expect(getStatusBorderColor("completed")).toBe("#DC2626");
-    expect(getStatusBorderColor("Completed")).toBe("#DC2626");
-    expect(getStatusBorderColor("COMPLETED")).toBe("#DC2626");
+  it("recedes completed-job borders to gray-100 per Phase K74.1 (TD-schedule-status-border-palette)", () => {
+    // Finished / archived jobs should visually recede, not demand
+    // attention. The border now matches the ``K50_JOB_STATUS_BG``
+    // gray-100 card background from ``lib/jobStatus.js:48`` so
+    // completed cards fall calmly into the list.
+    expect(getStatusBorderColor("completed")).toBe("#F3F4F6");
+    expect(getStatusBorderColor("Completed")).toBe("#F3F4F6");
+    expect(getStatusBorderColor("COMPLETED")).toBe("#F3F4F6");
   });
   it("returns blue for scheduled / open / anything-not-completed", () => {
     expect(getStatusBorderColor("scheduled")).toBe("#2563EB");
@@ -146,6 +152,26 @@ describe("Schedule · getStatusBorderColor()", () => {
     expect(getStatusBorderColor(undefined)).toBe("#2563EB");
     expect(getStatusBorderColor(null)).toBe("#2563EB");
     expect(getStatusBorderColor("")).toBe("#2563EB");
+  });
+
+  // TD-schedule-status-border-palette · Oct-2026 — palette-constants
+  // lock. Guards against future accidental drift in EITHER direction
+  // (red → gray or gray → red or any other palette shift). Any
+  // palette change must co-update this test, which forces a
+  // conscious review of the UX intent.
+  it("palette-constants lock: every status border hex is the documented value", () => {
+    // Completed (and case-insensitive aliases) — gray-100 recede.
+    expect(getStatusBorderColor("completed")).toBe("#F3F4F6");
+    // Scheduled / open / all-else fallback — blue-600 prominence.
+    expect(getStatusBorderColor("scheduled")).toBe("#2563EB");
+    expect(getStatusBorderColor("open")).toBe("#2563EB");
+    expect(getStatusBorderColor("in_progress")).toBe("#2563EB");
+    expect(getStatusBorderColor("cancelled")).toBe("#2563EB");
+    expect(getStatusBorderColor("skipped")).toBe("#2563EB");
+    // Explicit guard: deprecated reds must NOT come back without a
+    // conscious palette-ticket update to this test.
+    expect(getStatusBorderColor("completed")).not.toBe("#DC2626");
+    expect(getStatusBorderColor("completed")).not.toBe("#ff4542");
   });
 });
 
@@ -184,7 +210,7 @@ describe("Schedule · day-of-week filter + status border", () => {
     });
   });
 
-  it("renders blue left border for scheduled + red for completed", async () => {
+  it("renders blue left border for scheduled + gray recede for completed (TD-schedule-status-border-palette · Phase K74.1)", async () => {
     apiGetMock.mockImplementation((path) => {
       if (path.startsWith("/jobs")) return Promise.resolve(jobsFixture);
       if (path === "/technicians") return Promise.resolve([]);
@@ -194,14 +220,14 @@ describe("Schedule · day-of-week filter + status border", () => {
 
     const cardA = await screen.findByTestId("grid-job-job-a");
     const cardB = await screen.findByTestId("grid-job-job-b");
-    // Scheduled → blue.
+    // Scheduled → blue prominence.
     expect(cardA.getAttribute("data-status-color")).toBe("#2563EB");
-    // Completed → red.
-    expect(cardB.getAttribute("data-status-color")).toBe("#DC2626");
+    // Completed → gray-100 recede.
+    expect(cardB.getAttribute("data-status-color")).toBe("#F3F4F6");
     // Inline style contains the same left-border color (defense against
     // a future refactor that drops the data attribute).
     expect(cardA.style.borderLeftColor.toLowerCase().replace(/\s/g, "")).toBe("rgb(37,99,235)");
-    expect(cardB.style.borderLeftColor.toLowerCase().replace(/\s/g, "")).toBe("rgb(220,38,38)");
+    expect(cardB.style.borderLeftColor.toLowerCase().replace(/\s/g, "")).toBe("rgb(243,244,246)");
   });
 });
 

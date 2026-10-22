@@ -139,12 +139,17 @@ import {
 
 
 // Feb-2026 · Schedule-UI · left-border indicator for status.
-//   completed → coral-red (#ff4542)
+//   completed → gray recede (#F3F4F6, Tailwind gray-100)
 //   everything else (scheduled / active / pending / requested / …) → blue (#2563EB)
-// The exact hex mirrors the ``K50_JOB_STATUS_BG`` map in
-// ``lib/jobStatus.js`` so future palette shifts keep the two in
-// sync; this helper is intentionally narrower — a big colored bar
-// is a coarser affordance than the existing status pill.
+// TD-schedule-status-border-palette · Oct-2026 — the completed-state
+// border recedes to match the Phase K74.1 ``K50_JOB_STATUS_BG``
+// finished-state treatment in ``lib/jobStatus.js:48`` (Tailwind
+// gray-100). Prior iterations used ``#DC2626`` (bold red) and
+// ``#ff4542`` (coral red); operators + accessibility review
+// deprecated both because finished/archived jobs should recede,
+// not demand attention. The border now visually aligns with the
+// gray card background, keeping ``completed`` cards calmly out of
+// the way while the scheduled/open blue border stays prominent.
 // Phase R1.1 · Feb-2026 — Schedule 500 · technician_id mismatch hotfix.
 //
 // Warn ONCE per session per bogus ``technician_id`` referenced by a
@@ -233,7 +238,10 @@ export function jobMatchesLane(job, laneId) {
 
 export function getStatusBorderColor(status) {
   const s = (status || "").toLowerCase();
-  if (s === "completed") return "#ff4542";
+  // TD-schedule-status-border-palette · Oct-2026 — recede to gray-100
+  // per Phase K74.1 finished-state treatment (see K50_JOB_STATUS_BG
+  // in ``lib/jobStatus.js:48``).
+  if (s === "completed") return "#F3F4F6";
   return "#2563EB";
 }
 
