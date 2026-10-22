@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams, Link } from "react-router-dom";
-import { ArrowLeft, Edit3, Trash2, Mail, Phone, MapPin, Beaker, KeyRound, Briefcase, FileText, StickyNote, Droplets, Star, ListChecks, Home, DollarSign, Clock, ShieldCheck, Paperclip, GitMerge, Ruler, FlaskConical, MoreHorizontal, X as XIcon, AlertCircle, Receipt, Wallet, MessageSquare } from "lucide-react";
+import { ArrowLeft, Edit3, Trash2, Mail, Phone, MapPin, Beaker, KeyRound, Briefcase, FileText, StickyNote, Droplets, Star, ListChecks, Home, DollarSign, Clock, ShieldCheck, Paperclip, GitMerge, Ruler, FlaskConical, MoreHorizontal, X as XIcon, AlertCircle, Receipt, Wallet, MessageSquare, Sparkles } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -8,6 +8,7 @@ import {
   DropdownMenuItem,
 } from "@/components/ui/dropdown-menu";
 import { api } from "@/api";
+import { toast } from "sonner";
 import TemplatePickerPreview from "@/components/communications/TemplatePickerPreview";
 import { CustomerMeasurementsTab, filterCustomerTabs } from "@/components/customer/CustomerMeasurementsTab";
 import CustomerChemicalHistoryTab, { CHEMICAL_HISTORY_TAB_ROLES } from "@/components/customer/CustomerChemicalHistoryTab";
@@ -3774,6 +3775,12 @@ const P7_EMAIL_ATTACH_MAX_COUNT = 5;                   // per-send cap
 
 
 function SendComposeModal({ payload, customer, onClose, onSent, onError }) {
+  // TD-ai-phase2 · Oct-2026 — FE wire-up of POST /api/ai/draft-reply.
+  // Role gate mirrors BE utils.require_admin_or_manager (admin +
+  // super_admin + owner + manager). Below-tier users see no button.
+  const { user: _aiAuthUser } = useAuth() || {};
+  const _canUseAiDraft = ["admin", "super_admin", "owner", "manager"]
+    .includes((_aiAuthUser?.role || "").toLowerCase());
   const [subject, setSubject] = useState("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
@@ -3808,6 +3815,16 @@ function SendComposeModal({ payload, customer, onClose, onSent, onError }) {
   const [uploading, setUploading] = useState(() => new Map());
   const [uploadError, setUploadError] = useState("");
   const [waitingUploads, setWaitingUploads] = useState(false);
+  // TD-ai-phase2 · Oct-2026 — AI draft state.
+  //   * aiDrafting      → loading flag disables the button + swaps copy.
+  //   * aiDraftStash    → snapshot of (subject, message) captured
+  //                        BEFORE applying the AI output so the Undo
+  //                        toast action can restore. Cleared on
+  //                        manual edit (first keystroke in subject OR
+  //                        message), on template-pick, and on
+  //                        modal-close.
+  const [aiDrafting, setAiDrafting] = useState(false);
+  const [aiDraftStash, setAiDraftStash] = useState(null);
   const uploadInputRef = React.useRef(null);
   const isEmail = payload?.channel === "email";
   useEffect(() => {
@@ -3825,6 +3842,10 @@ function SendComposeModal({ payload, customer, onClose, onSent, onError }) {
       });
       setUploadError("");
       setWaitingUploads(false);
+      // TD-ai-phase2 · reset AI draft state per-open so a stashed
+      // undo-target from a prior modal session can't leak.
+      setAiDrafting(false);
+      setAiDraftStash(null);
       // TD-100-sub-template · Feb-2026 — template fetch moved into
       // ``<TemplatePickerPreview>``. Modal-open resets still live here
       // because they coordinate with attachment + upload state that
@@ -3840,6 +3861,9 @@ function SendComposeModal({ payload, customer, onClose, onSent, onError }) {
     }
   }, [uploading, waitingUploads]);
   const pickTemplate = (t) => {
+    // TD-ai-phase2 · Oct-2026 — template-pick is a fresh canvas; clear
+    // any stashed AI draft so a later Undo can't restore stale state.
+    setAiDraftStash(null);
     setPickedId(t?.id || "");
     if (!t) {
       // Reset to "Custom message" — blank fields.
@@ -3866,6 +3890,53 @@ function SendComposeModal({ payload, customer, onClose, onSent, onError }) {
     } catch (e) {
       onError(e?.message || "Preview failed");
     } finally { setPreviewing(false); }
+  };
+
+  // TD-ai-phase2 · Oct-2026 — AI draft handlers.
+  // _runAiDraft: snapshot current (subject, message) → POST
+  // /api/ai/draft-reply → populate state → show sonner undo toast.
+  const _runAiDraft = async () => {
+    if (!customer?.id || aiDrafting) return;
+    const stash = { subject, message };
+    setAiDrafting(true);
+    try {
+      const r = await api.post("/ai/draft-reply", {
+        channel:        isEmail ? "email" : "sms",
+        recipient_type: "customer",
+        recipient_id:   customer.id,
+      });
+      if (isEmail && r?.draft_subject) setSubject(r.draft_subject);
+      if (r?.draft_body) setMessage(r.draft_body);
+      setAiDraftStash(stash);
+      toast.success("AI draft applied", {
+        action: {
+          label: "Undo",
+          onClick: () => {
+            setSubject(stash.subject);
+            setMessage(stash.message);
+            setAiDraftStash(null);
+          },
+        },
+      });
+    } catch (e) {
+      const detail = e?.response?.data?.detail || e?.data?.detail || e?.detail;
+      const status = e?.response?.status || e?.status;
+      if (status === 429 && detail && typeof detail === "object") {
+        if (detail.cap_exceeded) {
+          toast.error("AI monthly cap reached — contact admin");
+        } else if (detail.retry_after_seconds != null) {
+          toast.error(
+            `Please wait ${Math.ceil(detail.retry_after_seconds)}s before retrying`
+          );
+        } else {
+          toast.error("AI draft rate-limited — try again shortly");
+        }
+      } else {
+        toast.error("AI draft failed. Try again.");
+      }
+    } finally {
+      setAiDrafting(false);
+    }
   };
   if (!payload) return null;
 
@@ -4083,20 +4154,40 @@ function SendComposeModal({ payload, customer, onClose, onSent, onError }) {
         {/* TD-100-sub-template · Feb-2026 — template picker aside
             extracted to a shared sub-primitive. Parent owns
             ``pickedId`` (controlled) + the pickTemplate side-effects
-            on ``subject`` / ``message``. */}
-        <TemplatePickerPreview
-          channel={isEmail ? "email" : "sms"}
-          recipientId={customer?.id}
-          pickedId={pickedId}
-          onPick={pickTemplate}
-        />
+            on ``subject`` / ``message``.
+            TD-ai-phase2 · Oct-2026 — AI draft button slots as a
+            sibling ABOVE the template picker within the same 220px
+            aside column. Role-gated to admin+super_admin+owner+
+            manager mirroring the BE require_admin_or_manager gate. */}
+        <div className="flex flex-col gap-2">
+          {_canUseAiDraft ? (
+            <button
+              type="button"
+              onClick={_runAiDraft}
+              disabled={aiDrafting}
+              className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold text-white hover:brightness-95 disabled:opacity-60"
+              style={{ backgroundColor: colors.brand }}
+              data-testid="cd-ai-draft-btn"
+              aria-label="AI draft reply"
+            >
+              <Sparkles size={13} className={aiDrafting ? "animate-pulse" : ""} />
+              {aiDrafting ? "Drafting…" : "AI draft reply"}
+            </button>
+          ) : null}
+          <TemplatePickerPreview
+            channel={isEmail ? "email" : "sms"}
+            recipientId={customer?.id}
+            pickedId={pickedId}
+            onPick={pickTemplate}
+          />
+        </div>
         {/* Editor */}
         <div className="space-y-3">
           {isEmail ? (
             <TextInput
               label="SUBJECT"
               value={subject}
-              onChange={(e) => setSubject(e.target.value)}
+              onChange={(e) => { setAiDraftStash(null); setSubject(e.target.value); }}
               testid="cd-send-subject"
             />
           ) : null}
@@ -4118,7 +4209,7 @@ function SendComposeModal({ payload, customer, onClose, onSent, onError }) {
                 border: `1px solid ${colors.border}`,
               }}
               value={message}
-              onChange={(e) => setMessage(e.target.value)}
+              onChange={(e) => { setAiDraftStash(null); setMessage(e.target.value); }}
               data-testid="cd-send-message"
             />
           </div>
