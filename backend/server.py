@@ -1273,6 +1273,19 @@ api_router.include_router(_scorecard_router.router)
 # Phase 8 · Feb-2026 — Weekly AEO PDF Digest via Resend.
 from routers import aeo_digest as _aeo_digest_router  # noqa: E402
 api_router.include_router(_aeo_digest_router.router)
+# TD-seo-phase1 · Oct-2026 — public sitemap + robots.txt endpoints
+# (per-tenant, env-flag gated via SEO_PUBLIC_INDEXABLE). Mounted
+# under api_router so they reach the backend through the existing
+# /api ingress route; deployment-level alias to /sitemap.xml +
+# /robots.txt at the host root is deferred to an operator-dispatched
+# deployment ticket (see memory/td_seo_phase0_scoping.md §2.2 + the
+# mount-path note at the top of routers/public_sitemap.py).
+from routers import public_sitemap as _public_sitemap_router  # noqa: E402
+api_router.include_router(_public_sitemap_router.router)
+# TD-seo-phase1 · Oct-2026 — admin API for tenant portal-SEO
+# metadata (settings.business_card.seo nested sub-doc).
+from routers import portal_seo_admin as _portal_seo_admin_router  # noqa: E402
+api_router.include_router(_portal_seo_admin_router.router)
 
 # Phase 9 · Feb-2026 — LLMs.txt Auto-Publish (Netlify / Vercel / CF Pages).
 from routers import llmstxt_publish as _llmstxt_pub_router  # noqa: E402
