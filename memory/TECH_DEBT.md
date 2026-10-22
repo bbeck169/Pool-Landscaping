@@ -608,6 +608,33 @@ Source: `memory/mobile_dashboard_parity_audit.md` (`92f064b38`). The operator ke
 
 
 
+- **TD-cad-phase1 · CLOSED (`5f8be9b47` + `254ba2399`, Oct-2026).**
+  - **Scope:** gap-fill per Phase 0 pivot. GAP-A (property + quote attach) + GAP-B (role widening to manager) + GAP-C (narrowed to inline comment) + GAP-F (Download JSON button). Phase 0 scoping doc `9fa0062e8` operator-approved all 10 defaults D1–D10.
+  - **BE commit (`5f8be9b47`)** · `backend/routers/cad.py` MODIFIED + `backend/tests/test_cad_property_quote_attach.py` NEW ~280 LOC 15/15 green:
+    - GAP-A: `DesignIn.property_id` + `DesignIn.quote_id` additive-nullable; `_design_write_dict` persists both; `GET /api/designs` accepts `?property_id=` + `?quote_id=`; `_validate_fk_refs()` enforces tenant-scoped FK on POST + PUT (cross-tenant or missing → 404).
+    - GAP-B: `require_admin` → `require_admin_or_manager` on 5 `/designs` CRUD endpoints. Map-tile + MARCO generate + site-plan-pdf endpoints RETAIN `require_admin` (AI credits + Google Maps quota).
+    - GAP-C NARROWING: operator D7 approved `MAPBOX_ACCESS_TOKEN` removal based on **FALSE** Phase 0 §3.3 "dead config" claim. Phase 1 recon surfaced actual use by 5 surfaces (`routers.property`, `routers.gps_route`, `services.maps.dispatcher`, `services.reverse_geocoder`, `services.gps_stops_batch`). Scope narrowed to authoritative inline comment at top of `cad.py` documenting the vendor split + explicitly stating `MAPBOX_ACCESS_TOKEN` must stay. Pytest §7 locks the comment. Phase 0 §3.3 superseded.
+    - Pytest: §1 round-trip 2 + §2 list-filter 2 + §3+§4 cross-tenant 3 + §5 role widening 6 parametrized + §6 legacy backward-compat + §7 GAP-C narrowing lock.
+    - Regression: 50/50 existing CAD BE pytest preserved byte-identical.
+  - **FE commit (`254ba2399`)** · 5 paths:
+    - `frontend/src/components/cad/SitePlansAside.jsx` NEW ~130 LOC — shared aside with `mode = "property" | "quote"` prop driving `?property_id=` vs `?quote_id=` fetch; 10 testids; "+ New site plan" `<Link>` forwards attach id + customer_id.
+    - `PropertyDrawer.jsx` + `QuoteInvoiceDetail.jsx` MODIFIED (2 anchors each: import + mount). Property aside mounts across all 5 drawer tabs; Quote aside mounts after `<InvoiceAttachments>` guarded `!isInvoice && isStaff && doc?.id`.
+    - `Editor.jsx` MODIFIED at ONE anchor (line 1038 next to `cad-save`) — "Download JSON" button; `JSON.stringify(design, null, 2)` → `Blob("application/json")` → `URL.createObjectURL` → programmatic anchor click → `setTimeout URL.revokeObjectURL(500ms)` cleanup; filename `cad_design_{design.id || id}_{YYYYMMDDTHHMMSSZ}.json`; try/catch with `setToast("Export failed")`. New testid `cad-download-json`.
+    - `frontend/src/test/cad-site-plans-aside.test.jsx` NEW ~175 LOC 11/11 green: fetch URL shape (property + quote), empty state, thumbnail, placeholder, new-plan href carrying attach id + customer_id, Editor Download JSON regex locks, 10 pre-existing Editor testids regression lock.
+    - Regression: 18/18 existing Editor vitest preserved byte-identical.
+  - **Byte-identical safeguards:** `shapeMath.js` untouched; 2,133-LOC `Editor.jsx` modified at ONE anchor only; 12-tool CAD toolbar byte-identical; MARCO + map-tile + site-plan-pdf endpoints byte-identical.
+  - **V15 Occurrence #7 held this cycle** (see V15 Occurrence log at the end of the TD-UIinj section — new file `backend/tests/test_t287998_repair_migration.py` with same "Ticket 287998" numeric anchor as Occurrence #6; both files remain untracked and HELD).
+  - **Scope compliance:** no shapeMath changes; no MARCO / map-tile / site-plan-pdf changes; no Mapbox migration (GAP-C narrowed per Phase 1 recon correction); no mobile edits; no AI / SEO scope creep; no testing agent; no new npm packages.
+  - **DEPLOYMENT HOLD honored:** Phase 1 ships to preview only.
+  - **Still open:**
+    - `TD-cad-phase2` (OPTIONAL per D9) — GAP-D customer-uploaded aerial + GAP-E blank-grid fallback. ~150 LOC.
+    - `TD-cad-mobile-audit` (OPTIONAL per D10) — mobile parity recon-only.
+    - `TD-cad-phase1b-editor-prefill` (NEW candidate) — Editor-side consumption of `?property_id=` + `?quote_id=` + `?customer_id=` so the "+ New site plan" button lands in an editor that already has the attach wired. ~15 LOC.
+    - Inherited AI + SEO follow-ups unchanged.
+  - **Priority:** closed.
+
+
+
 - **TD-seo-phase1 · CLOSED (`ea477aaa7`, Oct-2026).**
   - **Scope:** Phase 1 of 3-phase TD-seo rollout per `memory/td_seo_phase0_scoping.md`. Track C hybrid approved (operator defaults all Y). Ships BE sitemap + robots + tenant-SEO metadata CRUD; Phases 2 (FE Helmet + JSON-LD) + 3 (admin UI tab under `WebsiteSeoPage.jsx`) remain follow-up tickets.
   - **BE endpoints:**
