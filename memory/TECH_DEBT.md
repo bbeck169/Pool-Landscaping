@@ -2288,3 +2288,37 @@ When a technician record has an empty or missing `role`, the `secondary` line in
 - **Fix sketch:** in BE `routers/global_search.py` `_search_technicians`, default `role` to a sensible display string (e.g. "Technician") when building the hit, so `secondary` is always "role · phone" (or "role · email" as the fallback).
 - **Status:** doc-only in TD-mobile-tech-search; web/BE track to pick up.
 
+## TD-fleet-tracking-always-on: Phase 1 SHIPPED (`0e7fd1580`), NOT CLOSED, blocked on TD-fleet-emitter-auth-wiring (Oct-2026)
+
+Option A (soft always-on, mobile only), operator defaults D1–D7. Scoping: `memory/td_fleet_tracking_always_on_phase0_scoping.md`.
+
+- **Recon vs the Phase 0 premise:**
+  - **Already shipped behaviour, so the requested changes were no-ops:**
+    - Default-on at first launch: `isPaused()` = `AsyncStorage "fleet_pause_shift" === "1"`, so an absent key means tracking ON.
+    - Sticky pause: the key is written only by an explicit `FleetPauseToggle` pause and survives restarts.
+    - Auto-start on login, as designed in `useFleetEmitter`.
+  - **Result:** no `isPaused = true` default exists to remove. These behaviours are locked by tests instead, with no prod change to `locationEmitter.ts` or `FleetPauseToggle.tsx`.
+- **Shipped in `0e7fd1580` (prod +71 LOC, 3 files + test):**
+  - `useFleetEmitter`: an AppState foreground check (tech roles only) that resumes from `no_permission` after an OS re-grant. It uses a read-only `getForegroundPermissionsAsync` (never re-prompts) and never acts when `isPaused()`.
+  - NEW `FleetPermissionBanner.tsx`: a non-blocking, dismissible reminder shown only for `no_permission`, with "Open Settings" via `Linking.openSettings`. Mounted under the fleet chip row in `app/(app)/_layout.tsx`.
+  - Jest `td-fleet-tracking-always-on.test.tsx` 11/11; fleet-chip-tap-target green; tsc 629 (pre-commit); eslint clean.
+  - Audit emission skipped: no tech-side GPS-state audit endpoint exists, and Option A has no auto-resume-from-pause trigger by design (hard rule).
+- **ROOT CAUSE FOUND DURING LIVE VERIFICATION. This is why the operator sees "Off · Fleet tracking is not running":**
+  - `useFleetEmitter()` is called in `RootLayout` (`app/_layout.tsx:85`), which is the component that RENDERS `<AuthProvider>` (L173). `useAuth()` therefore reads the context default `{}`, `user` is always undefined, and the hook always returns early.
+  - **The emitter has never started for any user since FLEET-B (`cedc6d5f8`, 2026-09-28).**
+  - **Evidence:** live preview as `mike@` (role technician). With browser geolocation explicitly granted, the chip still reads "Off", the modal says "Fleet tracking is not running.", and there are zero `/api/fleet/*` requests.
+  - **Consequence:** the Phase 1 foreground-resume and banner are also inert in the real app until the wiring is fixed. Unit tests pass because they mock `useAuth`.
+
+## TD-fleet-emitter-auth-wiring (P1 mobile, awaiting operator approval; blocks TD-fleet-tracking-always-on)
+
+- **Fix sketch (~5 LOC):** move the call into a provider-scoped host. Add `function FleetEmitterHost() { useFleetEmitter(); return null; }` rendered beside `<PushTapRouter />` inside `<AuthProvider>`, and drop the `RootLayout` call. Add a render test that mounts the real `AuthProvider` so a mocked `useAuth` can't hide this again.
+- **Behaviour impact:** this turns on real foreground GPS pings (`POST /api/fleet/ping`, 15s/60s cadence) for every `technician`/`tech` user for the first time. Paused techs stay paused. Non-enrolled techs get BE 403, which shows as `not_in_fleet`. The OS permission prompt will appear on first run. This is a material privacy/battery change in practice, so it needs explicit operator sign-off. Production (app.plofv.com) is affected once promoted.
+
+## Fleet follow-up candidates (P3 unless noted)
+
+- **TD-fleet-tracking-startup-audit-endpoint (P3 BE+mobile):** no tech-side audit stream for GPS state transitions (pause/resume/permission). Needs a thin BE endpoint if the operator wants it.
+- **TD-fleet-tracking-permission-reminder-polish (P3 mobile):** the banner shipped minimal. Possible polish: persist dismissal per day; "paused > 24h" reminder (Phase 0 §8 Phase 2); background-permission messaging if the emitter ever goes background.
+- **TD-fleet-tracking-admin-policy-ui (P3 BE+web):** only if the operator later picks Option B/C/D (D3 confirmation modal applies).
+- **TD-fleet-emitter-role-gate (P2 mobile, product decision):** `useFleetEmitter` and `FleetStatusChip` gate on `technician`/`tech` only. The `landscaper`, `landscape_tech`, `pool_tech` and `tech_both` roles never auto-start, and their chip is hidden. Preview test accounts are all `technician`, so this was not observed live.
+- **TD-fleet-chip-admin-off (P3 mobile):** the chip renders for admin/super_admin "for debugging", but admins never start the emitter, so admins always see a red "Off · Fleet tracking is not running". Likely a source of operator confusion.
+

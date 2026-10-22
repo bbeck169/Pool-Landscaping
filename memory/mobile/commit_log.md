@@ -2325,3 +2325,14 @@
 - **Checks**: new 13/13; adapter H2 updated; timeline-related suites 12/13, 121/121 (1 baseline); tsc 629 post-commit; live chip row + money chips on `drift-dt-fd70e7`. Hygiene drift = exactly the 4 expected files.
 - **Files modified**: mobile/src/lib/customerTimeline.ts, mobile/src/components/customers/CommunicationTimeline.tsx, mobile/__tests__/td98-mobile-payment.test.tsx (new), mobile/__tests__/td98-cleanup-timeline-adapter.test.ts
 - **Web files referenced**: frontend/src/components/customers/CustomerFullTimeline.jsx (28bdef72c: _KIND_META.payment, _BASE_CHIPS, DefaultRow money L255-271); backend/routers/communication_timeline.py L896-925 + L1135-1160 (2f35d291d, read-only)
+
+## Iteration 177 — TD-fleet-tracking-always-on Phase 1 (Option A): locks + permission banner + re-grant resume; ROOT CAUSE found, NOT closed
+- **Commits**: `0e7fd1580` (td-fleet-tracking-always-on) · `td-fleet-tracking-always-on-doc` (this doc)
+- **Date**: 2026-10-22
+- **Recon**: default-on, sticky pause and auto-start-on-login were already the designed behaviour (absent `fleet_pause_shift` key = tracking ON). The Phase 0 premise had no code to change, so these are locked by tests.
+- **Changes**: `useFleetEmitter` foreground resume from `no_permission` (read-only permission check, never re-prompts, never overrides a pause); NEW `FleetPermissionBanner` (dismissible, Open Settings) under the chip row. `locationEmitter.ts` / `FleetPauseToggle.tsx` unchanged.
+- **Checks**: 11/11 new; fleet-chip-tap-target green; tsc 629 pre-commit; eslint clean. Hygiene drift = exactly the 4 expected files (no V15 #6/#7 artifacts surfaced).
+- **Live finding (blocker)**: `useFleetEmitter()` is called in `RootLayout` ABOVE `<AuthProvider>`, so `user` is always undefined and the emitter has never started since FLEET-B `cedc6d5f8`. Live: tech Mike with geolocation granted → chip "Off", 0 `/api/fleet` requests. The shipped resume + banner are inert until fixed. Raised TD-fleet-emitter-auth-wiring (P1, ~5 LOC, awaiting operator sign-off: it enables real GPS pings for all tech users).
+- **Candidates raised**: TD-fleet-tracking-startup-audit-endpoint, -permission-reminder-polish, -admin-policy-ui, TD-fleet-emitter-role-gate (P2), TD-fleet-chip-admin-off.
+- **Files modified**: mobile/app/(app)/_layout.tsx, mobile/src/hooks/useFleetEmitter.ts, mobile/src/components/fleet/FleetPermissionBanner.tsx (new), mobile/__tests__/td-fleet-tracking-always-on.test.tsx (new)
+- **Web files referenced**: none (mobile-only); memory/td_fleet_tracking_always_on_phase0_scoping.md
