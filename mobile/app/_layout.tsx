@@ -27,7 +27,7 @@ import { ToastProvider } from "@/src/components/ToastProvider";
 import { registerOfflineTemplateDraftListeners } from "@/src/utils/offlineTemplateDrafts";
 import { SyncManagerProvider } from "@/src/services/SyncManager";
 // FLEET-B · Hook that initializes foreground GPS emission for fleet techs.
-import { useFleetEmitter } from "@/src/hooks/useFleetEmitter";
+import FleetEmitterRunner from "@/src/components/fleet/FleetEmitterRunner";
 // TB-1 / Phase 8M · "Hey MARCO" wake-word — arm-on-click controller.
 import { MarcoMicProvider } from "@/src/components/marco/MarcoMicController";
 // OTA auto-update listener — background check + subtle "update ready" toast.
@@ -81,8 +81,9 @@ export default function RootLayout() {
   // Never auto-reloads mid-session; shows a subtle alert instead.
   useOtaUpdateListener();
 
-  // FLEET-B · Start the foreground GPS emitter for fleet-enrolled techs.
-  useFleetEmitter();
+  // FLEET-B · The foreground GPS emitter is hosted by <FleetEmitterRunner />
+  // INSIDE <AuthProvider> below (TD-fleet-emitter-auth-wiring) — calling it
+  // here read the context default and never saw the logged-in user.
 
   // TB-1 · "Hey MARCO" wake-word — Phase 8M: no auto-start. The
   // listener is hosted by <MarcoMicProvider> below and only runs while
@@ -179,6 +180,7 @@ export default function RootLayout() {
                   <StoragePressureBanner />
                   <ImpersonationBanner />
                   <PushTapRouter />
+                  <FleetEmitterRunner />
                   <Stack screenOptions={{ headerShown: false }} />
                   <ConfirmModalHost />
                   <ConflictSheet />
