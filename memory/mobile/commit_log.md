@@ -2336,3 +2336,13 @@
 - **Candidates raised**: TD-fleet-tracking-startup-audit-endpoint, -permission-reminder-polish, -admin-policy-ui, TD-fleet-emitter-role-gate (P2), TD-fleet-chip-admin-off.
 - **Files modified**: mobile/app/(app)/_layout.tsx, mobile/src/hooks/useFleetEmitter.ts, mobile/src/components/fleet/FleetPermissionBanner.tsx (new), mobile/__tests__/td-fleet-tracking-always-on.test.tsx (new)
 - **Web files referenced**: none (mobile-only); memory/td_fleet_tracking_always_on_phase0_scoping.md
+
+## Iteration 178 — TD-fleet-emitter-auth-wiring: fleet emitter boots inside AuthProvider (PREVIEW ONLY)
+- **Commits**: `9ba22f2b3` (td-fleet-emitter-auth-wiring) · `td-fleet-emitter-auth-wiring-doc` (this doc)
+- **Date**: 2026-10-22
+- **Changes**: NEW `FleetEmitterRunner` (hook host, renders null) mounted beside `<PushTapRouter />` inside `<AuthProvider>`; the `RootLayout` hook call was removed. Prod ~8 LOC; no hook/emitter/toggle/role-gate changes.
+- **Checks**: NEW real-AuthProvider test 6/6 (real login → ping → active; above-provider bug-class lock; admin; paused; OS denied; wiring source lock); Phase 1 11/11 unchanged; chip 9/9; tsc 629 post-commit; eslint clean. Live: tech chip Off → In Fleet. Hygiene drift = exactly the 3 expected files (no V15 #6/#7 artifacts).
+- **New finding**: TD-fleet-emitter-position-source (P1 candidate). The emitter only uses `getLastKnownPositionAsync`, which is null on web and can be null on native, so pings are silently skipped while the chip says "In Fleet". 0 `tech_locations` rows on preview.
+- **No production deploy triggered.** Role gate expansion (TD-fleet-emitter-role-gate, P2) not absorbed.
+- **Files modified**: mobile/app/_layout.tsx, mobile/src/components/fleet/FleetEmitterRunner.tsx (new), mobile/__tests__/td-fleet-emitter-auth-wiring.test.tsx (new)
+- **Web files referenced**: none (mobile-only); backend/routers/fleet.py L122-180 ping handler (read-only)

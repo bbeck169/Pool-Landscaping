@@ -2309,10 +2309,38 @@ Option A (soft always-on, mobile only), operator defaults D1–D7. Scoping: `mem
   - **Evidence:** live preview as `mike@` (role technician). With browser geolocation explicitly granted, the chip still reads "Off", the modal says "Fleet tracking is not running.", and there are zero `/api/fleet/*` requests.
   - **Consequence:** the Phase 1 foreground-resume and banner are also inert in the real app until the wiring is fixed. Unit tests pass because they mock `useAuth`.
 
-## TD-fleet-emitter-auth-wiring (P1 mobile, awaiting operator approval; blocks TD-fleet-tracking-always-on)
+## TD-fleet-emitter-auth-wiring: SHIPPED to PREVIEW (`9ba22f2b3`, Oct-2026). Production deploy is operator-controlled.
+
+- **Fix:** NEW `src/components/fleet/FleetEmitterRunner.tsx` (calls `useFleetEmitter()`, renders null) is mounted beside `<PushTapRouter />` INSIDE `<AuthProvider>` in `app/_layout.tsx`. The `RootLayout` call was removed and replaced by a comment explaining why. The rest of `_layout.tsx` is unchanged (diff: import swap, comment, one JSX line). `useFleetEmitter`, `locationEmitter`, `FleetPauseToggle` and the role gate (technician/tech) are all UNCHANGED.
+- **Verification:**
+  - **Jest:** NEW `__tests__/td-fleet-emitter-auth-wiring.test.tsx` 6/6 with the **REAL `AuthProvider`** (only `@/src/api`, `expo-location` and `expo-battery` are mocked; login goes through the real `login()`).
+    - A real tech login sends `POST /fleet/ping` with coords, and status becomes active.
+    - **Bug-class lock:** the same runner mounted above the provider never starts.
+    - An admin login starts no emitter.
+    - A paused tech stays paused, with no permission prompt.
+    - OS denied → `no_permission`, no pings.
+    - A source-scan wiring lock checks that `RootLayout` no longer calls the hook and that the runner is rendered exactly once inside `<AuthProvider>`.
+  - **Regression:** Phase 1 `td-fleet-tracking-always-on` 11/11 (file unchanged) + `fleet-chip-tap-target` 9/9 → 26/26.
+  - **tsc:** 629 post-commit.
+  - **eslint:** clean.
+  - **Live preview:** tech `mike@` with geolocation granted. The chip went from "Off · Fleet tracking is not running" (before) to **"In Fleet · GPS location is being shared with dispatch."** (after).
+- **This preview ship does NOT activate GPS in production.** Promotion to app.plofv.com is the operator's decision. Once promoted, every `technician`/`tech` user who is not paused gets the OS location prompt and starts the foreground emitter. Non-enrolled techs → BE 403 → `not_in_fleet`.
+- **New finding during live verification (not fixed, scope locked):** see TD-fleet-emitter-position-source below. On the preview, 0 `tech_locations` rows were written even though the chip showed "In Fleet".
+
+Original approval-request note:
+
 
 - **Fix sketch (~5 LOC):** move the call into a provider-scoped host. Add `function FleetEmitterHost() { useFleetEmitter(); return null; }` rendered beside `<PushTapRouter />` inside `<AuthProvider>`, and drop the `RootLayout` call. Add a render test that mounts the real `AuthProvider` so a mocked `useAuth` can't hide this again.
 - **Behaviour impact:** this turns on real foreground GPS pings (`POST /api/fleet/ping`, 15s/60s cadence) for every `technician`/`tech` user for the first time. Paused techs stay paused. Non-enrolled techs get BE 403, which shows as `not_in_fleet`. The OS permission prompt will appear on first run. This is a material privacy/battery change in practice, so it needs explicit operator sign-off. Production (app.plofv.com) is affected once promoted.
+
+## TD-fleet-emitter-position-source (P1 mobile candidate, found during TD-fleet-emitter-auth-wiring live verification)
+
+- **Problem:** `_doPing()` (`locationEmitter.ts` ~L223) only uses `Location.getLastKnownPositionAsync()` and silently skips the ping when it returns `null`. There is no `getCurrentPositionAsync` / `watchPositionAsync` fallback.
+  - **Web:** it always returns null, so zero pings are sent. On the preview after the wiring fix, the chip shows "In Fleet" but the DB has 0 `tech_locations` rows (read-only check).
+  - **Native:** it returns null until the OS has a cached fix (fresh boot, or location not used recently), so pings can silently never send.
+- **Related problem:** `startEmitter()` sets status `active` ("In Fleet · GPS location is being shared with dispatch.") BEFORE the first successful ping. The chip can therefore claim sharing while nothing is sent.
+- **Fix sketch (~10-15 LOC):** fall back to `getCurrentPositionAsync({ accuracy: Balanced })` (timeout-guarded) when last-known is null, and/or start a `watchPositionAsync` subscription while active. Consider holding status at `idle` until the first ping succeeds.
+- **Priority:** this needs operator approval before shipping; it is the remaining blocker for real fleet tracking once the auth wiring is promoted.
 
 ## Fleet follow-up candidates (P3 unless noted)
 
