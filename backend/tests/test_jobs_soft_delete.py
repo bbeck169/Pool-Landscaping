@@ -275,9 +275,99 @@ def test_super_admin_can_undelete_job(super_headers, admin_headers, open_job):
     assert fresh["deleted_at"] in (None,)
 
 
-def test_admin_cannot_undelete_job(admin_headers, open_job):
+def test_admin_can_undelete_job(admin_headers, open_job):
+    """TD-admin-undelete-rbac · Oct-2026 — Phase 34 Task X design
+    intent: ``POST /jobs/{jid}/undelete`` admits any admin-equivalent
+    role (``admin`` / ``super_admin`` / ``owner``) per the handler's
+    inline role check at ``routers/jobs.py:4873``. This mirrors the
+    ``require_admin`` helper widening in ``utils.py:220-228`` from
+    the same phase and keeps undelete symmetric with sibling delete
+    endpoints: ``DELETE /jobs/{jid}``, ``POST /jobs/{jid}/soft-delete``,
+    and ``POST /jobs/bulk-delete`` (``bulk_crm.py:199``) are all gated
+    at ``require_admin`` — any role that can delete can also undelete.
+
+    (Pre-TD-admin-undelete-rbac the test here asserted ``403`` which
+    was a stale assertion from before the Phase 34 Task X widening;
+    TD-82 Phase 2A ship receipt ``470112f3d`` already flagged it as
+    pre-existing-failing.)
+    """
     requests.post(f"{API}/jobs/{open_job['id']}/soft-delete",
                     headers=admin_headers, timeout=15)
     r = requests.post(f"{API}/jobs/{open_job['id']}/undelete",
                         headers=admin_headers, timeout=15)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body.get("ok") is True
+    assert body.get("job_id") == open_job["id"]
+    assert isinstance(body.get("restored_at"), str) and body["restored_at"]
+    # DB state matches response — job is live again.
+    fresh = _sync.jobs.find_one({"id": open_job["id"]}, {"_id": 0})
+    assert fresh.get("deleted_at") in (None,)
+    assert fresh.get("undeleted_by_user_id") is not None
+
+
+# ─── Negative-case locks: lower roles stay 403 ─────────────────────
+# TD-admin-undelete-rbac · Oct-2026 — guards against future accidental
+# widening of the undelete gate below the ``admin``-equivalent tier.
+# Error-detail string is also locked so a future refactor that
+# re-attaches the handler with a different 403 message trips the
+# assertion.
+_UNDELETE_FORBIDDEN_DETAIL = "Admin role required to undelete jobs"
+
+
+def test_technician_cannot_undelete_job(tech_headers, admin_headers, open_job):
+    """TD-admin-undelete-rbac · Oct-2026 — tech role gets 403.
+
+    Delete via admin first (admin can soft-delete), then attempt
+    undelete as tech. The handler's inline role check at
+    ``routers/jobs.py:4873-4874`` rejects any role outside
+    ``(admin, super_admin, owner)``.
+    """
+    requests.post(f"{API}/jobs/{open_job['id']}/soft-delete",
+                    headers=admin_headers, timeout=15)
+    r = requests.post(f"{API}/jobs/{open_job['id']}/undelete",
+                        headers=tech_headers, timeout=15)
     assert r.status_code == 403, r.text
+    assert (r.json().get("detail") or "") == _UNDELETE_FORBIDDEN_DETAIL
+
+
+def test_manager_cannot_undelete_job(admin_headers, open_job):
+    """TD-admin-undelete-rbac · Oct-2026 — manager role gets 403.
+
+    ``manager`` passes ``require_admin_or_manager`` (used for
+    bulk-reassign + bulk-reschedule + recurring CRUD) but is
+    deliberately excluded from the delete/undelete tier, which
+    uses ``require_admin``. Undelete follows the same boundary.
+    """
+    m = _seed_user("manager")
+    try:
+        tok = _mint_jwt(m["id"], role="manager")
+        headers = {"Authorization": f"Bearer {tok}"}
+        requests.post(f"{API}/jobs/{open_job['id']}/soft-delete",
+                        headers=admin_headers, timeout=15)
+        r = requests.post(f"{API}/jobs/{open_job['id']}/undelete",
+                            headers=headers, timeout=15)
+        assert r.status_code == 403, r.text
+        assert (r.json().get("detail") or "") == _UNDELETE_FORBIDDEN_DETAIL
+    finally:
+        _sync.users.delete_one({"id": m["id"]})
+
+
+def test_customer_cannot_undelete_job(admin_headers, open_job):
+    """TD-admin-undelete-rbac · Oct-2026 — customer role gets 403.
+
+    Customers never touch any mutation endpoint on jobs; this test
+    locks the obvious floor and documents it.
+    """
+    c = _seed_user("customer")
+    try:
+        tok = _mint_jwt(c["id"], role="customer")
+        headers = {"Authorization": f"Bearer {tok}"}
+        requests.post(f"{API}/jobs/{open_job['id']}/soft-delete",
+                        headers=admin_headers, timeout=15)
+        r = requests.post(f"{API}/jobs/{open_job['id']}/undelete",
+                            headers=headers, timeout=15)
+        assert r.status_code == 403, r.text
+        assert (r.json().get("detail") or "") == _UNDELETE_FORBIDDEN_DETAIL
+    finally:
+        _sync.users.delete_one({"id": c["id"]})

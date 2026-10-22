@@ -508,6 +508,40 @@ Source: `memory/mobile_dashboard_parity_audit.md` (`92f064b38`). The operator ke
   - **Tests:** `td82-mobile-bulk-sheets` 5/5 + `td82-mobile-admin-jobs-bulk` 8/8 = 13. The existing `dashboard-kpi-drilldown-filters` 9/9 stays green. Full jest 42 failing suites (= baseline), 283 passing. tsc 651.
   - **Live (Expo web, admin):** a throwaway job was created via API and set to `canceled`. Under `/admin/jobs?status=canceled`: Select → row → Reschedule 2026-12-01 → 2026-12-15 → Delete confirm (web copy) → row removed, "1 job deleted" toast, `GET /jobs/{id}` → 404. No existing preview jobs were mutated; the 390 pt bar-fit check made no changes.
   - **Priority:** closed.
+- **TD-admin-undelete-rbac · CLOSED (`_pending_sha_`, Oct-2026).**
+  - **Classification:** (b) INTENTIONAL widening, test stale. Phase 1 recon confirmed `POST /jobs/{jid}/undelete` handler at `backend/routers/jobs.py:4873` is deliberately gated at `(admin, super_admin, owner)` per Phase 34 · Task X design intent (same phase widened the shared `require_admin` helper in `utils.py:220-228`). Symmetric with sibling delete endpoints (`DELETE /jobs/{jid}`, `POST /jobs/{jid}/soft-delete`, `POST /jobs/bulk-delete` all at `require_admin`). The stale `test_admin_cannot_undelete_job` assertion predated the widening — flagged pre-existing-failing in TD-82 Phase 2A ship receipt `470112f3d`.
+  - **Fix:** test file `backend/tests/test_jobs_soft_delete.py:278-284` only — zero handler change (preserves Phase 34 Task X design intent).
+    - Renamed `test_admin_cannot_undelete_job` → `test_admin_can_undelete_job`. Assertion flipped from `403` → `200` + shape lock on `{ok=True, job_id, restored_at}` + DB-state verification (`deleted_at=None`, `undeleted_by_user_id` set).
+    - 3 NEW negative-case locks guard against future accidental widening below admin tier — `test_technician_cannot_undelete_job`, `test_manager_cannot_undelete_job`, `test_customer_cannot_undelete_job`. Each also locks the exact error-detail string `"Admin role required to undelete jobs"` so a future refactor with a different 403 message trips the assertion.
+    - `test_super_admin_can_undelete_job` preserved as the positive-case for the top-of-tier role.
+  - **Pytest:** 14/14 undelete-adjacent + regression (4 new/updated undelete + 10 adjacent `jobs_soft_delete` cases preserved). 1 UNRELATED pre-existing failure flagged separately — see `TD-jobs-list-include-deleted-super-admin` below.
+  - **No code change to the handler.** Phase 34 Task X design intent + sibling-endpoint symmetry preserved byte-for-byte.
+  - **Blast radius audit (recon traceability):** zero FE/mobile/script HTTP callers of `/jobs/{id}/undelete` exist today (only a stale copy string at `CalendarSchedule.jsx:3458` — see `TD-schedule-undelete-copy-cleanup` below). Fixing the test cost zero runtime behavior.
+  - **Priority:** closed.
+
+
+## TD-schedule-undelete-copy-cleanup (candidate, P3 FE)
+
+Stale UI copy at `frontend/src/pages/schedule/CalendarSchedule.jsx:3458` reads "undeleted by a super_admin" inside a tooltip/toast message. BE handler was widened in Phase 34 · Task X · Feb 2026 to admit any admin-equivalent role (`admin`, `super_admin`, `owner`) — see `TD-admin-undelete-rbac` closed above. Options for the copy:
+- "undeleted by an admin"
+- "restored by an admin"
+- Role-neutral: "restored from the deleted-jobs list"
+Trivial 1-LOC FE copy fix. No functional change. Opportunistic bookmark — not scheduled.
+- Reporter: TD-admin-undelete-rbac recon cycle 2026-10-21.
+- **Priority:** P3 (candidate).
+
+
+## TD-jobs-list-include-deleted-super-admin (candidate, P3 BE)
+
+Pre-existing failing test `backend/tests/test_jobs_soft_delete.py::test_jobs_list_super_admin_can_include_deleted`. Seeds a job, single-soft-deletes it as admin via `POST /api/jobs/{id}/soft-delete`, then expects it to appear in `GET /api/jobs?include_deleted=true&limit=5000` for super_admin — but it doesn't. Specifics:
+- Flagged pre-existing-failing in TD-82 Phase 2A ship receipt `470112f3d` + TD-82 Phase 2B ship receipt `1b13bb66f` (via `git stash` baseline-independent probe).
+- Still failing in TD-admin-undelete-rbac closure cycle (same orthogonal breakage).
+- Likely cause: `?include_deleted=true` filter path doesn't union soft-deleted rows into the super_admin query, OR there's a projection / sort / pagination clip at the 5000 limit. Needs its own recon.
+- No evidence of a runtime user complaint — admin tooling that uses `?include_deleted=true` may not exist on web/mobile FE today.
+- Reporter: TD-82 Phase 2A ship cycle 2026-10-21 (surfaced again in TD-admin-undelete-rbac ship 2026-10-21).
+- **Priority:** P3 (candidate). Opportunistic — blocked only on operator triage dispatch.
+
+
 - **TD-82-calendar-consolidate · FULLY CLOSED (Phase 2B · `1b13bb66f`, Oct-2026).**
   - **Phase 2B scope:** `POST /jobs/bulk-soft-delete` (`backend/routers/jobs.py:4253`) retired to **410 Gone** per the TD-98-be-cleanup-retire plain-string prose convention (`routers/communication_timeline.py:162`) with canonical pointer `POST /jobs/bulk-delete` + TD-82 Phase 2B marker in `detail`. 71→28 LOC shim trimdown; TODO comment removed; stale docstring reference `app/calendar.tsx:617` corrected to `mobile/app/(app)/schedule/calendar.tsx:575` matching `eaff2b3f1`.
   - **Caller migration confirmed:**
