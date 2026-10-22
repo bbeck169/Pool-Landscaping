@@ -34,6 +34,10 @@ from routers.tenants import get_current_tenant
 # jobs (crew_id set, technician_id null OR pointing at a teammate)
 # open for every member of the assigned crew. See services/authz.py.
 from services.authz import is_tech_authorized_on_job
+from services.address_resolver import (
+    correct_cross_customer_job_addresses,
+    property_belongs_to_customer,
+)
 from services.geo_resolver import (
     COORD_SOURCE_JOB,
     COORD_SOURCE_CUSTOMER,
@@ -1179,6 +1183,11 @@ async def list_jobs(
     # department + derived checklist_kind so schedule/dispatch cards +
     # mobile clients see the right form without a per-job GET.
     await _enrich_jobs_dept_and_kind(docs, tenant["id"])
+    # Ticket 287998 — ``cmap`` is only assigned inside the non-customer
+    # branch when at least one job carries a ``customer_id``; initialise it
+    # so the coord / address ladders below never hit UnboundLocalError (500)
+    # on a window whose jobs have no customer link.
+    cmap: dict = {}
     if user.get("role") == "customer":
         for d in docs:
             d.pop("internal_notes", None)
@@ -1229,7 +1238,12 @@ async def list_jobs(
                       # ``location_lat`` / ``location_lng`` on the
                       # job payload below so consumers key on a
                       # single naming convention regardless of source.
-                      "service_lat": 1, "service_lng": 1},
+                      "service_lat": 1, "service_lng": 1,
+                      # Ticket 287998 — address ladder fields so a job
+                      # linked to another customer's property can fall
+                      # back to its OWN customer's address.
+                      "primary_property_id": 1, "service_address": 1,
+                      "address": 1, "billing_address": 1},
                 ).to_list(len(_chunk))
                 custs.extend(_rows)
             cmap = {c["id"]: c for c in custs}
@@ -1322,13 +1336,20 @@ async def list_jobs(
                 # can consult ``property.latitude/longitude`` (newer
                 # geocoding write path) and ``property.lat/lng`` (older
                 # flat shape) without an N+1 lookup.
+                # Ticket 287998 — ``customer_id`` + ``deleted_at`` are
+                # required by the ownership guards (coord ladder +
+                # address correction); without them the guard silently
+                # never fired on this endpoint.
                 {"_id": 0, "id": 1, "label": 1, "address": 1,
+                 "customer_id": 1, "deleted_at": 1,
                  "latitude": 1, "longitude": 1, "lat": 1, "lng": 1},
             ).to_list(len(pids) * 2)
             pmap = {p["id"]: p for p in props}
             for d in docs:
                 pid = d.get("property_id")
-                if pid and pid in pmap:
+                if (pid and pid in pmap
+                        and property_belongs_to_customer(
+                            pmap[pid], d.get("customer_id"))):
                     p = pmap[pid]
                     d["property_label"] = p.get("label") or None
                     addr = p.get("address") or {}
@@ -1393,6 +1414,15 @@ async def list_jobs(
         # through to the customer rung via the resolver's shared
         # ``_coerce_pair`` guard — identical behavior to the inline
         # block TD-39 replaced for schedule.py + dispatch_board.py.
+        # Ticket 287998 — correct jobs linked to another customer's
+        # property (response-only) BEFORE the schedule consumes
+        # ``address`` for display + the Navigate button.
+        try:
+            await correct_cross_customer_job_addresses(
+                db, tenant["id"], docs, cmap, pmap,
+            )
+        except Exception:
+            logger.exception("[287998] cross-customer address correction failed")
         for d in docs:
             lat, lng, source = resolve_job_coordinates_with_property(
                 d, cmap, pmap,

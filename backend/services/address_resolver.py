@@ -133,3 +133,69 @@ def resolve_job_address_from_batches(
     if isinstance(snapshot, str) and snapshot.strip():
         return snapshot.strip()
     return ""
+
+
+async def correct_cross_customer_job_addresses(
+    db,
+    tenant_id: str,
+    docs: List[Dict[str, Any]],
+    cust_map: Dict[str, Dict[str, Any]],
+    prop_map: Dict[str, Dict[str, Any]],
+) -> int:
+    """Response-only fix for jobs linked to ANOTHER customer's property.
+
+    Ticket 287998: ``GET /api/jobs`` (calendar / dispatch schedule) returned
+    the stored ``job.address`` snapshot verbatim, so jobs whose
+    ``property_id`` points at a different customer's property showed that
+    customer's street (several cards with one address) and the Navigate
+    button (which reads ``address``) routed there.  For every such job,
+    swap in the job's OWN customer's address: first that customer's active
+    property, else the shared FK-ladder fallback (customer address fields).
+
+    Mutates ``docs`` in place (``address`` / ``property_label`` /
+    ``property_address`` + ``address_corrected`` flag); never writes to the
+    DB.  Jobs whose property belongs to the job's customer, has no owner
+    recorded, or is absent from ``prop_map`` are left untouched.  Returns
+    the number of jobs corrected.
+    """
+    bad_cids = set()
+    for d in docs:
+        pid = d.get("property_id")
+        prop = prop_map.get(pid) if pid else None
+        if prop and not property_belongs_to_customer(prop, d.get("customer_id")):
+            bad_cids.add(d.get("customer_id"))
+    if not bad_cids:
+        return 0
+
+    own_by_cust: Dict[str, Dict[str, Any]] = {}
+    try:
+        rows = await db.properties.find(
+            {"tenant_id": tenant_id, "customer_id": {"$in": list(bad_cids)},
+             "active": {"$ne": False}, "deleted_at": None},
+            {"_id": 0, "id": 1, "customer_id": 1, "label": 1, "address": 1,
+             "sort_order": 1},
+        ).to_list(len(bad_cids) * 10)
+        for r in sorted(rows, key=lambda x: x.get("sort_order") or 0):
+            own_by_cust.setdefault(r.get("customer_id"), r)
+    except Exception:  # non-fatal: fall back to the customer-address rungs
+        own_by_cust = {}
+
+    fixed = 0
+    for d in docs:
+        pid = d.get("property_id")
+        prop = prop_map.get(pid) if pid else None
+        if not prop or property_belongs_to_customer(prop, d.get("customer_id")):
+            continue
+        own = own_by_cust.get(d.get("customer_id"))
+        addr = format_property_address(own) if own else ""
+        if not addr:
+            # Guarded ladder: skips the foreign property, then customer
+            # address fields, then the (stale) job snapshot as last resort.
+            addr = resolve_job_address_from_batches(d, cust_map, prop_map) or ""
+        d["property_label"] = (own or {}).get("label") or None
+        d["property_address"] = format_property_address(own) if own else None
+        if addr:
+            d["address"] = addr
+        d["address_corrected"] = True
+        fixed += 1
+    return fixed
