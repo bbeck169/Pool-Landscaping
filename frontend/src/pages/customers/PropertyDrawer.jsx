@@ -15,6 +15,8 @@ import { api } from "@/api";
 import { colors } from "@/theme";
 import { Button, TextInput } from "@/components/ui-kit";
 import ResponsiveTabs from "@/components/ui/responsive-tabs";
+// TD-cad-phase1 · Oct-2026 — GAP-A "Site plans" aside on property.
+import SitePlansAside from "@/components/cad/SitePlansAside";
 
 const TABS = ["Info", "Contact", "Service Notes", "Photos", "Schedule"];
 
@@ -138,6 +140,22 @@ export default function PropertyDrawer({ propertyId, onClose, onChanged, onToast
             <PhotosTab property={property} onPatch={patch} />
           ) : tab === "Schedule" ? (
             <ScheduleTab schedule={schedule} />
+          ) : null}
+          {/* TD-cad-phase1 · Oct-2026 — GAP-A "Site plans" aside.
+              Fetches GET /api/designs?property_id={id} and renders a
+              per-design thumbnail list + "+ New site plan" link that
+              forwards property_id into the CAD editor route. Always
+              visible across tabs so operators can jump between the
+              property's metadata and attached site plans without
+              tab-switching friction. */}
+          {!loading && property ? (
+            <div className="mt-6">
+              <SitePlansAside
+                mode="property"
+                id={property.id}
+                customerId={property.customer_id}
+              />
+            </div>
           ) : null}
         </div>
       </aside>

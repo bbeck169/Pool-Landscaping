@@ -1036,6 +1036,35 @@ export default function CadEditor() {
                className="text-xl font-bold flex-1 px-2 py-1 rounded"
                style={{ border: `1px solid ${colors.border}` }} data-testid="cad-name" />
         <button onClick={save} className="px-4 py-2 rounded-lg text-sm font-semibold text-white" style={{ backgroundColor: colors.brand }} data-testid="cad-save">Save</button>
+        {/* TD-cad-phase1 · Oct-2026 — GAP-F "Download JSON" button.
+            Serialises the current design state (incl. elements +
+            boundary + canvas dimensions + attach fields) and
+            triggers a browser download. No BE call; purely client-
+            side. Filename pattern cad_design_{id}_{YYYYMMDDHHmmss}.json. */}
+        <button
+          type="button"
+          onClick={() => {
+            try {
+              const payload = JSON.stringify(design, null, 2);
+              const blob = new Blob([payload], { type: "application/json" });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement("a");
+              const ts = new Date().toISOString()
+                .replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
+              a.href = url;
+              a.download = `cad_design_${design.id || id}_${ts}.json`;
+              document.body.appendChild(a);
+              a.click();
+              document.body.removeChild(a);
+              setTimeout(() => URL.revokeObjectURL(url), 500);
+            } catch (e) {
+              setToast("Export failed");
+            }
+          }}
+          className="px-3 py-2 rounded-lg text-sm font-semibold"
+          style={{ border: `1px solid ${colors.border}`, color: colors.onSurface }}
+          data-testid="cad-download-json"
+        >Download JSON</button>
       </div>
 
       <div className="flex flex-wrap gap-2 items-center">

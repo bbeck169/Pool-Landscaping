@@ -34,6 +34,8 @@ import { useBusinessSettings } from "@/hooks/useTenantBranding";
 import PaymentForm from "@/components/PaymentForm";
 import { useAuth } from "@/auth";
 import InvoiceAttachments from "@/components/quotes/InvoiceAttachments";
+// TD-cad-phase1 · Oct-2026 — GAP-A "Site plans" row for Quote detail.
+import SitePlansAside from "@/components/cad/SitePlansAside";
 import InvoiceEditModal from "@/components/invoices/InvoiceEditModal";
 import EditLockConfirmDialog from "@/components/documents/EditLockConfirmDialog";
 import K71LineItemsEditor from "@/components/quotes/K71LineItemsEditor";
@@ -1759,6 +1761,21 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
           read-only list; upload UI is gated on role inside the
           component. */}
       <InvoiceAttachments docId={doc.id} isInvoice={isInvoice} user={user} />
+
+      {/* TD-cad-phase1 · Oct-2026 — GAP-A "Site plans" row for
+          Quote detail. Lists designs filtered by quote_id and offers
+          a "+ New site plan" link that forwards quote_id (and the
+          source customer_id) into the CAD editor route. Rendered
+          only on quote view (invoices don't attach designs today),
+          only to staff (customers see this document through the
+          magic-link render path which lives in a separate component). */}
+      {!isInvoice && isStaff && doc?.id ? (
+        <SitePlansAside
+          mode="quote"
+          id={doc.id}
+          customerId={doc.customer_id}
+        />
+      ) : null}
 
       {/* Phase K47 · Feb-2026 — Invoice view-history card. Only
           rendered on invoices (quotes have their own separate
