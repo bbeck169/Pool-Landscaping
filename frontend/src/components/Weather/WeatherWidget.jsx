@@ -131,6 +131,15 @@ export default function WeatherWidget({ user, collapsible = false }) {
   const hourly = useWeatherHourly(lat, lon, { enabled: allowed });
 
   const load = React.useCallback(async () => {
+    // TD-weather-null-coords-guard · Feb-2026 — belt-and-braces skip
+    // when either coordinate is still unresolved.  The ``?? DEFAULT_LAT``
+    // fallbacks above should normally keep ``lat``/``lon`` numeric, but
+    // production logs showed /api/weather/* calls going out with
+    // ``lat=null&lon=null`` string literals (BE 422s them).  Guarding
+    // the fetch here keeps the invariant local to the call site so a
+    // future refactor that drops the Peoria fallback cannot accidentally
+    // re-introduce the null-coord network noise.
+    if (lat == null || lon == null) return;
     try {
       const [cur, dl, al, rd] = await Promise.all([
         api.get(`/weather/current?lat=${lat}&lon=${lon}`),

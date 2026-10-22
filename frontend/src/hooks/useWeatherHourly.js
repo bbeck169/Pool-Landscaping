@@ -29,6 +29,15 @@ function _key(lat, lon) {
 }
 
 async function _fetch(lat, lon) {
+  // TD-weather-null-coords-guard · Feb-2026 — defensive guard.  The
+  // hook's ``_key`` guard at the ``useWeatherHourly`` entry-point
+  // already blocks the ``useEffect`` dispatch when lat/lon are null,
+  // but any future direct caller of ``_fetch`` (e.g. a prefetch
+  // helper) MUST NOT accidentally send ``lat=null&lon=null`` which
+  // the BE Pydantic validator correctly 422s.  Return null (same
+  // shape as upstream failure) so the subscriber callbacks still fire
+  // consistently.
+  if (lat == null || lon == null) return null;
   const key = _key(lat, lon);
   const existing = _inflight.get(key);
   if (existing) return existing;
