@@ -2040,8 +2040,27 @@ async def _generate_from_template(tpl: Dict[str, Any], through: date) -> Dict[st
         prop = await db.properties.find_one(
             {"id": candidate_pid, "tenant_id": tenant_id,
              "deleted_at": {"$exists": False}},
-            {"_id": 0, "id": 1, "address": 1},
+            {"_id": 0, "id": 1, "address": 1, "customer_id": 1},
         )
+        # Ticket 287964: never stamp a property owned by a different
+        # customer onto generated jobs; retry with the customer's own
+        # primary property before giving up.
+        if prop and prop.get("customer_id") and tpl.get("customer_id") \
+                and prop["customer_id"] != tpl["customer_id"]:
+            logger.warning(
+                "recurring_job.generator.property_owner_mismatch "
+                "template=%s tenant=%s customer=%s property_id=%s owner=%s",
+                tpl["id"], tenant_id, tpl.get("customer_id"),
+                candidate_pid, prop["customer_id"],
+            )
+            prop = None
+            if cust_pid and cust_pid != candidate_pid:
+                prop = await db.properties.find_one(
+                    {"id": cust_pid, "tenant_id": tenant_id,
+                     "customer_id": tpl["customer_id"],
+                     "deleted_at": {"$exists": False}},
+                    {"_id": 0, "id": 1, "address": 1},
+                )
         if prop:
             resolved_property_id = prop["id"]
             resolved_property_address = _format_property_address(prop) or None

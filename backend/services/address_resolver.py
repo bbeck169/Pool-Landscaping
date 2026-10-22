@@ -56,6 +56,22 @@ def format_property_address(prop: Mapping[str, Any]) -> str:
     return ", ".join(parts)
 
 
+def property_belongs_to_customer(
+    prop: Mapping[str, Any], customer_id: Optional[str],
+) -> bool:
+    """True unless the property is provably owned by a DIFFERENT customer.
+
+    Legacy property docs without ``customer_id`` (and callers without a
+    customer to compare) are trusted, preserving prior behaviour.  Added
+    for ticket 287964: a job / template whose ``property_id`` points at
+    another customer's property must never drive the displayed address.
+    """
+    owner = prop.get("customer_id")
+    if not owner or not customer_id:
+        return True
+    return owner == customer_id
+
+
 def resolve_job_address_from_batches(
     job: Mapping[str, Any],
     cust_map: Dict[str, Dict[str, Any]],
@@ -82,18 +98,29 @@ def resolve_job_address_from_batches(
     """
     # Rung 1: job.property_id
     pid = job.get("property_id")
-    cust = cust_map.get(job.get("customer_id") or "") or {}
+    cust_id = job.get("customer_id") or ""
+    cust = cust_map.get(cust_id) or {}
 
     # Rung 2: customer.primary_property_id (only when rung 1 miss)
     if not pid:
         pid = cust.get("primary_property_id")
 
-    if pid:
-        prop = prop_map.get(pid) or {}
-        if prop and not prop.get("deleted_at"):
-            composed = format_property_address(prop)
-            if composed:
-                return composed
+    # Ticket 287964: ignore a linked property owned by a different
+    # customer and fall through to this customer's own primary property.
+    def _usable(candidate_pid):
+        p = prop_map.get(candidate_pid) or {}
+        return (
+            p and not p.get("deleted_at")
+            and property_belongs_to_customer(p, cust_id)
+        )
+
+    if pid and not _usable(pid):
+        pid = cust.get("primary_property_id") if pid != cust.get("primary_property_id") else None
+
+    if pid and _usable(pid):
+        composed = format_property_address(prop_map[pid])
+        if composed:
+            return composed
 
     # Rung 3: customer.service_address → .address → .billing_address
     for key in ("service_address", "address", "billing_address"):

@@ -101,8 +101,19 @@ async def _resolve_visit_email_address(
 
     prop = await db.properties.find_one(
         {"id": pid, "tenant_id": tenant_id},
-        {"_id": 0, "id": 1, "address": 1, "deleted_at": 1},
+        {"_id": 0, "id": 1, "address": 1, "deleted_at": 1, "customer_id": 1},
     )
+    # Ticket 287964: a property owned by a different customer is not this
+    # job's address; use the job's own snapshot instead.
+    if prop and prop.get("customer_id") and job.get("customer_id") \
+            and prop["customer_id"] != job["customer_id"]:
+        logger.warning(
+            "auto_visit_email.property_unresolved "
+            "reason=property_owner_mismatch tenant_id=%s job_id=%s "
+            "customer_id=%s property_id=%s",
+            tenant_id, job.get("id"), job.get("customer_id"), pid,
+        )
+        return fallback
     if not prop:
         # Cross-tenant lookup OR deleted-and-hard-removed property.
         logger.warning(

@@ -350,6 +350,12 @@ def resolve_job_coordinates_with_property(
     pid = job.get("property_id")
     if pid:
         prop = property_lookup.get(pid)
+        # Ticket 287964 - a property owned by a different customer must
+        # not supply this job's pin; fall through to the customer rung.
+        _owner = (prop or {}).get("customer_id")
+        _cid = job.get("customer_id")
+        if _owner and _cid and _owner != _cid:
+            prop = None
         pair = _property_coord_pair(prop)
         if pair is not None:
             return (pair[0], pair[1], COORD_SOURCE_PROPERTY)
@@ -393,7 +399,10 @@ async def build_property_coord_lookup(
         {"_id": 0, "id": 1,
          "latitude": 1, "longitude": 1,
          "lat": 1, "lng": 1,
-         "address": 1, "deleted_at": 1},
+         "address": 1, "deleted_at": 1,
+         # Ticket 287964 - owner id lets the address/coord resolvers
+         # ignore a property linked to a DIFFERENT customer.
+         "customer_id": 1},
     )
     rows = await cursor.to_list(len(unique_ids))
     return {r["id"]: r for r in rows if r.get("id")}
