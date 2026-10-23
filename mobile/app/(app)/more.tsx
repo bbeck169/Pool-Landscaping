@@ -15,6 +15,7 @@ import { ManualSyncButton } from "@/src/components/sync/ManualSyncButton";
 import { getDiagnostics, formatDiagnostics, clearDiagnostics } from "@/src/utils/diagnostics";
 // FLEET-B · Fleet pause toggle for technicians.
 import FleetPauseToggle from "@/src/components/fleet/FleetPauseToggle";
+import { isFleetTechRole } from "@/src/lib/fleetRoles";
 // TB-1 · MARCO voice preferences (TTS + wake-word toggles).
 import MarcoVoiceSettings from "@/src/components/marco/MarcoVoiceSettings";
 // Phase (Feb-2026) — mobile admin drawer parity with the web sidebar.
@@ -236,8 +237,8 @@ export default function More() {
           </View>
         </View>
 
-        {/* FLEET-B · Fleet tracking pause toggle — visible to techs */}
-        {isTech && (
+        {/* FLEET-B · Fleet tracking pause toggle — visible to every fleet-tracked tech role (TD-fleet-emitter-role-gate) */}
+        {isFleetTechRole(role) && (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Fleet Tracking</Text>
             <FleetPauseToggle />

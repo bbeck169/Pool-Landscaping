@@ -13,6 +13,7 @@ import { AppState } from "react-native";
 import * as Location from "expo-location";
 
 import { useAuth } from "@/src/auth";
+import { isFleetTechRole } from "@/src/lib/fleetRoles";
 import {
   startEmitter,
   stopEmitter,
@@ -36,7 +37,7 @@ export function useFleetEmitter() {
     }
 
     const role = (user.role || "") as string;
-    const isTech = role === "technician" || role === "tech";
+    const isTech = isFleetTechRole(role); // TD-fleet-emitter-role-gate · all 6 BE ASSIGNABLE_ROLES
 
     if (!isTech) {
       // Only techs emit
@@ -71,7 +72,7 @@ export function useFleetEmitter() {
   // from `no_permission`, never re-prompts (read-only permission check), and
   // never overrides an explicit pause.
   const role = (user?.role || "") as string;
-  const isTechUser = role === "technician" || role === "tech";
+  const isTechUser = isFleetTechRole(role);
   useEffect(() => {
     if (!isTechUser) return;
     const sub = AppState.addEventListener("change", async (state) => {

@@ -19,6 +19,7 @@ import {
   type EmitterStatus,
 } from "@/src/services/fleet/locationEmitter";
 import { font, fontSize, spacing, radius, colors } from "@/src/theme";
+import { isFleetTechRole } from "@/src/lib/fleetRoles";
 
 const STATUS_CONFIG: Record<
   EmitterStatus,
@@ -80,9 +81,9 @@ export default function FleetStatusChip() {
     return unsub;
   }, []);
 
-  // Only show for technicians (and admins for debugging)
+  // Only show for fleet-eligible techs (all 6 tech roles) and admins for debugging
   const role = (user?.role || "") as string;
-  if (role !== "technician" && role !== "tech" && role !== "admin" && role !== "super_admin") {
+  if (!isFleetTechRole(role) && role !== "admin" && role !== "super_admin") {
     return null;
   }
 
