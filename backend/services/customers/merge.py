@@ -220,6 +220,27 @@ async def _snapshot_child_record_ids(
             if r.get("id"):
                 ids.append(r["id"])
         out[coll_name] = ids
+    # Feb-2026 · TD-invoice-customer-id-repair-on-merge safety-belt —
+    # derive the invoice-only sub-set of the quotes snapshot so
+    # the rewire step can log the invoice-specific count moved.
+    # Observability-only: the generic ``quotes`` rewire above
+    # already lands these records on the winner; this sub-slice
+    # proves the belt is working on every merge call so operators
+    # can grep for ``kind=invoice_cid_moved`` in logs.
+    quote_ids = out.get("quotes") or []
+    if quote_ids:
+        inv_ids: List[str] = []
+        async for r in db.quotes.find(
+            {"tenant_id": tenant_id,
+             "id": {"$in": quote_ids},
+             "doc_type": "invoice"},
+            {"_id": 0, "id": 1},
+        ):
+            if r.get("id"):
+                inv_ids.append(r["id"])
+        out["quotes.invoices"] = inv_ids
+    else:
+        out["quotes.invoices"] = []
     # Actor-side audit_logs — same pattern.
     cursor = db.audit_logs.find(
         {"tenant_id": tenant_id, _AUDIT_ACTOR_FIELD: loser_id},
@@ -267,6 +288,20 @@ async def _rewire_children(
                 f"Rewire of collection {coll_name!r} failed; rolling back.",
                 collection=coll_name, raw=str(exc),
             ) from exc
+    # Feb-2026 · TD-invoice-customer-id-repair-on-merge safety-belt —
+    # derive + log the invoice-only sub-count moved via the generic
+    # ``quotes`` rewire above.  Observability-only (no writes
+    # beyond what the generic loop already did); logged with the
+    # structured kind tag so operators can confirm every merge is
+    # repointing invoices as expected.
+    invoice_ids_moved = snapshot_ids.get("quotes.invoices") or []
+    counts_out["quotes.invoices"] = len(invoice_ids_moved)
+    if invoice_ids_moved:
+        logger.info(
+            "[customer_merge] kind=invoice_cid_moved tenant=%s "
+            "winner=%s loser=%s count=%s",
+            tenant_id, winner_id, loser_id, len(invoice_ids_moved),
+        )
     # Actor-side audit_logs — rewrite ``_AUDIT_ACTOR_FIELD``.
     actor_ids = snapshot_ids.get("audit_logs.actor") or []
     if actor_ids:
