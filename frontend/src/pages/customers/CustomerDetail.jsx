@@ -347,6 +347,7 @@ import ResponsiveTabs from "@/components/ui/responsive-tabs";
 // (they stay in the tab bar for backwards-compat) and adds a new
 // consolidated "Documents" tab as the primary surface.
 import CustomerDocumentsTab from "@/components/customers/CustomerDocumentsTab";
+import CustomerInvoicesTab from "@/components/customers/CustomerInvoicesTab";
 import { List } from "react-window";
 
 
@@ -2492,7 +2493,7 @@ export default function CustomerDetail() {
             <EmptyState title="Quotes come in Phase 3" hint="Stripe checkout + card-on-file ship next." />
           ) : null}
           {tab === "invoices" ? (
-            <EmptyState title="Invoices come in Phase 3" hint="Master invoice + combine ship there." />
+            <CustomerInvoicesTab customerId={id} />
           ) : null}
 
           {tab === "equipment" ? (
