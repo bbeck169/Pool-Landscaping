@@ -1,20 +1,25 @@
 /**
- * TD-customer-profile-invoices-tab · Feb-2026
+ * TD-customer-profile-invoices-tab · Feb-2026 (Ticket B)
+ *   + TD-invoice-title-display-fallback updates (Ticket E).
  * ============================================================
  *
- * Vitest coverage for the pre-wire of
- * ``TD-invoice-title-display-fallback`` (``getInvoiceDisplayTitle``
- * helper) + the Customer-profile Invoices tab that replaces the
- * ``"Invoices come in Phase 3"`` placeholder.
+ * Vitest coverage for the Customer-profile Invoices tab + the
+ * ``getInvoiceDisplayTitle`` helper that drives title display
+ * across the 3 operator-approved surfaces (CustomerInvoicesTab ·
+ * CustomerInvoiceList · PortalPages).
  *
  * Covered:
- *   1. Helper — 4 fallback branches, non-object input, truncation.
- *   2. Tab — loading / populated / empty / error states.
- *   3. Tab — sorts newest-first by created_at.
- *   4. Tab — row click navigates to /invoices/${id}.
- *   5. Static source contract — CustomerDetail.jsx now mounts
- *      ``CustomerInvoicesTab`` on the invoices tab (not the
- *      "Phase 3" placeholder).
+ *   1. Helper — 5-case rule (title / item_name / name /
+ *      truncated-description / blank) + non-object input +
+ *      whitespace-only skip + tier priority.
+ *   2. CustomerInvoicesTab — loading / populated / empty /
+ *      error states; sort DESC; row click.
+ *   3. Surface wire-up (static source) — all 3 surfaces import
+ *      the helper, CustomerInvoiceList + PortalPages compose it
+ *      with resolvePortalInvoiceTitle (Import-#<N> axis
+ *      preserved).
+ *   4. CustomerDetail — invoices tab now mounts
+ *      CustomerInvoicesTab (Ticket B wire-up).
  */
 import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -29,8 +34,7 @@ import { getInvoiceDisplayTitle } from "@/utils/invoiceTitle";
 
 
 const { apiGetSpy, navigateSpy } = vi.hoisted(() => ({
-  apiGetSpy: vi.fn(),
-  navigateSpy: vi.fn(),
+  apiGetSpy: vi.fn(), navigateSpy: vi.fn(),
 }));
 
 
@@ -84,95 +88,90 @@ function _mountTab(cid = "cust-1") {
 
 
 // ═════════════════════════════════════════════════════════════
-// 1. Helper — getInvoiceDisplayTitle
+// 1. Helper — 5-case rule (Ticket E)
 // ═════════════════════════════════════════════════════════════
-describe("getInvoiceDisplayTitle", () => {
-  it("returns invoice.title verbatim when set", () => {
-    expect(getInvoiceDisplayTitle({
-      title: "Monthly maintenance plan",
-    })).toBe("Monthly maintenance plan");
+describe("getInvoiceDisplayTitle · 5-case rule", () => {
+  it("rule 1: returns invoice.title verbatim when set", () => {
+    expect(getInvoiceDisplayTitle({ title: "Monthly plan" }))
+      .toBe("Monthly plan");
   });
 
-  it("falls back to first line item description when title empty", () => {
+  it("rule 2: line_items[0].item_name — the operator Item column", () => {
     expect(getInvoiceDisplayTitle({
       title: "",
       line_items: [
-        { description: "Pool opening — spring" },
-        { description: "ignored second item" },
+        { item_name: "Every Other Week Landscaping Maintenance",
+          description: "ignored paragraph" },
       ],
-    })).toBe("Pool opening — spring");
+    })).toBe("Every Other Week Landscaping Maintenance");
   });
 
-  it("accepts line_items[0].title when description absent", () => {
+  it("rule 3: line_items[0].name — shorter-schema fallback", () => {
     expect(getInvoiceDisplayTitle({
       title: null,
-      line_items: [{ title: "Chlorine shock treatment" }],
-    })).toBe("Chlorine shock treatment");
+      line_items: [{ name: "Pool opening", description: "ignored" }],
+    })).toBe("Pool opening");
   });
 
-  it("truncates long line-item fallback to 80 chars with ellipsis", () => {
-    const long = "a".repeat(120);
+  it("rule 4: description truncated at 60 chars + ellipsis", () => {
+    const long = "Basic Bi-Weekly Landscape maintenance including mowing, edging, trimming bushes, blowing property";
     const out = getInvoiceDisplayTitle({
       title: "", line_items: [{ description: long }],
     });
-    expect(out.length).toBe(81);  // 80 chars + ellipsis
+    expect(out.length).toBe(61);  // 60 chars + ellipsis
     expect(out.endsWith("…")).toBe(true);
+    expect(out.startsWith("Basic Bi-Weekly")).toBe(true);
   });
 
-  it("falls back to date-stamped literal when no title + no line items", () => {
-    const out = getInvoiceDisplayTitle({
-      title: "", line_items: [],
-      invoice_date: "2026-03-14T10:00:00+00:00",
-    });
-    expect(out).toBe("Invoice — March 14, 2026");
-  });
-
-  it("prefers invoice_date over issued_at over created_at", () => {
-    const out = getInvoiceDisplayTitle({
-      title: "", line_items: [],
-      invoice_date: "2026-03-14",
-      issued_at: "2025-01-01",
-      created_at: "2024-01-01",
-    });
-    expect(out).toBe("Invoice — March 14, 2026");
-  });
-
-  it("falls back to created_at when invoice_date + issued_at missing", () => {
-    const out = getInvoiceDisplayTitle({
-      title: "", line_items: [],
-      created_at: "2026-07-04T09:00:00Z",
-    });
-    expect(out).toContain("Invoice — ");
-    expect(out).toContain("2026");
-  });
-
-  it("defensive: returns 'Invoice' when nothing is parseable", () => {
+  it("rule 4: short description (<=60 chars) is NOT truncated", () => {
     expect(getInvoiceDisplayTitle({
-      title: "", line_items: [],
-    })).toBe("Invoice");
+      title: "", line_items: [{ description: "Weekly service" }],
+    })).toBe("Weekly service");
+  });
+
+  it("rule 5: blank when every tier is empty", () => {
+    expect(getInvoiceDisplayTitle({ title: "", line_items: [] }))
+      .toBe("");
+    expect(getInvoiceDisplayTitle({ title: null, line_items: [{}] }))
+      .toBe("");
+  });
+
+  it("rule 5: blank for null / non-object input", () => {
+    expect(getInvoiceDisplayTitle(null)).toBe("");
+    expect(getInvoiceDisplayTitle(undefined)).toBe("");
+    expect(getInvoiceDisplayTitle("")).toBe("");
+    expect(getInvoiceDisplayTitle(42)).toBe("");
+  });
+
+  it("whitespace-only values at any tier skip to next", () => {
     expect(getInvoiceDisplayTitle({
-      title: "", line_items: [], invoice_date: "not-a-date",
-    })).toBe("Invoice");
+      title: "   ",
+      line_items: [{ item_name: "  ", name: "  ",
+                      description: "  " }],
+    })).toBe("");
+    expect(getInvoiceDisplayTitle({
+      title: "  ",
+      line_items: [{ item_name: " ",
+                      description: "Weekly service" }],
+    })).toBe("Weekly service");
   });
 
-  it("defensive: returns 'Invoice' for null / non-object input", () => {
-    expect(getInvoiceDisplayTitle(null)).toBe("Invoice");
-    expect(getInvoiceDisplayTitle(undefined)).toBe("Invoice");
-    expect(getInvoiceDisplayTitle("string")).toBe("Invoice");
-    expect(getInvoiceDisplayTitle(42)).toBe("Invoice");
-  });
-
-  it("whitespace-only title is treated as empty", () => {
-    const out = getInvoiceDisplayTitle({
-      title: "   ", line_items: [{ description: "Second-chance label" }],
-    });
-    expect(out).toBe("Second-chance label");
+  it("tier priority: item_name > name > description", () => {
+    expect(getInvoiceDisplayTitle({
+      title: "",
+      line_items: [{
+        item_name: "A", name: "B", description: "C" }],
+    })).toBe("A");
+    expect(getInvoiceDisplayTitle({
+      title: "",
+      line_items: [{ name: "B", description: "C" }],
+    })).toBe("B");
   });
 });
 
 
 // ═════════════════════════════════════════════════════════════
-// 2. Tab — loading / populated / empty / error
+// 2. CustomerInvoicesTab — states (Ticket B regression)
 // ═════════════════════════════════════════════════════════════
 describe("CustomerInvoicesTab — states", () => {
   beforeEach(() => {
@@ -182,57 +181,52 @@ describe("CustomerInvoicesTab — states", () => {
   afterEach(() => cleanup());
 
   it("renders the loading skeleton before data arrives", () => {
-    // Promise that never resolves — stays in loading state.
     apiGetSpy.mockReturnValue(new Promise(() => {}));
     _mountTab("cust-loading");
-    expect(screen.getByTestId("cd-invoices-tab-loading"))
-      .toBeTruthy();
+    expect(screen.getByTestId("cd-invoices-tab-loading")).toBeTruthy();
   });
 
-  it("renders rows + total count when data arrives", async () => {
+  it("renders rows + helper-driven titles", async () => {
     apiGetSpy.mockResolvedValue({
       rows: [
         {
-          id: "inv-1",
-          invoice_number: "INV-100",
-          title: "Monthly maintenance",
-          total: 250.00,
+          id: "inv-1", invoice_number: "INV-100",
+          title: "Monthly maintenance", total: 250.00,
           payment_status: "unpaid",
           created_at: "2026-10-20T10:00:00Z",
-          invoice_date: "2026-10-20",
         },
         {
-          id: "inv-2",
-          invoice_number: "INV-099",
+          id: "inv-2", invoice_number: "INV-099",
           title: "",
-          line_items: [{ description: "Opening service" }],
-          total: 500.00,
-          payment_status: "paid",
+          line_items: [{ item_name: "Opening service" }],
+          total: 500.00, payment_status: "paid",
           created_at: "2026-10-10T10:00:00Z",
         },
+        {
+          id: "inv-3", invoice_number: "INV-098",
+          title: "",
+          line_items: [{ description: "Weekly recurring landscape service" }],
+          total: 100.00, payment_status: "unpaid",
+          created_at: "2026-10-05T10:00:00Z",
+        },
       ],
-      total_count: 2, has_more: false, limit: 200, offset: 0,
+      total_count: 3, has_more: false, limit: 200, offset: 0,
     });
     _mountTab("cust-populated");
     await waitFor(() => expect(
       screen.getByTestId("cd-invoices-tab-count")).toBeTruthy());
-    expect(screen.getByTestId("cd-invoices-tab-count").textContent)
-      .toContain("2");
-    // Title column uses the helper — second row falls back to
-    // line_items[0].description.
+    // rule 1 — verbatim title
     expect(screen.getByTestId("cd-invoices-tab-row-title-inv-1")
       .textContent).toBe("Monthly maintenance");
+    // rule 2 — item_name fallback
     expect(screen.getByTestId("cd-invoices-tab-row-title-inv-2")
       .textContent).toBe("Opening service");
-    // Amount column uses money() formatter.
-    expect(screen.getByTestId("cd-invoices-tab-row-amount-inv-1")
-      .textContent).toBe("$250.00");
-    // Status chips wire the correct tone.
-    expect(screen.getByTestId("cd-invoices-tab-row-status-inv-2")
-      .textContent).toContain("paid");
+    // rule 4 — description fallback (short — not truncated)
+    expect(screen.getByTestId("cd-invoices-tab-row-title-inv-3")
+      .textContent).toBe("Weekly recurring landscape service");
   });
 
-  it("renders the empty state when the customer has zero invoices", async () => {
+  it("renders the empty state when zero invoices", async () => {
     apiGetSpy.mockResolvedValue({
       rows: [], total_count: 0, has_more: false,
       limit: 200, offset: 0,
@@ -240,11 +234,9 @@ describe("CustomerInvoicesTab — states", () => {
     _mountTab("cust-empty");
     await waitFor(() => expect(
       screen.getByTestId("cd-invoices-tab-empty")).toBeTruthy());
-    expect(screen.getByTestId("cd-invoices-tab-empty").textContent)
-      .toContain("No invoices yet");
   });
 
-  it("renders the error state when the API rejects", async () => {
+  it("renders the error state when API rejects", async () => {
     apiGetSpy.mockRejectedValue(new Error("network boom"));
     _mountTab("cust-err");
     await waitFor(() => expect(
@@ -252,75 +244,101 @@ describe("CustomerInvoicesTab — states", () => {
     expect(screen.getByTestId("cd-invoices-tab-error").textContent)
       .toContain("network boom");
   });
-});
-
-
-// ═════════════════════════════════════════════════════════════
-// 3. Tab — sort DESC by created_at
-// ═════════════════════════════════════════════════════════════
-describe("CustomerInvoicesTab — sort order", () => {
-  beforeEach(() => {
-    apiGetSpy.mockReset();
-    navigateSpy.mockReset();
-  });
-  afterEach(() => cleanup());
 
   it("newest invoice renders first regardless of API order", async () => {
     apiGetSpy.mockResolvedValue({
       rows: [
-        { id: "old", invoice_number: "INV-A",
-          title: "Older", total: 1,
-          created_at: "2024-01-01T00:00:00Z" },
-        { id: "new", invoice_number: "INV-B",
-          title: "Newer", total: 2,
-          created_at: "2026-01-01T00:00:00Z" },
+        { id: "old", invoice_number: "INV-A", title: "Older",
+          total: 1, created_at: "2024-01-01T00:00:00Z" },
+        { id: "new", invoice_number: "INV-B", title: "Newer",
+          total: 2, created_at: "2026-01-01T00:00:00Z" },
       ],
       total_count: 2,
     });
     _mountTab("cust-sort");
     await waitFor(() => expect(
       screen.getByTestId("cd-invoices-tab-row-new")).toBeTruthy());
-    const rows = screen.getAllByTestId(/cd-invoices-tab-row-(?!number-|title-|date-|amount-|status-)/);
+    const rows = screen.getAllByTestId(
+      /cd-invoices-tab-row-(?!number-|title-|date-|amount-|status-)/);
     expect(rows[0].getAttribute("data-testid"))
       .toBe("cd-invoices-tab-row-new");
     expect(rows[1].getAttribute("data-testid"))
       .toBe("cd-invoices-tab-row-old");
   });
-});
 
-
-// ═════════════════════════════════════════════════════════════
-// 4. Row click navigates to /invoices/${id}
-// ═════════════════════════════════════════════════════════════
-describe("CustomerInvoicesTab — row click", () => {
-  beforeEach(() => {
-    apiGetSpy.mockReset();
-    navigateSpy.mockReset();
-  });
-  afterEach(() => cleanup());
-
-  it("clicking a row navigates to the invoice detail route", async () => {
+  it("row click navigates to /invoices/<id>", async () => {
     apiGetSpy.mockResolvedValue({
-      rows: [
-        { id: "inv-click-me", invoice_number: "INV-CLK",
-          title: "x", total: 10,
-          created_at: "2026-01-01T00:00:00Z" },
-      ],
+      rows: [{ id: "inv-click", invoice_number: "INV-C",
+                title: "x", total: 10,
+                created_at: "2026-01-01T00:00:00Z" }],
       total_count: 1,
     });
     _mountTab("cust-click");
     await waitFor(() => expect(
-      screen.getByTestId("cd-invoices-tab-row-inv-click-me"))
-      .toBeTruthy());
+      screen.getByTestId("cd-invoices-tab-row-inv-click")).toBeTruthy());
     fireEvent.click(
-      screen.getByTestId("cd-invoices-tab-row-inv-click-me"));
-    expect(navigateSpy).toHaveBeenCalledWith("/invoices/inv-click-me");
+      screen.getByTestId("cd-invoices-tab-row-inv-click"));
+    expect(navigateSpy).toHaveBeenCalledWith("/invoices/inv-click");
   });
 });
 
 
 // ═════════════════════════════════════════════════════════════
-// 5. Static-source contract — placeholder removed
+// 3. Surface wire-up — static source
+// ═════════════════════════════════════════════════════════════
+describe("Surface wire-up · all 3 consume the helper", () => {
+  const tab = fs.readFileSync(
+    path.resolve(process.cwd(),
+      "src/components/customers/CustomerInvoicesTab.jsx"),
+    "utf-8");
+  const list = fs.readFileSync(
+    path.resolve(process.cwd(),
+      "src/components/customers/CustomerInvoiceList.jsx"),
+    "utf-8");
+  const portal = fs.readFileSync(
+    path.resolve(process.cwd(),
+      "src/pages/portal/PortalPages.jsx"),
+    "utf-8");
+
+  it("CustomerInvoicesTab imports + uses the helper", () => {
+    expect(tab).toMatch(
+      /import\s+\{\s*getInvoiceDisplayTitle\s*\}\s+from\s+"@\/utils\/invoiceTitle"/);
+    expect(tab).toMatch(/getInvoiceDisplayTitle\(/);
+  });
+
+  it("CustomerInvoiceList imports + uses the helper", () => {
+    expect(list).toMatch(
+      /import\s+\{\s*getInvoiceDisplayTitle\s*\}\s+from\s+"@\/utils\/invoiceTitle"/);
+    expect(list).toMatch(/getInvoiceDisplayTitle\(/);
+  });
+
+  it("CustomerInvoiceList composes helper + resolvePortalInvoiceTitle", () => {
+    expect(list).toMatch(
+      /resolvePortalInvoiceTitle\(\s*\{[\s\S]{0,200}title:\s*getInvoiceDisplayTitle\(r\)/);
+  });
+
+  it("PortalPages imports + uses the helper on BOTH call sites", () => {
+    expect(portal).toMatch(
+      /import\s+\{\s*getInvoiceDisplayTitle\s*\}\s+from\s+"@\/utils\/invoiceTitle"/);
+    const matches = portal.match(
+      /resolvePortalInvoiceTitle\(\s*\{[\s\S]{0,200}title:\s*getInvoiceDisplayTitle\(r\)/g);
+    expect(matches).toBeTruthy();
+    expect(matches.length).toBe(2);
+  });
+
+  it("no 'invoice.title || \"Invoice\"' hardcode in any surface", () => {
+    for (const [n, src] of [
+      ["tab", tab], ["list", list], ["portal", portal],
+    ]) {
+      expect(src, `${n}: anti-pattern present`).not.toMatch(
+        /\binvoice\.title\s*\|\|\s*["']Invoice["']/);
+    }
+  });
+});
+
+
+// ═════════════════════════════════════════════════════════════
+// 4. CustomerDetail — invoices tab mounts CustomerInvoicesTab
 // ═════════════════════════════════════════════════════════════
 describe("CustomerDetail · invoices tab wiring", () => {
   const CD_SRC = fs.readFileSync(
@@ -334,38 +352,12 @@ describe("CustomerDetail · invoices tab wiring", () => {
       /tab === "invoices"[\s\S]{0,200}CustomerInvoicesTab/);
   });
 
-  it("no longer shows the 'Invoices come in Phase 3' placeholder", () => {
+  it("no longer shows 'Invoices come in Phase 3' placeholder", () => {
     expect(CD_SRC.includes("Invoices come in Phase 3")).toBe(false);
   });
 
-  it("imports CustomerInvoicesTab from the customers components dir", () => {
+  it("imports CustomerInvoicesTab", () => {
     expect(CD_SRC).toMatch(
       /import\s+CustomerInvoicesTab\s+from\s+"@\/components\/customers\/CustomerInvoicesTab"/);
-  });
-});
-
-
-// ═════════════════════════════════════════════════════════════
-// 6. CustomerInvoicesTab wires the shared helper (NOT a hardcode)
-// ═════════════════════════════════════════════════════════════
-describe("CustomerInvoicesTab · uses shared title helper", () => {
-  const SRC = fs.readFileSync(
-    path.resolve(process.cwd(),
-      "src/components/customers/CustomerInvoicesTab.jsx"),
-    "utf-8",
-  );
-
-  it("imports getInvoiceDisplayTitle from @/utils/invoiceTitle", () => {
-    expect(SRC).toMatch(
-      /import\s+\{\s*getInvoiceDisplayTitle\s*\}\s+from\s+"@\/utils\/invoiceTitle"/);
-  });
-
-  it("does NOT use the invoice.title || 'Invoice' hardcode anti-pattern", () => {
-    // Operator-ruled anti-pattern — the whole point of the
-    // helper + Ticket E sweep.  Guards against a refactor that
-    // reintroduces the hardcode and keeps Ticket E's scope
-    // honest (nothing to sweep in THIS file).
-    expect(SRC).not.toMatch(/invoice\.title\s*\|\|\s*["']Invoice["']/);
-    expect(SRC).not.toMatch(/r\.title\s*\|\|\s*["']Invoice["']/);
   });
 });

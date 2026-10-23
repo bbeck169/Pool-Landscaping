@@ -34,6 +34,10 @@ import {
   resolvePortalInvoiceTitle,
   formatInvoiceCreatedDate,
 } from "@/lib/portalInvoiceTitle";
+// Feb-2026 · TD-invoice-title-display-fallback — 5-case display
+// helper used in composition with resolvePortalInvoiceTitle on
+// the two invoice-list surfaces below.
+import { getInvoiceDisplayTitle } from "@/utils/invoiceTitle";
 // DTP-1 · Feb-2026 — Shared portal lightbox for PortalServiceDetail
 // (pilot). Other exports in this file keep their light ``colors``
 // binding untouched.
@@ -243,7 +247,9 @@ export function PortalInvoices() {
            // passthrough) + additive ``Created MM/DD/YYYY`` line
            // below the title. The pre-TD-71 "No due date" row
            // stays as the SECOND line (unchanged).
-           const _displayTitle = resolvePortalInvoiceTitle(r);
+           const _displayTitle = resolvePortalInvoiceTitle({
+             ...r, title: getInvoiceDisplayTitle(r),
+           });
            const _createdLine = formatInvoiceCreatedDate(r);
            return (
              <li key={r.id} onClick={() => navigate(`/portal/invoices/${r.id}`)}
@@ -402,7 +408,9 @@ export function PortalEstimates() {
            // from the admin importer) surface the human-friendly
            // 4-branch fallback label instead of the raw import
            // number. Non-imported estimate titles pass through.
-           const _displayTitle = resolvePortalInvoiceTitle(r);
+           const _displayTitle = resolvePortalInvoiceTitle({
+             ...r, title: getInvoiceDisplayTitle(r),
+           });
            return (
              <li key={r.id} onClick={() => navigate(`/portal/estimates/${r.id}`)}
                className="cursor-pointer flex items-center gap-3 p-4 rounded-xl"

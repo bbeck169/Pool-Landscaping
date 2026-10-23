@@ -1,68 +1,71 @@
 /**
- * TD-customer-profile-invoices-tab · Feb-2026 — Pre-wire for
- * ``TD-invoice-title-display-fallback`` (Ticket E).
+ * TD-invoice-title-display-fallback · Feb-2026 (Ticket E final).
  *
  * Shared "what title do I show for this invoice?" helper used by
- * the customer-profile Invoices tab (this ticket's call site) and
- * — in Ticket E — every other invoice-title display surface
- * across the admin + email + PDF stack.
+ * the three operator-approved surfaces:
+ *   1. ``components/customers/CustomerInvoicesTab`` — admin
+ *      profile → Invoices tab (Ticket B, already consumes helper)
+ *   2. ``components/customers/CustomerInvoiceList`` — admin
+ *      profile → Overview tab recent-invoices section
+ *   3. ``pages/portal/PortalPages`` — customer portal invoices list
  *
- * Fallback chain (operator-spec, exact):
+ * Other invoice-title display surfaces across the app
+ * (dashboard, dunning, email, SMS, invoice PDF) remain DESCOPED
+ * for this ticket per operator instruction.
+ *
+ * Fallback rule (operator-approved, 5-case):
  *
  *   1. ``invoice.title`` is a non-empty trimmed string → return
- *      it verbatim.  NO rewriting (that's the ``Import #<N>``
- *      concern owned by ``resolvePortalInvoiceTitle`` in
- *      ``lib/portalInvoiceTitle.js``; this helper is on a
- *      DIFFERENT axis — "no title" vs "title is ugly").
+ *      it verbatim.
+ *   2. ``line_items[0].item_name`` is a non-empty trimmed string
+ *      → return it.  This is the canonical "Item" column source
+ *      confirmed by both the admin invoice-detail renderer
+ *      (``components/invoices/pdfPreviewTiles/LineItemsTile.jsx:68``
+ *      reads ``li.item_name``) AND the operator screenshot.
+ *   3. ``line_items[0].name`` is a non-empty trimmed string →
+ *      return it.  Shorter-schema docs (6% of preview invoices
+ *      with line items) use ``name`` instead of ``item_name``.
+ *   4. ``line_items[0].description`` is a non-empty trimmed
+ *      string → return it TRUNCATED to 60 chars with a trailing
+ *      ``"…"``.  This is the primary legacy path — 94% of
+ *      preview invoices with line items fill ``description`` but
+ *      leave ``item_name`` empty.  Aggressive truncation keeps
+ *      row heights consistent AND the ellipsis clearly signals
+ *      "this is a description-derived title" to operators
+ *      scanning the column.
+ *   5. Return ``""`` (blank).  Terminal — no further literal
+ *      fallback (no "Invoice", no date-stamped synthesis) per
+ *      operator spec.
  *
- *   2. Title missing/empty AND ``line_items[0].description`` or
- *      ``line_items[0].title`` is a non-empty trimmed string →
- *      return the first line item's description/title, truncated
- *      to 80 chars with ``…`` (same cap used by
- *      ``resolvePortalInvoiceTitle``'s notes-fallback branch so
- *      the two helpers' truncation stays coherent).
- *
- *   3. Title missing AND no usable line items AND the invoice
- *      carries ANY parseable date (``invoice_date`` ||
- *      ``issued_at`` || ``created_at``, in that priority order
- *      — recon confirmed all three keys appear in different
- *      serializer branches) → return
- *      ``"Invoice — <Month DD, YYYY>"`` formatted via the host
- *      locale.  Uses ``toLocaleDateString("en-US", {month:
- *      "long", day: "numeric", year: "numeric"})`` to match the
- *      ``EstimateFlipbook.jsx:57`` "en-US long month" convention
- *      that's the closest sibling to this surface.
- *
- *   4. Title missing AND no line items AND no parseable date →
- *      return the literal ``"Invoice"``.  Defensive last resort
- *      — the UI must never render an empty string / undefined
- *      where a title belongs.
+ * Note on relationship to ``resolvePortalInvoiceTitle``:
+ * ``lib/portalInvoiceTitle.js`` handles a DIFFERENT axis — the
+ * ``Import #<N>`` rewrite case where ``invoice.title`` IS set
+ * but is an ugly import-batch artefact.  This helper handles
+ * the "title is missing / empty" axis.  Call sites that use
+ * BOTH axes (e.g. ``Import #42`` with no useful line items)
+ * should wire the composition explicitly — not consolidated in
+ * either helper per TD-94 audit §4.
  *
  * Pure function.  No React / network / DOM dependencies.
  */
 
-const _TRUNCATE_AT = 80;
+const _TRUNCATE_AT = 60;
 const _TRUNCATE_SUFFIX = "…";
 
 
-function _truncateDisplay(text) {
+function _truncate(text) {
   const s = String(text || "").trim();
   if (s.length <= _TRUNCATE_AT) return s;
-  // Trim trailing whitespace before appending the ellipsis so the
-  // visible gap stays tight even when the cut lands mid-word.
+  // Trim trailing whitespace before the ellipsis so a cut landing
+  // mid-word doesn't leave a visible gap.
   return s.slice(0, _TRUNCATE_AT).trimEnd() + _TRUNCATE_SUFFIX;
 }
 
 
-function _formatInvoiceDateLong(raw) {
-  if (!raw) return "";
-  const d = new Date(raw);
-  if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleDateString("en-US", {
-    month: "long",
-    day: "numeric",
-    year: "numeric",
-  });
+function _nonEmpty(raw) {
+  if (raw == null) return "";
+  const s = String(raw).trim();
+  return s;
 }
 
 
@@ -70,33 +73,33 @@ function _formatInvoiceDateLong(raw) {
  * Return a user-facing title string for the given invoice.
  *
  * @param {object} invoice
- * @returns {string}
+ * @returns {string}  "" when every fallback is exhausted.
  */
 export function getInvoiceDisplayTitle(invoice) {
-  if (!invoice || typeof invoice !== "object") return "Invoice";
+  if (!invoice || typeof invoice !== "object") return "";
 
-  // 1. Title set → use as-is.
-  const title = String(invoice.title == null ? "" : invoice.title).trim();
+  // 1. invoice.title set → verbatim.
+  const title = _nonEmpty(invoice.title);
   if (title) return invoice.title;
 
-  // 2. First usable line-item description / title.
   const items = Array.isArray(invoice.line_items) ? invoice.line_items : [];
-  if (items.length > 0 && items[0] && typeof items[0] === "object") {
-    const first = items[0];
-    const liLabel = String(
-      first.description || first.title || "",
-    ).trim();
-    if (liLabel) return _truncateDisplay(liLabel);
+  const first = (items.length > 0 && items[0] && typeof items[0] === "object")
+    ? items[0] : null;
+
+  if (first) {
+    // 2. line_items[0].item_name — canonical "Item" column.
+    const itemName = _nonEmpty(first.item_name);
+    if (itemName) return itemName;
+
+    // 3. line_items[0].name — shorter-schema fallback (6%).
+    const name = _nonEmpty(first.name);
+    if (name) return name;
+
+    // 4. line_items[0].description truncated — legacy path (94%).
+    const desc = _nonEmpty(first.description);
+    if (desc) return _truncate(desc);
   }
 
-  // 3. Date-stamped fallback — prefer invoice_date, then
-  //    issued_at, then created_at (serializer-branch priority
-  //    confirmed by recon on the live docs).
-  const dateStr = _formatInvoiceDateLong(
-    invoice.invoice_date || invoice.issued_at || invoice.created_at || null,
-  );
-  if (dateStr) return `Invoice — ${dateStr}`;
-
-  // 4. Last-resort literal.
-  return "Invoice";
+  // 5. Terminal — blank.
+  return "";
 }

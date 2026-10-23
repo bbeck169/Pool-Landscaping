@@ -49,6 +49,7 @@ import { api } from "@/api";
 import { colors, money } from "@/theme";
 import { Chip, EmptyState, Skeleton } from "@/components/ui-kit";
 import { resolvePortalInvoiceTitle } from "@/lib/portalInvoiceTitle";
+import { getInvoiceDisplayTitle } from "@/utils/invoiceTitle";
 
 
 const OVERVIEW_INVOICE_CAP = 10;
@@ -204,7 +205,19 @@ export default function CustomerInvoiceList({ customerId }) {
                   </td>
                   <td className="px-3 py-2 font-semibold"
                        style={{ color: colors.onSurface }}>
-                    {resolvePortalInvoiceTitle(r)}
+                    {/* Feb-2026 · TD-invoice-title-display-fallback —
+                        composes the two orthogonal resolvers:
+                        getInvoiceDisplayTitle handles the
+                        "title is empty" axis (5-case fallback);
+                        resolvePortalInvoiceTitle still handles
+                        the "Import #<N>" rewrite case so legacy
+                        imported invoices don't surface raw
+                        import-batch artefacts.  Order matters:
+                        resolve the display source FIRST, then
+                        run the import-rewrite over the result. */}
+                    {resolvePortalInvoiceTitle({
+                      ...r, title: getInvoiceDisplayTitle(r),
+                    })}
                   </td>
                   <td className="px-3 py-2 hidden md:table-cell"
                        style={{ color: colors.onSurfaceSecondary }}>
