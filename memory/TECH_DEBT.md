@@ -8,6 +8,12 @@ For the linter-noise-suppression rationale (why we're NOT chasing the reviewer's
 
 ---
 
+## Architecture notes
+
+**Parallel-track commits are expected.** When the orchestrator dispatches BE / web and mobile tickets in the same cycle, commits from `e1_expo_frontend_dev` (mobile track, `/app/mobile/`) will land interleaved in the `git log` with commits from `e1_dev` (BE / web track). Each track only sees the other's commits via `git log`, not via its own dispatch message. Verification path: orchestrator dispatch messages are the authoritative source of truth for mobile-scope unlocks (look for an explicit "D6 ✅ Mobile edit scope approved" or similar signal in the dispatch). Both commit SHAs' author / date metadata are consistent with same-pod execution. A defensive flag by either track when it sees an uncatalogued commit from its sibling is correct discipline — the orchestrator confirms via the dispatch chain.
+
+---
+
 ## Extraction refactors (circular-import cleanup)
 
 ### TD-F7-1 · Extract shared `<LineItemsEditor>` primitive
