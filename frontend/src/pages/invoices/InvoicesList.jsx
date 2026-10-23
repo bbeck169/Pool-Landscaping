@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Plus, FileText, Layers, Clock, TrendingUp, AlertCircle, Trash2, X as XIcon, CreditCard, Landmark, ArrowUp, ArrowDown, Eye, UploadCloud } from "lucide-react";
+import { Plus, FileText, Layers, Clock, TrendingUp, AlertCircle, Trash2, X as XIcon, CreditCard, Landmark, ArrowUp, ArrowDown, Eye, UploadCloud, Send } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/api";
 import { colors, money } from "@/theme";
@@ -9,6 +9,8 @@ import { CustomerLink } from "@/components/customer";
 import BulkChargeModal from "@/components/invoices/BulkChargeModal";
 import BulkApplyCreditModal
   from "@/components/invoices/BulkApplyCreditModal";
+import BulkSendInvoicesModal
+  from "@/components/invoices/BulkSendInvoicesModal";
 // PDFI-IV · Feb-2026 — sidepanel upload flow for native PDFs.
 import PdfInvoiceUploadSidePanel from "@/components/invoices/PdfInvoiceUploadSidePanel";
 import CustomerFilterBar from "@/components/customers/CustomerFilterBar";
@@ -298,6 +300,9 @@ export default function InvoicesList() {
   //   open → confirm → fire → results → close → clearSelection +
   //   loadRows.
   const [bulkApplyCreditOpen, setBulkApplyCreditOpen] = useState(false);
+  // Feb-2026 · TD-invoice-list-bulk-send — toolbar bulk "Send
+  // Invoice" (email + SMS fan-out) via POST /api/invoices/bulk-send.
+  const [bulkSendOpen, setBulkSendOpen] = useState(false);
 
   const setStatus = (v) => {
     // FIN-PARITY-B · Feb-2026 — dropdown writes to
@@ -1171,6 +1176,25 @@ export default function InvoicesList() {
           >
             <CreditCard size={12} /> Apply Credit ({selectedCount})
           </button>
+          {/* Feb-2026 · TD-invoice-list-bulk-send — "Send Invoice"
+              toolbar action.  Fires email + SMS to every
+              selected customer via POST /api/invoices/bulk-send.
+              Paid / draft / no-contact / recent-send rows are
+              skipped server-side; results modal reports per-
+              invoice status chips. */}
+          <button
+            type="button"
+            onClick={() => setBulkSendOpen(true)}
+            disabled={busy || selectedCount === 0 || selectedCount > 500}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold disabled:opacity-50"
+            style={{ backgroundColor: "#0284C7", color: "#FFFFFF" }}
+            data-testid="bulk-send-button"
+            title={selectedCount > 500
+              ? "Max 500 invoices per batch"
+              : ""}
+          >
+            <Send size={12} /> Send Invoice ({selectedCount})
+          </button>
           <button
             type="button"
             onClick={() => setConfirmDeleteOpen(true)}
@@ -1296,6 +1320,16 @@ export default function InvoicesList() {
           }}
         />
       ) : null}
+      {/* Feb-2026 · TD-invoice-list-bulk-send — bulk send modal. */}
+      <BulkSendInvoicesModal
+        open={bulkSendOpen}
+        invoiceIds={Array.from(selected)}
+        onClose={() => {
+          setBulkSendOpen(false);
+          clearSelection();
+          loadRows();
+        }}
+      />
       {/* PDFI-IV · Feb-2026 — upload-flow sidepanel */}
       <PdfInvoiceUploadSidePanel
         open={pdfPanelOpen}

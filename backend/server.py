@@ -1373,6 +1373,15 @@ api_router.include_router(_p14b_bulk_charge.router)
 from routers import invoices_bulk_apply_credit as _bulk_apply_credit  # noqa: E402
 api_router.include_router(_bulk_apply_credit.router)
 
+# Feb-2026 · TD-invoice-list-bulk-send — ``POST /api/invoices/
+# bulk-send`` for the Invoices-list "Send Invoice" toolbar
+# action.  Fans out email + SMS to every selected invoice's
+# customer via the shipped dunning helpers (reusing their
+# Resend + RC adapter paths).  Per-invoice status chip in the
+# bulk result modal.
+from routers import invoices_bulk_send as _bulk_send  # noqa: E402
+api_router.include_router(_bulk_send.router)
+
 # Phase 17 · Feb-2026 — QuickBooks Online read-sync router.
 # Endpoints under /api/qbo/*: oauth, sync, entity reads, match links.
 # Zero write-back to Intuit — display-only mirror in db.qbo_*.
