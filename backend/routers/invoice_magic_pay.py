@@ -151,6 +151,21 @@ async def request_payment_link_magic(
             status_code=503,
             detail={"error": "payment_gateway_unavailable", "reason": code},
         )
+    except stripe_svc._IdempotencyConflict as exc:
+        # Feb-2026 · TD-invoice-pay-now-stripe-idempotency-conflict —
+        # ``create_invoice_checkout_session`` raises this when the
+        # Stripe SDK returns ``IdempotencyError`` on the Checkout
+        # Session create call (same ``idempotency_key`` replayed with
+        # drifted params).  Map to HTTP 409 with the specific error
+        # code so the magic-link viewer can show a dedicated retry
+        # affordance instead of the generic 503 copy.  MUST stay
+        # AHEAD of the generic ``except Exception`` below so the
+        # specific case wins.
+        raise HTTPException(
+            status_code=409,
+            detail={"error": "stripe_idempotency_conflict",
+                    "detail": str(exc)},
+        )
     except Exception as exc:  # noqa: BLE001
         # Any other failure surfaces as a friendly 503 so the frontend
         # renders the retry copy — no naked 500s at the boundary.

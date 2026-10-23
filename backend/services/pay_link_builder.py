@@ -25,17 +25,32 @@ from config import JWT_ALGO, JWT_SECRET, logger
 
 
 def issue_invoice_magic_token(invoice_id: str, tenant_id: str,
-                                days: int = 30) -> str:
-    """Mint a 30-day magic-link JWT for a single invoice.
+                                days: int = 30,
+                                exp: Optional[datetime] = None) -> str:
+    """Mint a magic-link JWT for a single invoice.
 
     Kept identical to ``payments_stripe_live._issue_invoice_magic_token``
-    so tokens minted here verify cleanly via ``_verify_invoice_magic_token``.
+    so tokens minted here verify cleanly via
+    ``_verify_invoice_magic_token``.
+
+    Feb-2026 · TD-invoice-pay-now-stripe-idempotency-conflict —
+    optional ``exp`` kwarg pins the ``exp`` claim to an explicit
+    datetime, bypassing the wall-clock ``now()`` calculation.  When
+    ``exp`` is supplied, ``days`` is IGNORED — the pinned
+    timestamp wins outright.  Callers that need idempotency-stable
+    JWT bytes across retries (``create_invoice_checkout_session``
+    uses this for its ``cancel_url``) MUST pass ``exp``; dunning /
+    drip-campaign call sites that just want "30 days from now" keep
+    their existing wall-clock behaviour by omitting it.
     """
+    exp_claim = exp if exp is not None else (
+        datetime.now(timezone.utc) + timedelta(days=days)
+    )
     payload = {
         "sub": "invoice_pay",
         "invoice_id": invoice_id,
         "tenant_id": tenant_id,
-        "exp": datetime.now(timezone.utc) + timedelta(days=days),
+        "exp": exp_claim,
     }
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGO)
 

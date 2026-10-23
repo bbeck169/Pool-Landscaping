@@ -34,7 +34,7 @@ import json
 import logging
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 import stripe as _stripe_module
@@ -140,6 +140,19 @@ def _select_secret_key() -> Optional[str]:
 class _UnconfiguredStripeError(RuntimeError):
     """Raised on the first Stripe API call when no valid secret key
     resolved from the environment. Phase 42.2 · Feb 2026."""
+
+
+class _IdempotencyConflict(RuntimeError):
+    """Feb-2026 · TD-invoice-pay-now-stripe-idempotency-conflict —
+    raised by ``create_invoice_checkout_session`` when
+    ``_stripe.checkout.Session.create`` fails with
+    ``stripe.error.IdempotencyError`` (same ``idempotency_key``
+    replayed with drifted params).  Routers catch this BEFORE
+    their generic 502/503 catch-all and map to HTTP 409
+    ``{"error": "stripe_idempotency_conflict", "detail": <msg>}``
+    so operators can tell a param-drift replay apart from a
+    gateway outage.
+    """
 
 
 def _select_webhook_secret() -> str:
@@ -1556,10 +1569,47 @@ async def create_invoice_checkout_session(
     # returns customers to the magic-link viewer under ``/i/<token>``
     # so a bail-out from Checkout drops them back on the same
     # portal-free page that sent them in.
+    #
+    # Feb-2026 · TD-invoice-pay-now-stripe-idempotency-conflict —
+    # the JWT embedded in ``cancel_url`` is minted with an
+    # ANCHORED ``exp`` claim so retries on the same invoice produce
+    # byte-identical URLs.  Previously the token was wall-clock-
+    # dated (``now() + 30d``) which drifted on every call — Stripe's
+    # stable ``idempotency_key`` (built from tenant/invoice/amount/
+    # save-flag below) then flagged a param-drift and raised
+    # ``IdempotencyError``, surfaced to the user as a generic 502.
+    #
+    # Anchor path (per operator-approved recon):
+    #   * ``invoice.created_at + 365d`` when the invoice carries a
+    #     parseable ``created_at`` — stable across the invoice's
+    #     entire payable lifetime; a 1-year horizon dwarfs any
+    #     realistic Pay-Now retry window.
+    #   * ``2099-01-01T00:00:00Z`` sentinel otherwise — covers
+    #     mid-migration docs that somehow landed in db.quotes
+    #     without a ``created_at`` field.
     try:
         from services.pay_link_builder import issue_invoice_magic_token
+        _created = invoice.get("created_at")
+        _cancel_exp: Optional[datetime] = None
+        if isinstance(_created, str) and _created:
+            try:
+                _anchor = datetime.fromisoformat(
+                    _created.replace("Z", "+00:00"))
+                if _anchor.tzinfo is None:
+                    _anchor = _anchor.replace(tzinfo=timezone.utc)
+                _cancel_exp = _anchor + timedelta(days=365)
+            except Exception:  # noqa: BLE001
+                _cancel_exp = None
+        elif isinstance(_created, datetime):
+            _anchor = (_created if _created.tzinfo
+                       else _created.replace(tzinfo=timezone.utc))
+            _cancel_exp = _anchor + timedelta(days=365)
+        if _cancel_exp is None:
+            _cancel_exp = datetime(
+                2099, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
         _cancel_tok = issue_invoice_magic_token(
-            invoice_id, invoice.get("tenant_id") or tenant_id, days=30,
+            invoice_id, invoice.get("tenant_id") or tenant_id,
+            exp=_cancel_exp,
         )
         _cancel_url = f"{base}/i/{_cancel_tok}"
     except Exception:  # noqa: BLE001
@@ -1603,11 +1653,34 @@ async def create_invoice_checkout_session(
         f"{amount_cents}:{save_flag}"
     )
 
-    session = await asyncio.to_thread(
-        _stripe.checkout.Session.create,
-        idempotency_key=idempotency_key,
-        **session_kwargs,
-    )
+    try:
+        session = await asyncio.to_thread(
+            _stripe.checkout.Session.create,
+            idempotency_key=idempotency_key,
+            **session_kwargs,
+        )
+    except Exception as exc:
+        # Feb-2026 · TD-invoice-pay-now-stripe-idempotency-conflict —
+        # map Stripe's ``IdempotencyError`` (same key, drifted params)
+        # to the ``_IdempotencyConflict`` sentinel so routers can
+        # return HTTP 409 ``stripe_idempotency_conflict`` instead of
+        # the generic 502/503 ``payment_gateway_unavailable``.
+        #
+        # Resolved via ``getattr`` so unit tests can inject a
+        # ``_stripe`` stub whose ``error`` namespace carries a
+        # bespoke ``IdempotencyError`` class without needing the
+        # real ``stripe`` SDK on the module path.
+        _err_mod = getattr(_stripe, "error", None)
+        _IdemErr = (getattr(_err_mod, "IdempotencyError", None)
+                    if _err_mod is not None else None)
+        if (_IdemErr is not None
+                and isinstance(_IdemErr, type)
+                and isinstance(exc, _IdemErr)):
+            raise _IdempotencyConflict(
+                f"Stripe idempotency conflict for invoice "
+                f"{invoice_id}: {exc}"
+            ) from exc
+        raise
     sd = _asdict(session)
     return {
         "payment_url": sd.get("url"),

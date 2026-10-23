@@ -224,6 +224,26 @@ async def request_payment_link(
             invoice_id, exc,
         )
         raise HTTPException(502, "payment_gateway_unavailable")
+    except stripe_svc._IdempotencyConflict as exc:
+        # Feb-2026 · TD-invoice-pay-now-stripe-idempotency-conflict —
+        # ``create_invoice_checkout_session`` raises this when the
+        # Stripe SDK returns ``IdempotencyError`` on the Checkout
+        # Session create call (same ``idempotency_key`` replayed with
+        # drifted params).  Map to HTTP 409 with the specific error
+        # code so operators + the frontend can distinguish a param-
+        # drift replay from a transient gateway outage (the 502 catch-
+        # all below).  MUST stay AHEAD of the generic
+        # ``except Exception`` so the specific case wins.
+        import logging as _logging
+        _logging.getLogger("phase47").warning(
+            "[phase47] Stripe idempotency conflict for invoice=%s: %s",
+            invoice_id, exc,
+        )
+        raise HTTPException(
+            status_code=409,
+            detail={"error": "stripe_idempotency_conflict",
+                    "detail": str(exc)},
+        )
     except Exception as exc:
         # Stripe SDK failure or transient outage — 502 lets the browser
         # differentiate a "we couldn't reach the gateway" case from a
