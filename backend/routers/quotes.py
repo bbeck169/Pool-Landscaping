@@ -21,6 +21,7 @@ from models import (
     QuoteUpdate,
     RecordPaymentIn,
 )
+from services.offline_bundle_cache import invalidates_offline_bundle
 
 router = APIRouter()
 
@@ -673,6 +674,7 @@ async def list_quotes(user: dict = Depends(get_current_user),
 
 
 @router.post("/quotes")
+@invalidates_offline_bundle
 async def create_quote(body: QuoteIn,
                        user: dict = Depends(require_admin),
                        tenant: dict = Depends(get_current_tenant)):
@@ -2164,6 +2166,7 @@ async def schedule_from_estimate(qid: str, body: MaintBulkIn,
 
 
 @router.put("/quotes/{qid}/status")
+@invalidates_offline_bundle
 async def update_quote_status(qid: str, status: str = Query(...),
                               user: dict = Depends(require_admin),
                               tenant: dict = Depends(get_current_tenant)):
@@ -3499,6 +3502,7 @@ async def _quote_converted_invoice_id(
 
 
 @router.delete("/quotes/{qid}", operation_id="quotes.delete")
+@invalidates_offline_bundle
 async def delete_quote(
     qid: str,
     hard: bool = Query(False),

@@ -841,6 +841,20 @@ async def mobile_offline_bundle(tech_id: str = "me",
         target_tech = user.get("technician_id") or user.get("id")
     else:
         target_tech = tech_id
+
+    # TD-offline-bundle-tenant-cache · Phase 2 Lane D · Feb-2026 —
+    # 120 s per-``(tenant_id, tech_id)`` TTL cache.  See
+    # ``services/offline_bundle_cache.py`` for the design-decision
+    # write-up (notably: the operator-dispatched ``tenant_id``-only
+    # key was widened to the full ``(tenant_id, tech_id)`` tuple to
+    # avoid serving one tech's jobs to another on cache hit).
+    # Cache miss falls through to the full handler path; Lane A +
+    # Lane B still protect the cold-path cost.
+    from services import offline_bundle_cache as _obc
+    _cached = _obc.get(tenant_id, target_tech)
+    if _cached is not None:
+        return _cached
+
     now = datetime.now(timezone.utc)
     horizon = now + timedelta(days=OFFLINE_BUNDLE_WINDOW_DAYS)
 
@@ -972,7 +986,14 @@ async def mobile_offline_bundle(tech_id: str = "me",
         "window_days": OFFLINE_BUNDLE_WINDOW_DAYS,
     }
 
-    return {
+    # TD-offline-bundle-tenant-cache · Phase 2 Lane D · Feb-2026 —
+    # stash the materialised bundle in the per-``(tenant_id, tech_id)``
+    # cache so pull-to-refresh traffic within the next 120 s short-
+    # circuits to a dict lookup.  Mutations on ``db.jobs`` or
+    # ``db.quotes`` for this tenant drop the cache via
+    # ``services.offline_bundle_cache.invalidate(tenant_id)`` from
+    # the hook sweep in ``routers.jobs`` + ``routers.quotes``.
+    bundle = {
         "jobs": jobs,
         "customers": customers,
         "service_reports_in_progress": reports,
@@ -991,3 +1012,5 @@ async def mobile_offline_bundle(tech_id: str = "me",
         "job_count": len(jobs),
         "cap_reached": len(jobs) >= BUNDLE_MAX_JOBS,
     }
+    _obc.put(tenant_id, target_tech, bundle)
+    return bundle

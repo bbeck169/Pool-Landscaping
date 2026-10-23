@@ -34,6 +34,7 @@ from routers.tenants import get_current_tenant
 # jobs (crew_id set, technician_id null OR pointing at a teammate)
 # open for every member of the assigned crew. See services/authz.py.
 from services.authz import is_tech_authorized_on_job
+from services.offline_bundle_cache import invalidates_offline_bundle
 from services.address_resolver import (
     correct_cross_customer_job_addresses,
     property_belongs_to_customer,
@@ -1594,6 +1595,7 @@ async def list_jobs(
 
 
 @router.post("/jobs")
+@invalidates_offline_bundle
 async def create_job(body: JobIn,
                      background_tasks: BackgroundTasks,
                      user: dict = Depends(require_admin),
@@ -2411,6 +2413,7 @@ async def log_history(customer_id: str,
 
 
 @router.put("/jobs/{jid}")
+@invalidates_offline_bundle
 async def update_job(jid: str, body: JobUpdate,
                      user: dict = Depends(get_current_user),
                      tenant: dict = Depends(get_current_tenant)):
@@ -3414,6 +3417,7 @@ async def public_job_photo_preview(jid: str, pid: str):
 
 
 @router.delete("/jobs/{jid}")
+@invalidates_offline_bundle
 async def delete_job(jid: str,
                      user: dict = Depends(require_admin),
                      tenant: dict = Depends(get_current_tenant)):
@@ -3515,6 +3519,7 @@ async def _authorize_edit(
 
 @router.patch("/jobs/{jid}",
               operation_id="jobs.edit_within_window")
+@invalidates_offline_bundle
 async def patch_job_edit_window(
     jid: str, body: JobEditPatch,
     user: dict = Depends(get_current_user),

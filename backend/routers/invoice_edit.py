@@ -23,6 +23,7 @@ from pydantic import BaseModel
 
 from config import db, logger
 from services.invoice_lookup import find_invoice_dual
+from services.offline_bundle_cache import invalidates_offline_bundle
 from utils import get_current_user
 
 router = APIRouter()
@@ -313,6 +314,7 @@ async def _fetch_updated(collection_name: str,
 
 
 @router.patch("/quotes/{invoice_id}")
+@invalidates_offline_bundle
 async def patch_invoice(
     invoice_id: str,
     body: InvoiceEditBody = Body(...),

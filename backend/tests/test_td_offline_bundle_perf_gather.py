@@ -45,6 +45,20 @@ import pytest
 from routers import mobile_sync as ms
 
 
+# TD-offline-bundle-tenant-cache · Feb-2026 — the Phase 2 Lane D
+# cache in services.offline_bundle_cache would otherwise bleed state
+# across the handler calls in this suite (every test uses the same
+# tenant/tech tuple, so test N+1 would receive test N's cached
+# bundle).  Clear per-function to keep every test in this file
+# materialising a fresh bundle.
+@pytest.fixture(autouse=True)
+def _reset_offline_bundle_cache():
+    from services import offline_bundle_cache as _obc
+    _obc._clear()
+    yield
+    _obc._clear()
+
+
 # ─── Stubs ──────────────────────────────────────────────────────────────
 
 
