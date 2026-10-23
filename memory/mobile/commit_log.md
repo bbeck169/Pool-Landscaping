@@ -2346,3 +2346,13 @@
 - **No production deploy triggered.** Role gate expansion (TD-fleet-emitter-role-gate, P2) not absorbed.
 - **Files modified**: mobile/app/_layout.tsx, mobile/src/components/fleet/FleetEmitterRunner.tsx (new), mobile/__tests__/td-fleet-emitter-auth-wiring.test.tsx (new)
 - **Web files referenced**: none (mobile-only); backend/routers/fleet.py L122-180 ping handler (read-only)
+
+## Iteration 179 — TD-fleet-pings-not-reaching-be (Lane A): emitter position source → getCurrentPositionAsync(Balanced)
+- **Commits**: `5d1a6d427` (td-fleet-pings-not-reaching-be) · `td-fleet-pings-not-reaching-be-doc` (this doc)
+- **Date**: 2026-10-23
+- **Changes**: `_doPing` uses `getCurrentPositionAsync({accuracy: Balanced})` in its own try/catch (skip on failure). `__DEV__`-only warns on the rate-limit / position-fail / null-position / battery-fail paths. Cadence, scheduler and status machine unchanged.
+- **Checks**: NEW 8/8; wiring 6/6 (mock moved); Phase 1 11/11 unchanged; chip 9/9 → 34/34; tsc 629 pre-commit; eslint clean. Hygiene drift = exactly the 3 expected files (no V15 #6/#7 artifacts).
+- **D5 live**: the preview now sends a real `/fleet/ping` (first ever). BE 403 → chip "Not in Fleet", because the preview tenant has 0 `fleet_membership` docs. Rows need an admin enrollment (operator action).
+- **Closes**: TD-fleet-emitter-position-source. **Open**: TD-fleet-chip-active-before-first-ping (P3; status timing kept per scope lock).
+- **Files modified**: mobile/src/services/fleet/locationEmitter.ts, mobile/__tests__/td-fleet-pings-position-source.test.ts (new), mobile/__tests__/td-fleet-emitter-auth-wiring.test.tsx
+- **Web files referenced**: none; backend/routers/fleet.py ping handler (read-only)

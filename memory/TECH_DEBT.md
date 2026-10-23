@@ -2333,12 +2333,34 @@ Original approval-request note:
 - **Fix sketch (~5 LOC):** move the call into a provider-scoped host. Add `function FleetEmitterHost() { useFleetEmitter(); return null; }` rendered beside `<PushTapRouter />` inside `<AuthProvider>`, and drop the `RootLayout` call. Add a render test that mounts the real `AuthProvider` so a mocked `useAuth` can't hide this again.
 - **Behaviour impact:** this turns on real foreground GPS pings (`POST /api/fleet/ping`, 15s/60s cadence) for every `technician`/`tech` user for the first time. Paused techs stay paused. Non-enrolled techs get BE 403, which shows as `not_in_fleet`. The OS permission prompt will appear on first run. This is a material privacy/battery change in practice, so it needs explicit operator sign-off. Production (app.plofv.com) is affected once promoted.
 
-## TD-fleet-emitter-position-source (P1 mobile candidate, found during TD-fleet-emitter-auth-wiring live verification)
+## TD-fleet-pings-not-reaching-be: SHIPPED to PREVIEW (`5d1a6d427`, Lane A, Oct-2026). This CLOSES TD-fleet-emitter-position-source (below).
+
+- **Fix (operator D1/D3/D4):** `_doPing` now uses `Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced })` instead of `getLastKnownPositionAsync()`.
+  - The position call has its own try/catch, so a failure skips that one ping. Previously it fell silently through the ApiError branch.
+  - A `__DEV__`-gated `console.warn("[fleet.emitter] …")` fires on every short-circuit: the rate-limit skip, a position failure, a null position, and a battery-read failure (the ping is still sent, without `battery_pct`). Production stays silent.
+  - D2 was treated as a cold-start oversight.
+- **Unchanged (byte-identical):** the cadence, scheduler and status machine (ACTIVE 15s / IDLE 60s / LOW_BATT 60s|300s / RETRY 5s / 5s rate limit). `_setStatus("active")` is still set on start, before the first ping; it was not reordered (the misleading-chip note below stays open).
+- **Verification:**
+  - **Jest:** NEW `__tests__/td-fleet-pings-position-source.test.ts` 8/8.
+    - The Balanced fix produces the full ping body, and last-known is never called.
+    - One ping fires per 15s tick, none in between.
+    - A rejection skips cleanly with no throw; the emitter keeps running and the next tick recovers.
+    - A null position warns; a battery failure sends the ping without battery; the rate limit warns; `__DEV__=false` stays silent.
+    - A source lock covers the cadence constants and the status timing.
+  - **Regression:** the `td-fleet-emitter-auth-wiring` location mock moved to `getCurrentPositionAsync` (6/6). Phase 1 11/11 (file unchanged), chip 9/9, so fleet suites 34/34.
+  - **tsc:** 629 pre-commit.
+  - **eslint:** clean.
+- **D5 live result (preview):** tech `mike@` with browser geolocation granted. **A real `POST /fleet/ping` is now sent**, for the first time; before this, zero fleet requests. The BE answered **403 "Technician is not enrolled in the fleet"**, so the chip correctly reads "Not in Fleet".
+  - **Read-only DB check:** `fleet_membership` = **0 documents** on the preview tenant, so `tech_locations` stays at 0 by design.
+  - **D5 (rows accumulate) needs at least one tech enrolled** via the existing admin fleet-membership flow. That's an operator/admin data action, not a code change; mobile did not enroll anyone.
+- **No production deploy.**
+
+## TD-fleet-emitter-position-source: CLOSED by `5d1a6d427` (TD-fleet-pings-not-reaching-be Lane A). Original note kept below.
 
 - **Problem:** `_doPing()` (`locationEmitter.ts` ~L223) only uses `Location.getLastKnownPositionAsync()` and silently skips the ping when it returns `null`. There is no `getCurrentPositionAsync` / `watchPositionAsync` fallback.
   - **Web:** it always returns null, so zero pings are sent. On the preview after the wiring fix, the chip shows "In Fleet" but the DB has 0 `tech_locations` rows (read-only check).
   - **Native:** it returns null until the OS has a cached fix (fresh boot, or location not used recently), so pings can silently never send.
-- **Related problem:** `startEmitter()` sets status `active` ("In Fleet · GPS location is being shared with dispatch.") BEFORE the first successful ping. The chip can therefore claim sharing while nothing is sent.
+- **Related problem (still OPEN; Lane A kept status timing per scope lock → candidate TD-fleet-chip-active-before-first-ping, P3):** `startEmitter()` sets status `active` ("In Fleet · GPS location is being shared with dispatch.") BEFORE the first successful ping. The chip can therefore claim sharing while nothing is sent.
 - **Fix sketch (~10-15 LOC):** fall back to `getCurrentPositionAsync({ accuracy: Balanced })` (timeout-guarded) when last-known is null, and/or start a `watchPositionAsync` subscription while active. Consider holding status at `idle` until the first ping succeeds.
 - **Priority:** this needs operator approval before shipping; it is the remaining blocker for real fleet tracking once the auth wiring is promoted.
 
