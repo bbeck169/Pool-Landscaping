@@ -284,13 +284,25 @@ def test_hook_sweep_stamps_primary_mutation_endpoints() -> None:
             in quotes_src)
     assert "@invalidates_offline_bundle\nasync def delete_quote(" in quotes_src
 
-    # invoice_edit.py — PATCH /quotes/{invoice_id}.
-    assert "@invalidates_offline_bundle\nasync def patch_invoice(" in invoice_edit_src
+    # invoice_edit.py — PATCH /quotes/{invoice_id}.  The ``patch_invoice``
+    # handler intentionally does NOT use the ``@invalidates_offline_bundle``
+    # decorator — the decorator conflicts with FastAPI's resolution of the
+    # ``body: InvoiceEditBody = Body(...)`` ForwardRef at openapi schema
+    # build time (``PydanticUserError``).  See
+    # ``TD-invalidates-offline-bundle-forwardref-safe`` for the root-cause
+    # fix that would benefit the 7 other decorated handlers too.  Until
+    # then, the handler calls the inline
+    # ``_invalidate_offline_bundle_for_user`` helper (mirrors the
+    # decorator's runtime semantics 1:1) at each success-return site.
+    assert "_invalidate_offline_bundle_for_user(user)" in invoice_edit_src
+    assert "def _invalidate_offline_bundle_for_user(" in invoice_edit_src
 
     # Every router that uses the decorator must import it.
     assert ("from services.offline_bundle_cache import "
             "invalidates_offline_bundle") in jobs_src
     assert ("from services.offline_bundle_cache import "
             "invalidates_offline_bundle") in quotes_src
-    assert ("from services.offline_bundle_cache import "
-            "invalidates_offline_bundle") in invoice_edit_src
+    # invoice_edit.py imports the ``invalidate`` function directly (used
+    # by the inline helper); it does NOT import the decorator.
+    assert ("from services.offline_bundle_cache import invalidate "
+            "as _invalidate_offline_bundle_cache") in invoice_edit_src

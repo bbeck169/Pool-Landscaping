@@ -23,8 +23,36 @@ from pydantic import BaseModel
 
 from config import db, logger
 from services.invoice_lookup import find_invoice_dual
-from services.offline_bundle_cache import invalidates_offline_bundle
+from services.offline_bundle_cache import invalidate as _invalidate_offline_bundle_cache
 from utils import get_current_user
+
+
+def _invalidate_offline_bundle_for_user(user: dict) -> None:
+    """Inline replacement for the removed
+    ``@invalidates_offline_bundle`` decorator on ``patch_invoice``.
+
+    The decorator variant conflicted with FastAPI's resolution of the
+    ``body: InvoiceEditBody = Body(...)`` ForwardRef at schema-build
+    time, 500-ing ``/api/openapi.json``.  Mirrors the decorator's
+    runtime semantics exactly: pulls ``tenant_id`` off the auth
+    bundle (``patch_invoice`` has no ``tenant`` kwarg), fires AFTER
+    the handler's success return path, and swallows any cache error
+    so a cache miss never breaks the invoice write.
+
+    See ``services.offline_bundle_cache.invalidates_offline_bundle``
+    for the sibling decorator used by ``routers.jobs`` /
+    ``routers.quotes`` where the body-param ForwardRef issue does
+    not surface.
+    """
+    try:
+        tenant_id = (user or {}).get("tenant_id")
+        if tenant_id:
+            _invalidate_offline_bundle_cache(tenant_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "[offline-bundle-cache] inline invalidate failed on "
+            "patch_invoice: %s", exc,
+        )
 
 router = APIRouter()
 
@@ -314,7 +342,6 @@ async def _fetch_updated(collection_name: str,
 
 
 @router.patch("/quotes/{invoice_id}")
-@invalidates_offline_bundle
 async def patch_invoice(
     invoice_id: str,
     body: InvoiceEditBody = Body(...),
@@ -522,6 +549,7 @@ async def patch_invoice(
 
     # ── No effective changes → early exit, no audit entry ────────
     if not changed:
+        _invalidate_offline_bundle_for_user(user)
         return {"ok": True, "changed": False, "invoice": inv}
 
     upd["updated_at"] = _now().isoformat()
@@ -667,6 +695,7 @@ async def patch_invoice(
         # Never fail the caller because of an audit-log write.
         pass
 
+    _invalidate_offline_bundle_for_user(user)
     return {
         "ok": True,
         "changed": True,
