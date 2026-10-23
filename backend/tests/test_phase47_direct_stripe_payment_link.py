@@ -72,13 +72,24 @@ def test_create_invoice_checkout_session_happy_path(monkeypatch):
         "amount_cents": 12345,
         "currency": "usd",
         "mode": "test",
+        # TD-stripe-test-fixture-refresh · Feb-2026 — handler now
+        # returns ``save_for_future_billing`` as a 6th response key
+        # (added by the save-on-first-payment audit ticket).  Defaults
+        # to ``False`` when the caller doesn't opt in via the body.
+        "save_for_future_billing": False,
     }
     # Inspect the kwargs Stripe would have received.
     kwargs = fake_create.call_args.kwargs
     assert kwargs["mode"] == "payment"
     assert kwargs["success_url"] == \
         "https://example.test/portal/payment-complete?session_id={CHECKOUT_SESSION_ID}"
-    assert kwargs["cancel_url"] == "https://example.test/portal/invoices/inv-1"
+    # TD-stripe-test-fixture-refresh · Feb-2026 — handler now mints a
+    # signed magic-link cancel URL at ``/i/<jwt>`` instead of the
+    # original plain ``/portal/invoices/{id}`` so an un-authenticated
+    # recipient coming back from Stripe can still land on their
+    # invoice.  Assertion widened to the shape prefix; the JWT body
+    # itself is covered by the magic-link suite elsewhere.
+    assert kwargs["cancel_url"].startswith("https://example.test/i/")
     assert kwargs["customer_email"] == "buyer@example.test"
     assert kwargs["client_reference_id"] == "inv-1"
     # Metadata carried on the Session AND propagated to the PaymentIntent.

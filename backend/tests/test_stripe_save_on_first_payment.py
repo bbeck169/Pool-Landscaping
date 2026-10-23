@@ -102,7 +102,16 @@ def stripe_shim(monkeypatch):
     # webhook path calls it with ``set_default=True`` and the right
     # PM id. The real helper mutates ``db.payment_methods`` and hits
     # the Stripe SDK a second time; a shim keeps this spec pure.
-    async def _fake_attach(*, tenant_id, customer_id, payment_method_id, set_default=False):
+    #
+    # TD-stripe-test-fixture-refresh · Feb-2026 — ``**_kw`` catch-all
+    # keeps the shim forward-compatible with new audit kwargs added
+    # to ``attach_payment_method`` (e.g. ``created_from_invoice_id``
+    # introduced by the save-on-first-payment audit trail).  Without
+    # it, a kwarg mismatch raises TypeError which the handler's
+    # catch-all ``except Exception`` swallows silently — leaving the
+    # ``calls["attach"]`` list empty and the assertion count at 0.
+    async def _fake_attach(*, tenant_id, customer_id, payment_method_id,
+                            set_default=False, **_kw):
         calls["attach"].append({
             "tenant_id": tenant_id, "customer_id": customer_id,
             "payment_method_id": payment_method_id,
