@@ -128,7 +128,22 @@ async def _fuzzy_match_customer(
     ``"Dianne LIoyd"`` (I-as-l typo) near-miss family cleanly.
     """
     cursor = db.customers.find(
-        {"tenant_id": tenant_id, "is_active": {"$ne": False}},
+        {
+            "tenant_id": tenant_id,
+            "is_active": {"$ne": False},
+            # Feb-2026 · TD-pdf-import-operator-confirm-before-create
+            # Part 2 — exclude merged ("ghost") customers from the
+            # fuzzy candidate pool for the same reason the ladder
+            # (``customer_match_ladder._run_match_ladder``) filters
+            # them: a ghost record scored as the fuzzy "best match"
+            # routed new imports onto the loser side of a prior
+            # merge.  Filter shape mirrors ``routers/customers.py``
+            # line 1490.
+            "$or": [
+                {"merged_into": None},
+                {"merged_into": {"$exists": False}},
+            ],
+        },
         {"_id": 0, "id": 1, "name": 1, "email": 1, "phone": 1, "address": 1},
     )
     rows = await cursor.to_list(length=None)

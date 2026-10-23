@@ -59,6 +59,17 @@ export default function PdfInvoiceUploadSidePanel({
   const [file, setFile] = useState(null);
   const [batchId, setBatchId] = useState(null);
   const [batchPreviews, setBatchPreviews] = useState([]);
+  // Feb-2026 · TD-pdf-import-operator-confirm-before-create —
+  // ``pending_customer_classification`` snapshot from the latest
+  // poll response.  Shape: ``{will_auto_create: [...],
+  // will_match_existing: [...], manual: [...]}``.  We only read
+  // ``will_auto_create`` here — its length drives the mandatory
+  // confirm-checkbox banner.
+  const [pendingClassification, setPendingClassification] = useState(null);
+  // Operator-explicit opt-in to bulk auto-create.  Sent on the
+  // commit payload; required by the BE gate when
+  // ``will_auto_create`` is non-empty.
+  const [confirmWillAutoCreate, setConfirmWillAutoCreate] = useState(false);
   const [activeDocIdx, setActiveDocIdx] = useState(0);
   const [errorMsg, setErrorMsg] = useState("");
   const [customers, setCustomers] = useState([]);
@@ -79,6 +90,8 @@ export default function PdfInvoiceUploadSidePanel({
     setFile(null);
     setBatchId(null);
     setBatchPreviews([]);
+    setPendingClassification(null);
+    setConfirmWillAutoCreate(false);
     setActiveDocIdx(0);
     setErrorMsg("");
     setCreateRecoveryByDoc({});
@@ -144,6 +157,12 @@ export default function PdfInvoiceUploadSidePanel({
         if (row?.status === "preview_complete") {
           const previews = row.mapper_previews || [];
           setBatchPreviews(previews);
+          // Feb-2026 · TD-pdf-import-operator-confirm-before-create —
+          // snapshot the BE's pending-customer classification so
+          // we can gate the Commit button on unmatched rows.
+          setPendingClassification(
+            row.pending_customer_classification || null,
+          );
           setActiveDocIdx(0);
           setStep("preview_ready");
           return;
@@ -334,6 +353,18 @@ export default function PdfInvoiceUploadSidePanel({
     });
   };
 
+  // Feb-2026 · TD-pdf-import-operator-confirm-before-create —
+  // count of preview rows the BE will auto-create on commit.
+  // Non-zero without an explicit confirm checkbox tick blocks
+  // the Commit button (defense-in-depth; the BE also returns
+  // 400 ``unmatched_customers_require_confirmation`` on bypass).
+  const _willAutoCreateCount = Array.isArray(
+    pendingClassification?.will_auto_create,
+  ) ? pendingClassification.will_auto_create.length : 0;
+  const _unmatchedRequiresConfirm = (
+    _willAutoCreateCount > 0 && !confirmWillAutoCreate
+  );
+
   const _readyToCommit = (
     Boolean(qi.customer_name) &&
     Boolean(qi.doc_date) &&
@@ -348,7 +379,13 @@ export default function PdfInvoiceUploadSidePanel({
     // front-end block saves the round-trip + keeps the
     // operator in-context.
     !(qi.is_paid === true && !qi.paid_at) &&
-    !(qi.is_paid === true && (Number(qi.amount_paid) || 0) <= 0)
+    !(qi.is_paid === true && (Number(qi.amount_paid) || 0) <= 0) &&
+    // Feb-2026 · TD-pdf-import-operator-confirm-before-create —
+    // unmatched rows must be either resolved via picker (which
+    // flips them out of will_auto_create on the next poll /
+    // local optimistic update) OR explicitly confirmed via the
+    // checkbox.
+    !_unmatchedRequiresConfirm
   );
 
   const _onCommit = async () => {
@@ -364,7 +401,13 @@ export default function PdfInvoiceUploadSidePanel({
     }
     setStep("committing");
     try {
-      const res = await commitBatch(batchId, { on_duplicate: "skip" });
+      const res = await commitBatch(batchId, {
+        on_duplicate: "skip",
+        // Feb-2026 · TD-pdf-import-operator-confirm-before-create —
+        // pass the explicit opt-in flag.  Backend 400s if any
+        // ``will_auto_create`` rows remain and this is not True.
+        confirm_will_auto_create: confirmWillAutoCreate,
+      });
       const createdId = res?.quote_ids?.[0]
         || res?.commit_result?.created_quote_ids?.[0]
         || null;
@@ -434,6 +477,21 @@ export default function PdfInvoiceUploadSidePanel({
         toast.error(
           "This PDF needs a customer selected manually — the "
           + "extractor did not capture enough info to auto-match.",
+        );
+        return;
+      }
+      // Feb-2026 · TD-pdf-import-operator-confirm-before-create —
+      // BE gate 400 when operator skips the confirm checkbox AND
+      // there are still unmatched rows.  Return the operator to
+      // the preview step with a toast + highlight the banner so
+      // they can either resolve each row via the inline picker
+      // or tick the confirm checkbox.
+      if (errCode === "unmatched_customers_require_confirmation") {
+        setStep("preview_ready");
+        toast.error(
+          "Confirm the auto-create of new customers before "
+          + "committing — tick the checkbox in the yellow "
+          + "banner above the Commit button.",
         );
         return;
       }
@@ -659,6 +717,64 @@ export default function PdfInvoiceUploadSidePanel({
                 onEditAmountPaid={(v) => _applyPatch({ amount_paid: v })}
                 onEditPaidAt={(v) => _applyPatch({ paid_at: v })}
               />
+              {_willAutoCreateCount > 0 && (
+                /* Feb-2026 · TD-pdf-import-operator-confirm-
+                 * before-create — mandatory confirmation banner.
+                 * Rendered whenever the BE's pending-customer
+                 * classification reports >=1 ``will_auto_create``
+                 * entry for this batch.  The checkbox toggles
+                 * ``confirmWillAutoCreate`` which both unblocks
+                 * the Commit button (``_readyToCommit``) AND
+                 * ships on the commit payload (BE 400s without
+                 * it). */
+                <div
+                  className="rounded-lg border border-amber-300 bg-amber-50 p-3"
+                  data-testid="pdfi-upload-will-auto-create-banner"
+                >
+                  <div className="flex items-start gap-2">
+                    <AlertCircle
+                      size={18}
+                      className="text-amber-600 flex-shrink-0 mt-0.5"
+                    />
+                    <div className="flex-1 text-sm">
+                      <div
+                        className="font-semibold text-amber-900"
+                        data-testid="pdfi-upload-will-auto-create-count"
+                      >
+                        {_willAutoCreateCount === 1
+                          ? "1 new customer will be auto-created"
+                          : `${_willAutoCreateCount} new customers will be auto-created`}
+                      </div>
+                      <div className="text-amber-800 mt-1">
+                        Pick an existing customer for each above,
+                        OR confirm the auto-create below to
+                        proceed.
+                      </div>
+                      <label
+                        className="flex items-center gap-2 mt-3 cursor-pointer select-none"
+                        data-testid="pdfi-upload-confirm-auto-create-label"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={confirmWillAutoCreate}
+                          onChange={(e) =>
+                            setConfirmWillAutoCreate(
+                              e.target.checked,
+                            )
+                          }
+                          className="rounded"
+                          data-testid="pdfi-upload-confirm-auto-create-checkbox"
+                        />
+                        <span className="text-amber-900 font-medium">
+                          {_willAutoCreateCount === 1
+                            ? "I confirm — create this new customer on commit."
+                            : `I confirm — create these ${_willAutoCreateCount} new customers on commit.`}
+                        </span>
+                      </label>
+                    </div>
+                  </div>
+                </div>
+              )}
               <button
                 type="button"
                 onClick={_onCommit}

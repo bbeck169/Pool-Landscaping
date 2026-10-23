@@ -261,6 +261,21 @@ async def run_match_ladder(
         {
             "tenant_id": tenant_id,
             "deleted_at": {"$in": [None, "", False]},
+            # Feb-2026 · TD-pdf-import-operator-confirm-before-create
+            # Part 2 — exclude merged ("ghost") customers from the
+            # match pool.  Without this filter the ladder picked
+            # ghost records (``merged_into`` set) and new imports
+            # re-attached invoices to the loser side of a prior
+            # merge (surfaced live preview as orphan invoice
+            # 3d358d7f… against merged customer d4405b9c…;
+            # repaired by TD-invoice-customer-id-repair-on-merge).
+            # Filter shape mirrors ``routers/customers.py`` line
+            # 1490 so the ladder's pool matches the admin
+            # customer list's default-visible pool.
+            "$or": [
+                {"merged_into": None},
+                {"merged_into": {"$exists": False}},
+            ],
         },
         projection,
     )

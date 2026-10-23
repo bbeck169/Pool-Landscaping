@@ -797,10 +797,22 @@ class _CommitOptions(BaseModel):
 
       Empty dict / omitted = no overrides, ladder runs with
       default fuzzy ceiling.
+    * ``confirm_will_auto_create`` — Feb-2026
+      ``TD-pdf-import-operator-confirm-before-create`` gate.
+      When the batch's residual ``pending_customer_classification
+      .will_auto_create`` list is non-empty, the commit endpoint
+      refuses to proceed (400 ``unmatched_customers_require_
+      confirmation``) unless this flag is explicitly ``True``.
+      Operators must either resolve each unmatched row via the
+      inline customer picker (``patchPreview`` on the preview
+      tile) OR tick the bulk-confirm checkbox on the FE panel.
+      ``None`` / ``False`` both block when there are unmatched
+      rows; the explicit ``True`` is the only passing shape.
     """
     on_duplicate: Optional[str] = _DUP_SKIP
     notes: Optional[str] = None
     customer_match_overrides: Optional[Dict[str, str]] = None
+    confirm_will_auto_create: Optional[bool] = None
 
 
 class _PreviewPatchIn(BaseModel):
@@ -948,6 +960,65 @@ async def commit_pdf_invoice_batch(
     notes = (opts.notes or "")[:500] if opts.notes else None
 
     tenant_id = tenant["id"]
+
+    # ── Feb-2026 · TD-pdf-import-operator-confirm-before-create
+    #    gate — refuse to proceed when any preview row is still
+    #    slated for auto-create and the operator has not
+    #    explicitly confirmed.  Fetch the batch doc (pre-flip)
+    #    + classify its pendings fresh so we see current state
+    #    (operator edits via patchPreview may have converted
+    #    some rows from will_auto_create → will_match_existing).
+    _preflight = await db.import_batches.find_one(
+        {"id": batch_id, "tenant_id": tenant_id},
+        {"_id": 0, "status": 1, "mapper_previews": 1},
+    )
+    if _preflight is not None:
+        _pre_status = _preflight.get("status") or ""
+        _pre_previews = _preflight.get("mapper_previews") or []
+        if (
+            _pre_status == _STATUS_PREVIEW_COMPLETE
+            and _pre_previews
+            and opts.confirm_will_auto_create is not True
+        ):
+            try:
+                classification = await classify_pending_for_preview(
+                    previews=_pre_previews,
+                    tenant_id=tenant_id,
+                    db=db,
+                )
+            except Exception as exc:  # noqa: BLE001
+                # Never let a classification blip turn a legitimate
+                # commit into a 500 — the preview poll endpoint
+                # uses the same defensive log-and-fallthrough.
+                logger.warning(
+                    "[pdf-import] confirm_will_auto_create "
+                    "preflight classification failed for "
+                    "batch=%s tenant=%s (non-fatal, proceeding "
+                    "without gate): %s",
+                    batch_id, tenant_id, exc,
+                )
+                classification = None
+            will_auto = (
+                (classification or {}).get("will_auto_create") or []
+            )
+            if will_auto:
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "error": "unmatched_customers_require_confirmation",
+                        "message": (
+                            f"{len(will_auto)} customer(s) have no "
+                            "existing match and will be auto-created "
+                            "on commit. Either attach each to an "
+                            "existing customer via the inline picker, "
+                            "OR resubmit with "
+                            "'confirm_will_auto_create': true to "
+                            "approve the bulk auto-create."
+                        ),
+                        "will_auto_create_count": len(will_auto),
+                        "will_auto_create": will_auto,
+                    },
+                )
 
     # ── Status guard: flip preview_complete → committing atomically.
     guarded = await db.import_batches.find_one_and_update(
