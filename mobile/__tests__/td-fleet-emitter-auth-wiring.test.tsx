@@ -27,7 +27,8 @@ jest.mock("@/src/api", () => {
 jest.mock("expo-location", () => ({
   requestForegroundPermissionsAsync: () => mockReqPerm(),
   getForegroundPermissionsAsync: async () => ({ status: "granted" }),
-  getLastKnownPositionAsync: async () => ({ coords: { latitude: 33.45, longitude: -112.07, accuracy: 8, heading: 0, speed: 0 }, timestamp: Date.now() }),
+  Accuracy: { Balanced: 3 },
+  getCurrentPositionAsync: async () => ({ coords: { latitude: 33.45, longitude: -112.07, accuracy: 8, heading: 0, speed: 0 }, timestamp: Date.now() }),
 }));
 jest.mock("expo-battery", () => ({
   getBatteryLevelAsync: async () => 0.9,

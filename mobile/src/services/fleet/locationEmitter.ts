@@ -212,18 +212,42 @@ function _handleAppState(state: AppStateStatus) {
   }
 }
 
+// TD-fleet-pings-not-reaching-be (Lane A, D4) · dev-only visibility for the
+// _doPing short-circuit paths. Gated by __DEV__ so production stays silent.
+function _devWarn(msg: string, err?: unknown) {
+  if (__DEV__) console.warn(`[fleet.emitter] ${msg}`, err ?? "");
+}
+
 async function _doPing() {
   if (!_running || !_appActive) return;
 
   // Rate limit: don't ping faster than 5s
   const now = Date.now();
-  if (now - _lastPingAt < 5000) return;
+  if (now - _lastPingAt < 5000) {
+    _devWarn("ping skipped: rate limit (<5s since last ping)");
+    return;
+  }
 
   try {
-    const loc = await Location.getLastKnownPositionAsync();
-    if (!loc) return; // No position available yet
+    // Lane A (D1/D3): request a fresh Balanced (~100 m) fix. The previous
+    // getLastKnownPositionAsync() is null on web and on cold-start native,
+    // which silently skipped every ping (0 tech_locations rows on preview).
+    let loc: Location.LocationObject | null = null;
+    try {
+      loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+    } catch (err) {
+      _devWarn("ping skipped: getCurrentPositionAsync failed", err);
+      return;
+    }
+    if (!loc) {
+      _devWarn("ping skipped: no position available");
+      return;
+    }
 
-    const battLevel = await Battery.getBatteryLevelAsync().catch(() => -1);
+    const battLevel = await Battery.getBatteryLevelAsync().catch((err) => {
+      _devWarn("battery level unavailable; ping sent without battery_pct", err);
+      return -1;
+    });
 
     const body: Record<string, any> = {
       lat: loc.coords.latitude,
