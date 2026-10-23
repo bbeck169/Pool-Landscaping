@@ -2356,3 +2356,12 @@
 - **Closes**: TD-fleet-emitter-position-source. **Open**: TD-fleet-chip-active-before-first-ping (P3; status timing kept per scope lock).
 - **Files modified**: mobile/src/services/fleet/locationEmitter.ts, mobile/__tests__/td-fleet-pings-position-source.test.ts (new), mobile/__tests__/td-fleet-emitter-auth-wiring.test.tsx
 - **Web files referenced**: none; backend/routers/fleet.py ping handler (read-only)
+
+## Iteration 180 — TD-fleet-emitter-role-gate: fleet tracking for all 6 tech roles (PREVIEW ONLY)
+- **Commits**: `72a07ea09` (td-fleet-emitter-role-gate) · `td-fleet-emitter-role-gate-doc` (this doc)
+- **Date**: 2026-10-23
+- **Changes**: NEW `src/lib/fleetRoles.ts` (6 roles = BE ASSIGNABLE_ROLES). Used by the emitter start + re-grant resume (`useFleetEmitter`), `FleetStatusChip`, and the `more.tsx` pause-toggle section, so tracked users always see the chip and pause (D2). The toggle was previously `technician`-only, which hid it even from `tech`. Prod ~16 LOC.
+- **Checks**: NEW 25/25; fleet + `more.tsx` suites 72/72; tsc 629 pre-commit; eslint 0 errors. Hygiene drift = exactly the 5 expected files (no V15 #6/#7 artifacts).
+- **Blocked roles unchanged**: admin, manager, customer, super_admin, owner. No cadence/status change. No prod deploy.
+- **Files modified**: mobile/src/lib/fleetRoles.ts (new), mobile/src/hooks/useFleetEmitter.ts, mobile/src/components/fleet/FleetStatusChip.tsx, mobile/app/(app)/more.tsx, mobile/__tests__/td-fleet-emitter-role-gate.test.tsx (new)
+- **Web files referenced**: none; backend/services/technicians_core.py ASSIGNABLE_ROLES (read-only)

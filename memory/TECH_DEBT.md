@@ -2375,7 +2375,20 @@ Original approval-request note:
 - **TD-fleet-tracking-startup-audit-endpoint (P3 BE+mobile):** no tech-side audit stream for GPS state transitions (pause/resume/permission). Needs a thin BE endpoint if the operator wants it.
 - **TD-fleet-tracking-permission-reminder-polish (P3 mobile):** the banner shipped minimal. Possible polish: persist dismissal per day; "paused > 24h" reminder (Phase 0 §8 Phase 2); background-permission messaging if the emitter ever goes background.
 - **TD-fleet-tracking-admin-policy-ui (P3 BE+web):** only if the operator later picks Option B/C/D (D3 confirmation modal applies).
-- **TD-fleet-emitter-role-gate (P2 mobile, product decision):** `useFleetEmitter` and `FleetStatusChip` gate on `technician`/`tech` only. The `landscaper`, `landscape_tech`, `pool_tech` and `tech_both` roles never auto-start, and their chip is hidden. Preview test accounts are all `technician`, so this was not observed live.
+- **TD-fleet-emitter-role-gate: SHIPPED to PREVIEW (`72a07ea09`, Oct-2026). Production deploy is operator-controlled.**
+  - **Change:** NEW `src/lib/fleetRoles.ts` `FLEET_TECH_ROLES` = `[technician, tech, landscaper, landscape_tech, pool_tech, tech_both]`, mirroring BE `services/technicians_core.ASSIGNABLE_ROLES`, plus `isFleetTechRole()`.
+  - **Applied to all four fleet gates**, so every tracked user also sees the indicator and can pause (D2):
+    - `useFleetEmitter.ts` L39, emitter start.
+    - `useFleetEmitter.ts` L74, foreground re-grant resume.
+    - `FleetStatusChip.tsx` L85, chip. The admin/super_admin debug chip is kept.
+    - `app/(app)/more.tsx` L240, pause-toggle section only. Pre-existing gap: this was gated on `role === "technician"`, so even `tech` users could not see the pause toggle. The screen's other `isTech` sections (L198/L248) are untouched.
+  - **Still blocked:** admin, manager, customer, super_admin and owner never start the emitter.
+  - **Unchanged:** cadence, status machine and `locationEmitter.ts`.
+  - **Verification:**
+    - **Jest:** NEW `__tests__/td-fleet-emitter-role-gate.test.tsx` 25/25. Covers list parity; the 6 roles start; the 5 blocked roles never start and get no prompt; the chip shows for all 6; chip visibility for admin/super_admin/manager/customer/owner is unchanged; a paused landscaper stays paused; a source lock on the 4 gates. Fleet + `more.tsx` suites 7/7, 72/72.
+    - **tsc:** 629 pre-commit.
+    - **eslint:** 0 errors (2 pre-existing unused-var warnings in `more.tsx`).
+  - **Original bookmark:** `useFleetEmitter` and `FleetStatusChip` gate on `technician`/`tech` only. The `landscaper`, `landscape_tech`, `pool_tech` and `tech_both` roles never auto-start, and their chip is hidden. Preview test accounts are all `technician`, so this was not observed live.
 - **TD-fleet-chip-admin-off (P3 mobile):** the chip renders for admin/super_admin "for debugging", but admins never start the emitter, so admins always see a red "Off · Fleet tracking is not running". Likely a source of operator confusion.
 
 ## TD-portal-add-card-disable-stripe-link · SHIPPED (preview) · Feb-2026
