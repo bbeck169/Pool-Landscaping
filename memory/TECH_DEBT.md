@@ -2431,5 +2431,32 @@ Original approval-request note:
 - **TD-offline-bundle-tenant-cache (Lane D, P3 BE — OPERATOR DECISION REQUIRED).** Short-TTL in-memory LRU keyed by `(tenant_id, tech_id)` or a Mongo-side `offline_bundle_cache` TTL doc to collapse pull-to-refresh storms. Operator must choose TTL (60 s vs 120 s) and invalidation points (invoice create/update, quote create/update, pricebook write). LOC estimate: ~60.
 - **Lane E — operator-side gzip check.** `curl -s -H 'Accept-Encoding: gzip' -I https://app.plofv.com/api/mobile/offline-bundle` on an authed console; share `Content-Encoding: gzip` header. Zero code. Operator can run.
 
+## TD-stripe-test-fixture-refresh · SHIPPED (preview) · Feb-2026
+
+**Status:** SHIPPED to preview. All 4 pre-existing BE pytest failures surfaced during the TD-portal-add-card-disable-stripe-link Phase 2 ship (`dbf0ab8e5`) are now green (3 pass + 1 intentional D2 skip for a missing-fixture bail-out).
+
+**What shipped (commit `de47a4687`, 4 test files, 36 insertions / 4 deletions, ZERO handler touches):**
+
+- `backend/tests/test_phase47_direct_stripe_payment_link.py` — `test_create_invoice_checkout_session_happy_path`: added `"save_for_future_billing": False` to the expected-dict literal (handler grew the key via the save-on-first-payment audit); widened `cancel_url` assertion from the plain `/portal/invoices/<id>` literal to a prefix check for `/i/<jwt>` (handler now mints a signed magic-link cancel URL). Same assertion-drift class, same single-concern commit per D1.
+- `backend/tests/test_checkout_preflight.py` — `test_checkout_preflight_returns_ok_true_when_stripe_configured`: widened `app_env` allowed-set to include `"development"` (preview pod runs with `APP_ENV=development`).
+- `backend/tests/test_stripe_save_on_first_payment.py` — `test_webhook_save_flag_attaches_pm_as_default`: added `**_kw` catch-all to the `_fake_attach` shim so future handler audit kwargs (e.g. `created_from_invoice_id`) do not raise `TypeError` which the handler's catch-all `except Exception` silently swallows.
+- `backend/tests/test_request_payment_link_error_mapping.py` — `test_happy_path_returns_payment_url`: replaced the hard `assert items` with a `pytest.skip` bail-out that matches the existing already-paid skip pattern on line 94. Preview aquaterra tenant currently has zero invoices seeded.
+
+**Pytest counts across the 4 refreshed files:**
+- `test_phase47_direct_stripe_payment_link.py` — 10 PASS
+- `test_checkout_preflight.py` — 4 PASS
+- `test_stripe_save_on_first_payment.py` — 9 PASS
+- `test_request_payment_link_error_mapping.py` — 3 PASS + 1 SKIP
+- **Total: 26 PASS, 1 SKIP, 0 FAIL.** All 23 pre-existing sibling tests remained green.
+
+**Phase 0 recon:** `memory/td_stripe_test_fixture_refresh_phase0_recon.md` (commit `910bdd43b`).
+
+**Follow-up candidate (deferred per D2):**
+
+- **TD-stripe-test-fixtures-seeded-invoices (P3 BE — operator decision partial).** Replace the `pytest.skip` bail-out in `test_happy_path_returns_payment_url` with a real conftest fixture that seeds a minimal `doc_type=invoice` row under the aquaterra tenant at setup and tears it down at teardown. Restores real happy-path coverage without depending on tenant-state drift. LOC estimate: ~15-20 LOC + a conftest fixture. Operator decides whether the coverage win is worth the LOC + the fixture-ownership complexity.
+
+**Informational (NOT acted on, per D5):** the save-on-first-payment handler's catch-all `except Exception` at `stripe_charge.py:2572` silently swallows ALL post-Stripe-call errors. Intentional for webhook ACK safety; has the side-effect of hiding test-shim drift from surfacing as proper `TypeError`s. Operator confirmed keep-clean (no `# TODO: narrow` comment added).
+
+
 
 
