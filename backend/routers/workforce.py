@@ -149,9 +149,21 @@ async def _broadcast(user_id: str, msg_type: str, payload: dict):
 
 # ─── Pydantic models ───────────────────────────────────────────────────────
 class ClockInReq(BaseModel):
-    job_id: str
-    lat: float
-    lng: float
+    # TD-timeclock-tech-clock-out-flow · Feb-2026 — ``job_id`` is now
+    # optional so the hero-banner LandscapingClockWidget can start a
+    # "General work" shift that is NOT tied to a specific job. When
+    # ``job_id`` is None the handler stores ``assigned_job_id=None``,
+    # ``job_id=None``, ``job_title="General work"``, and skips the
+    # geofence check (there is no job site to geofence against).
+    # Downstream payroll / approval / TimecardEditModal / timesheet
+    # surfaces operate on the same ``time_entries`` schema either
+    # way, so a bare clock-in flows through the standard admin
+    # Timeclock review path for free. Pre-existing per-job clock-in
+    # callers (TodaySchedule schedule card) keep passing ``job_id``
+    # and keep the geofence + photo gate behaviour byte-identical.
+    job_id: Optional[str] = None
+    lat: Optional[float] = None
+    lng: Optional[float] = None
     accuracy: Optional[float] = None
     photo_url: Optional[str] = None
 
@@ -243,11 +255,20 @@ async def clock_in(body: ClockInReq,
                     user: dict = Depends(get_current_user),
                     tenant: dict = Depends(get_current_tenant)):
     await _ensure_indexes()
-    job = await db.jobs.find_one(
-        {"id": body.job_id, "tenant_id": tenant["id"]}, {"_id": 0}
-    )
-    if not job:
-        raise HTTPException(404, "Job not found")
+    # TD-timeclock-tech-clock-out-flow · Feb-2026 — bare ("General
+    # work") clock-ins skip the job lookup + geofence math; the row
+    # still lands in ``time_entries`` with the same shape as a
+    # job-attached shift so every downstream read surface
+    # (``/workforce/timesheets``, ``/time-entries``, TimecardEditModal,
+    # payroll runs) handles both uniformly.
+    if body.job_id:
+        job = await db.jobs.find_one(
+            {"id": body.job_id, "tenant_id": tenant["id"]}, {"_id": 0}
+        )
+        if not job:
+            raise HTTPException(404, "Job not found")
+    else:
+        job = None
     s = _settings(tenant)
     if s["require_photo_clock_in"] and not body.photo_url:
         raise HTTPException(400, "Photo required to clock in")
@@ -260,7 +281,13 @@ async def clock_in(body: ClockInReq,
     if open_entry:
         raise HTTPException(400, "You already have an open shift — clock out first.")
 
-    out_of_geofence = not _within_geofence(job, body.lat, body.lng, s["geofence_radius_m"])
+    if job is not None:
+        _lat = body.lat if body.lat is not None else 0.0
+        _lng = body.lng if body.lng is not None else 0.0
+        out_of_geofence = not _within_geofence(job, _lat, _lng, s["geofence_radius_m"])
+    else:
+        # No job → no geofence to validate against; treat as inside.
+        out_of_geofence = False
     now = now_iso()
     doc = {
         "id": new_id(),
@@ -268,8 +295,8 @@ async def clock_in(body: ClockInReq,
         "user_id": user["id"],
         "user_name": user.get("name") or user.get("email"),
         "job_id": body.job_id,
-        "job_title": job.get("title"),
-        "customer_id": job.get("customer_id"),
+        "job_title": (job.get("title") if job else "General work"),
+        "customer_id": (job.get("customer_id") if job else None),
         "clock_in_at": now,
         "clock_out_at": None,
         "clock_in_geo": {"lat": body.lat, "lng": body.lng, "accuracy": body.accuracy},
@@ -348,6 +375,25 @@ async def clock_out(body: ClockOutReq,
                      {"entry_id": entry["id"], "duration_minutes": duration,
                       "mileage_miles": mileage})
     return {**entry, **upd}
+
+
+@router.get("/workforce/open-shift")
+async def open_shift(user: dict = Depends(get_current_user),
+                      tenant: dict = Depends(get_current_tenant)):
+    """TD-timeclock-tech-clock-out-flow · Feb-2026.
+
+    Returns the caller's single open ``time_entries`` row (``clock_out_at
+    is None``) so the LandscapingClockWidget can render Clock Out +
+    the running timer without a bulk ``/workforce/timesheets`` fetch.
+    Returns ``{"entry": null}`` (HTTP 200) when the user has no open
+    shift — keeps the FE call-site branch-free. Tenant + user scoped
+    so a tech can only ever see their own open row.
+    """
+    entry = await db.time_entries.find_one(
+        {"tenant_id": tenant["id"], "user_id": user["id"], "clock_out_at": None},
+        {"_id": 0},
+    )
+    return {"entry": entry}
 
 
 @router.post("/workforce/break/start")
