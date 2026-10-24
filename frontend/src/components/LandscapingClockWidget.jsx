@@ -1,17 +1,31 @@
 /**
- * Phase 49.3 — Landscape Time Clock Widget (web).
+ * Landscape Time Clock Widget (web).
  *
- * Compact clock in/out banner rendered at the top of the main landing
- * page for users with `department === "landscaping"`. Renders nothing
- * for everyone else — no placeholder text, no "you're not landscaping"
- * message.
+ * TD-timeclock-tech-clock-out-flow · Feb-2026 — the widget was
+ * previously writing to ``/api/timeclock/punch`` (``timeclock_punches``
+ * collection) but every downstream display surface
+ * (``/tech/time-clock``, ``/workforce/timesheets``, ``/admin/time-
+ * entries``, ``TimecardEditModal``) reads from ``time_entries``.
+ * Techs could clock in but the completed shift never surfaced on
+ * their profile timecard or the admin timecard-management page.
  *
- * Wires the same `/api/timeclock/{punch,mine-today,mine-summary}`
- * endpoints as the full LandscapingTimeClock page. Tap the primary
- * button to toggle in/out; geolocation is best-effort, permission
- * denial falls through with `geo_denied: true` + a yellow warning.
+ * This widget now writes to ``/api/workforce/{clock-in,clock-out}``
+ * (``time_entries`` collection) and derives its ``clocked-in?`` state
+ * from the new ``GET /api/workforce/open-shift`` endpoint. Downstream
+ * payroll, approvals, bulk edit, and the standard admin timeclock
+ * review path all surface widget-written shifts for free.
+ *
+ * Visibility contract: self-guards on ``shouldShowTimeClock(user)``
+ * (BE-authoritative via ``/auth/me``'s ``show_time_clock`` boolean +
+ * ``effective_department`` fallback). Admin / super_admin never see
+ * the widget — the per-tech widget is punch UX, not supervision.
+ *
+ * Known follow-up — see memory/TD-landscape-time-clock-unify-reads.md.
+ * The ``/landscape/time-clock`` admin aggregation page still reads
+ * from ``timeclock_punches`` so widget-sourced entries do NOT appear
+ * there until that ticket lands (P2).
  */
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Clock, LogIn, LogOut, MapPinOff } from "lucide-react";
 import { Link } from "react-router-dom";
 import { api } from "@/api";
@@ -41,115 +55,119 @@ function fmtHms(seconds) {
 async function readGeo() {
   return new Promise((resolve) => {
     if (!("geolocation" in navigator)) {
-      resolve({ lat: null, lng: null, accuracy_m: null, geo_denied: true });
+      resolve({ lat: null, lng: null, accuracy: null, geo_denied: true });
       return;
     }
     navigator.geolocation.getCurrentPosition(
       (pos) => resolve({
         lat: pos.coords.latitude, lng: pos.coords.longitude,
-        accuracy_m: pos.coords.accuracy || null, geo_denied: false,
+        accuracy: pos.coords.accuracy || null, geo_denied: false,
       }),
-      () => resolve({ lat: null, lng: null, accuracy_m: null, geo_denied: true }),
+      () => resolve({ lat: null, lng: null, accuracy: null, geo_denied: true }),
       { enableHighAccuracy: true, timeout: 8000 },
     );
   });
 }
 
+function _toMs(iso) {
+  if (!iso) return null;
+  try {
+    const t = new Date(iso).getTime();
+    return Number.isFinite(t) ? t : null;
+  } catch { return null; }
+}
+
 export default function LandscapingClockWidget() {
   const { user } = useAuth();
-  // TD-64 · Feb-2026 — single-source-of-truth visibility via the
-  // shared helper.  The helper reads BE-authoritative
-  // ``show_time_clock`` when present, else resolves
-  // ``effective_department`` / ``department`` against
-  // ``LANDSCAPE_DEPTS``.  Admins / super_admins never clock in on
-  // this widget so they are explicitly short-circuited (admin
-  // supervision happens on ``/landscape/time-clock`` instead).
   const role = (user?.role || "").toLowerCase();
   const isAdminLike = role === "admin" || role === "super_admin";
   const isLandscaper = !isAdminLike && shouldShowTimeClock(user);
-  const [today, setToday] = useState(null);
-  const [week, setWeek] = useState(null);
+
+  const [openEntry, setOpenEntry] = useState(null);
+  const [weekSeconds, setWeekSeconds] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [tick, setTick] = useState(0);
-  // Phase 50.H — landscape techs may attach a shift to a specific job.
-  const [assignedJobs, setAssignedJobs] = useState([]);
-  const [selectedJobId, setSelectedJobId] = useState("");
+
+  const refresh = useCallback(async () => {
+    try {
+      const r = await api.get("/workforce/open-shift");
+      setOpenEntry(r?.entry || null);
+    } catch { /* silent — widget hides on error */ }
+    try {
+      const { start, end } = weekBounds();
+      const rows = await api.get(
+        `/workforce/timesheets?from=${start}T00:00:00&to=${end}T23:59:59`,
+      );
+      // ``/workforce/timesheets`` returns rows enriched with ``hours``
+      // (regular + overtime included).  Sum into total seconds for
+      // the "This week:" footer.
+      const total = (rows || []).reduce(
+        (s, r) => s + Math.round(((r?.hours || 0) * 3600)), 0,
+      );
+      setWeekSeconds(total);
+    } catch { /* silent */ }
+  }, []);
 
   useEffect(() => {
     if (!isLandscaper) return;
-    let alive = true;
-    (async () => {
-      try {
-        const t = await api.get("/timeclock/mine-today");
-        if (alive) setToday(t);
-      } catch { /* silent — widget hides on error */ }
-      try {
-        const { start, end } = weekBounds();
-        const s = await api.get(`/timeclock/mine-summary?start=${start}&end=${end}`);
-        if (alive) setWeek(s);
-      } catch { /* silent */ }
-      // Phase 50.H — load today's assigned jobs for the dropdown.
-      try {
-        const j = await api.get("/timeclock/mine-jobs-today");
-        if (alive) setAssignedJobs(j?.items || []);
-      } catch { /* silent — widget still works with "General work" only */ }
-    })();
-    return () => { alive = false; };
-  }, [isLandscaper]);
+    refresh();
+  }, [isLandscaper, refresh]);
 
+  // Tick every second while clocked in so the running timer moves.
   useEffect(() => {
-    if (!today?.clocked_in) return;
+    if (!openEntry) return;
     const int = setInterval(() => setTick((n) => n + 1), 1000);
     return () => clearInterval(int);
-  }, [today?.clocked_in]);
-
-  const openInAt = useMemo(() => {
-    let last = null;
-    for (const p of today?.punches || []) {
-      if (p.punch_type === "in") last = p;
-      else if (p.punch_type === "out" && last) last = null;
-    }
-    return last?.timestamp || null;
-  }, [today]);
+  }, [openEntry]);
 
   const runningSeconds = useMemo(() => {
-    const base = today?.seconds || 0;
-    if (!today?.clocked_in || !openInAt) return base;
-    return base + Math.max(0, Math.floor((Date.now() - new Date(openInAt).getTime()) / 1000));
+    const inMs = _toMs(openEntry?.clock_in_at);
+    if (!inMs) return 0;
+    return Math.max(0, Math.floor((Date.now() - inMs) / 1000));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [today, openInAt, tick]);
+  }, [openEntry, tick]);
 
-  const doPunch = async () => {
+  const clockIn = async () => {
     setBusy(true); setError(null);
     try {
       const geo = await readGeo();
-      const punch_type = today?.clocked_in ? "out" : "in";
-      await api.post("/timeclock/punch", {
-        punch_type,
-        lat: geo.lat, lng: geo.lng, accuracy_m: geo.accuracy_m,
-        source: "web", geo_denied: geo.geo_denied,
-        // Phase 50.H — attach the picked job (blank string ⇒ null).
-        job_id: punch_type === "in" ? (selectedJobId || null) : null,
+      const r = await api.post("/workforce/clock-in", {
+        job_id: null,
+        lat: geo.lat, lng: geo.lng, accuracy: geo.accuracy,
       });
-      const [t, w] = await Promise.all([
-        api.get("/timeclock/mine-today"),
-        (async () => {
-          const { start, end } = weekBounds();
-          try { return await api.get(`/timeclock/mine-summary?start=${start}&end=${end}`); }
-          catch { return null; }
-        })(),
-      ]);
-      setToday(t); if (w) setWeek(w);
-      if (geo.geo_denied) setError("GPS denied — punch recorded without location.");
+      // The POST returns the created entry — set it directly so the
+      // button flips immediately without waiting on the probe round
+      // trip.  Still fire ``refresh()`` to recompute the weekly
+      // total.
+      setOpenEntry(r || null);
+      await refresh();
+      if (geo.geo_denied) setError("GPS denied — shift started without location.");
     } catch (e) {
-      setError(e.message || "Punch failed");
+      setError(e?.message || "Clock in failed");
+    } finally { setBusy(false); }
+  };
+
+  const clockOut = async () => {
+    if (!openEntry?.id) return;
+    setBusy(true); setError(null);
+    try {
+      const geo = await readGeo();
+      await api.post("/workforce/clock-out", {
+        entry_id: openEntry.id,
+        lat: geo.lat ?? 0, lng: geo.lng ?? 0,
+      });
+      setOpenEntry(null);
+      await refresh();
+      if (geo.geo_denied) setError("GPS denied — shift closed without location.");
+    } catch (e) {
+      setError(e?.message || "Clock out failed");
     } finally { setBusy(false); }
   };
 
   if (!isLandscaper) return null;
 
-  const clocked = !!today?.clocked_in;
+  const clocked = !!openEntry;
 
   return (
     <div
@@ -177,21 +195,21 @@ export default function LandscapingClockWidget() {
             {fmtHms(runningSeconds)}
           </div>
           <div className="text-xs" style={{ color: colors.muted }}>
-            {week?.total_seconds
-              ? <>This week: <b>{fmtHms(week.total_seconds)}</b></>
+            {weekSeconds
+              ? <>This week: <b>{fmtHms(weekSeconds)}</b></>
               : "This week: —"}
             {" · "}
-            <Link to="/landscape/time-clock" className="underline"
+            <Link to="/tech/time-clock" className="underline"
                   style={{ color: colors.brand }}
                   data-testid="landscape-clock-widget-open-full">
-              Full view
+              My timecard
             </Link>
           </div>
         </div>
       </div>
       <button
         type="button"
-        onClick={doPunch}
+        onClick={clocked ? clockOut : clockIn}
         disabled={busy}
         className="inline-flex items-center gap-2 text-sm font-bold px-5 py-3 rounded-md"
         style={{
@@ -205,30 +223,6 @@ export default function LandscapingClockWidget() {
         {clocked ? <LogOut size={16} /> : <LogIn size={16} />}
         {clocked ? "Clock Out" : "Clock In"}
       </button>
-      {!clocked && assignedJobs.length > 0 ? (
-        <div className="w-full flex items-center gap-2 flex-wrap"
-             data-testid="landscape-clock-widget-job-picker">
-          <label className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: colors.muted }}>
-            Attach to
-          </label>
-          <select
-            value={selectedJobId}
-            onChange={(e) => setSelectedJobId(e.target.value)}
-            disabled={busy}
-            className="text-sm px-2 py-1.5 rounded-md flex-1 min-w-[220px]"
-            style={{ border: `1px solid ${colors.border}`, background: colors.surface, color: colors.onSurface }}
-            data-testid="landscape-clock-widget-job-select"
-          >
-            <option value="">General work (no job)</option>
-            {assignedJobs.map((j) => (
-              <option key={j.id} value={j.id}>
-                {j.customer_name || j.title || "Unnamed job"}
-                {j.scheduled_start ? ` @ ${String(j.scheduled_start).slice(11, 16)}` : ""}
-              </option>
-            ))}
-          </select>
-        </div>
-      ) : null}
       {error ? (
         <div
           className="w-full text-xs px-2 py-1.5 rounded-md inline-flex items-center gap-1"
