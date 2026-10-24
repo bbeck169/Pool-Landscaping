@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, Save, Check } from "lucide-react";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
@@ -89,22 +89,88 @@ export default function PoolChecklistWizard({
   // guard doesn't pop a duplicate confirm on the same click.
   clearDirty = null,
 }) {
-  // `report.wizard_step` is the persistent cursor. Falls back to step 1
-  // when unset. Clamp between 1 and 6 for safety.
+  // TD-pool-repair-completion-wizard-notes-photos-only · Feb-2026 —
+  // Pool jobs tagged ``work_class === "repair"`` skip the chemistry /
+  // chemicals / checklist steps entirely.  Repair visits are photos
+  // + notes only per product spec; the BE's
+  // ``is_pool_job(job) and not _is_repair`` chemistry gate
+  // (routers/service_reports.py:885) already loosened the submit
+  // path for repair jobs, but the wizard shell was still forcing
+  // techs through the three empty steps.  Filter STEPS at the shell
+  // level — the delegated ``<PoolChecklistForm>`` already self-gates
+  // via its ``inStep(n)`` helper, so no changes are required inside
+  // the form component.  Picks up both ``report.work_class`` (the
+  // standard surface) and ``job.work_class`` on the embedded report
+  // (defensive fallback for a reclassified-in-flight job).
+  const isRepair = useMemo(() => {
+    const _rwc = String(report?.work_class || "").toLowerCase();
+    const _jwc = String(report?.job?.work_class || "").toLowerCase();
+    return _rwc === "repair" || _jwc === "repair";
+  }, [report?.work_class, report?.job?.work_class]);
+
+  // The visible step set + its first/last cursor positions.  Repair
+  // mode drops steps 1-3; service mode keeps all six.
+  const effectiveSteps = useMemo(
+    () => (isRepair ? STEPS.filter((s) => s.n >= 4) : STEPS),
+    [isRepair],
+  );
+  const firstStep = effectiveSteps[0].n;
+  const lastStep = effectiveSteps[effectiveSteps.length - 1].n;
+
+  // `report.wizard_step` is the persistent cursor. Falls back to the
+  // first visible step when unset. Clamp into the visible range so a
+  // reclassified-mid-report job (service → repair with wizard_step=2
+  // persisted) doesn't render a blank step body.
   const step = useMemo(() => {
-    const raw = Number(report?.wizard_step) || 1;
-    return Math.max(1, Math.min(6, raw));
-  }, [report?.wizard_step]);
+    const raw = Number(report?.wizard_step) || firstStep;
+    return Math.max(firstStep, Math.min(lastStep, raw));
+  }, [report?.wizard_step, firstStep, lastStep]);
+
+  // TD-pool-repair-completion-wizard-notes-photos-only · Feb-2026 —
+  // One-shot persist when the stored cursor falls outside the
+  // visible range (e.g. the job was reclassified from service to
+  // repair with ``wizard_step=2`` already saved).  Clamping at render
+  // time alone would leave the stale value in Mongo; next mount
+  // would re-clamp indefinitely.  The ref gate ensures the effect
+  // fires exactly once per mount — never a feedback loop with
+  // ``onChange`` re-triggering itself.
+  const _staleCursorPersistedRef = useRef(false);
+  useEffect(() => {
+    if (_staleCursorPersistedRef.current) return;
+    const raw = Number(report?.wizard_step) || firstStep;
+    const clamped = Math.max(firstStep, Math.min(lastStep, raw));
+    if (clamped !== raw) {
+      _staleCursorPersistedRef.current = true;
+      onChange({ wizard_step: clamped });
+    }
+    // Only runs on mount — intentionally omit deps.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const goTo = useCallback((n) => {
-    const target = Math.max(1, Math.min(6, n));
-    if (target !== step) {
-      onChange({ wizard_step: target });
+    // Snap to the nearest visible step; skips the filtered-out
+    // positions in repair mode.
+    const _visible = effectiveSteps.map((s) => s.n);
+    const _target = _visible.includes(n)
+      ? n
+      : _visible.reduce(
+          (best, cur) => Math.abs(cur - n) < Math.abs(best - n) ? cur : best,
+          _visible[0],
+        );
+    if (_target !== step) {
+      onChange({ wizard_step: _target });
     }
-  }, [step, onChange]);
+  }, [step, onChange, effectiveSteps]);
 
-  const goNext = useCallback(() => goTo(step + 1), [step, goTo]);
-  const goBack = useCallback(() => goTo(step - 1), [step, goTo]);
+  const _currentIdx = effectiveSteps.findIndex((s) => s.n === step);
+  const goNext = useCallback(() => {
+    const nxt = effectiveSteps[Math.min(_currentIdx + 1, effectiveSteps.length - 1)];
+    goTo(nxt.n);
+  }, [goTo, effectiveSteps, _currentIdx]);
+  const goBack = useCallback(() => {
+    const prv = effectiveSteps[Math.max(_currentIdx - 1, 0)];
+    goTo(prv.n);
+  }, [goTo, effectiveSteps, _currentIdx]);
 
   // ─── Phase W1 · Feb-2026 · dirty-close guard mirror ─────────────
   // Local UI state for the shared confirm dialog. The wizard is a
@@ -145,13 +211,13 @@ export default function PoolChecklistWizard({
     if (intent === "back") {
       // Intra-wizard Back walks the step index down and NEVER
       // triggers the confirm — techs expect step-to-step Back to be
-      // immediate. Only Back on step 1 (which would EXIT the wizard)
-      // gates on dirty.
-      if (step > 1) {
+      // immediate. Only Back on the first visible step (which would
+      // EXIT the wizard) gates on dirty.
+      if (step > firstStep) {
         goBack();
         return;
       }
-      // step === 1 — leaving the wizard entirely.
+      // step === firstStep — leaving the wizard entirely.
       if (_dirty()) {
         setConfirmIntent("back");
         setConfirmOpen(true);
@@ -171,7 +237,7 @@ export default function PoolChecklistWizard({
       }
       return;
     }
-  }, [step, goNext, goBack, _dirty, _fireIntent]);
+  }, [step, goNext, goBack, _dirty, _fireIntent, firstStep]);
 
   // Save & close primary handler for the shared confirm. Mirrors
   // ChecklistModal's own ``saveAndClose``:
@@ -244,14 +310,23 @@ export default function PoolChecklistWizard({
     return missingCoreReadings(rows);
   }, [report]);
   const readingsAllAnswered = missingRequiredFour.length === 0;
-  const readingsHint = step === 1 && !readingsAllAnswered
+  // TD-pool-repair-completion-wizard-notes-photos-only · Feb-2026 —
+  // readingsHint is a chemistry-step prompt; repair jobs don't have
+  // a chemistry step so the hint is permanently empty for them.
+  const readingsHint = !isRepair && step === 1 && !readingsAllAnswered
     ? t(
         "required_four_hint",
         "Free Chlorine, pH, Alkalinity, and Cyanuric Acid are required to close the job. Other readings are optional.",
       )
     : "";
   const stepValid = true;   // Next is never hard-blocked in the wizard.
-  const closeJobValid = readingsAllAnswered;
+  // TD-pool-repair-completion-wizard-notes-photos-only · Feb-2026 —
+  // closeJobValid gates "Close Job" on service-pool jobs having the
+  // Required Four readings; repair jobs are chemistry-less so the
+  // close is always valid.  Matches the BE
+  // ``is_pool_job(job) and not _is_repair`` gate — a tech can
+  // submit a repair-pool report without any chemistry data.
+  const closeJobValid = isRepair ? true : readingsAllAnswered;
 
   const allPhotos = report?.photos || [];
   const generalPhotos = allPhotos.filter((p) => (p?.tag || "general") !== "internal_issue");
@@ -268,7 +343,7 @@ export default function PoolChecklistWizard({
     }
   };
 
-  const isLast = step === 6;
+  const isLast = step === lastStep;
 
   return (
     <div
@@ -286,10 +361,10 @@ export default function PoolChecklistWizard({
         data-testid="wizard-progress"
       >
         <div className="text-xs font-bold flex-shrink-0" style={{ color: c.onSurface }}>
-          Step {step} of 6
+          Step {_currentIdx + 1} of {effectiveSteps.length}
         </div>
         <div className="flex-1 flex items-center gap-1 overflow-x-auto">
-          {STEPS.map((s) => {
+          {effectiveSteps.map((s) => {
             const active = s.n === step;
             const done = s.n < step;
             return (
@@ -437,6 +512,11 @@ export default function PoolChecklistWizard({
             type="button"
             onClick={() => {
               if (!closeJobValid) {
+                // TD-pool-repair-completion-wizard-notes-photos-only
+                // · Feb-2026 — this alert + jump-to-step-1 only
+                // fires on service-pool jobs; closeJobValid is
+                // forced to true for repair so this branch is
+                // unreachable there.
                 // Phase CW1 · Feb-2026 — narrow the alert wording to
                 // the Required Four rule that now drives closeJobValid.
                 window.alert(
