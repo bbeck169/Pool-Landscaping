@@ -1381,10 +1381,11 @@ api_router.include_router(_bulk_apply_credit.router)
 # bulk result modal.
 from routers import invoices_bulk_send as _bulk_send  # noqa: E402
 api_router.include_router(_bulk_send.router)
-# TD-customer-list-bulk-request-card-on-file · Feb-2026 — Request
-# card on file bulk action from the Customers list toolbar.
-from routers import customers_bulk_request_card as _bulk_request_card  # noqa: E402
-api_router.include_router(_bulk_request_card.router)
+# TD-customer-list-bulk-request-card-stripe-setupintent · Feb-2026 —
+# supersedes customers_bulk_request_card (Ticket I).  Real
+# Stripe-backed bulk card capture via single-use tokens.
+from routers import customers_bulk_card_capture as _bulk_card_capture  # noqa: E402
+api_router.include_router(_bulk_card_capture.router)
 
 # Phase 17 · Feb-2026 — QuickBooks Online read-sync router.
 # Endpoints under /api/qbo/*: oauth, sync, entity reads, match links.
