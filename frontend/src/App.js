@@ -387,6 +387,7 @@ const ServiceImagesPortalPage = React.lazy(() => import(/* webpackChunkName: "p-
 // retirement now that the user has directed every payment surface to
 // route through Stripe directly (no Lumino / Zapier).
 const AddCardPage = React.lazy(() => import(/* webpackChunkName: "p-public-addcardpage" */ "@/pages/public/AddCardPage"));
+const CustomerCardCapturePage = React.lazy(() => import(/* webpackChunkName: "p-public-ccc" */ "@/pages/public/CustomerCardCapturePage"));
 const TeamChatPage = React.lazy(() => import(/* webpackChunkName: "p-chat-teamchatpage" */ "@/pages/chat/TeamChatPage"));
 const Walkie = React.lazy(() => import(/* webpackChunkName: "p-walkie-walkie" */ "@/pages/walkie/Walkie"));
 const SequencesList = React.lazy(() => import(/* webpackChunkName: "p-marketing-sequencepages" */ "@/pages/marketing/SequencePages").then(m => ({ default: m.SequencesList })));
@@ -945,6 +946,8 @@ export default function App() {
           {/* Phase 47c · Feb 2026 — RESTORED after the Phase LZ4 retirement.
               Direct Stripe SetupIntent flow (see /pages/public/AddCardPage). */}
           <Route path="/portal/add-card" element={<AddCardPage />} />
+          {/* TD-customer-list-bulk-request-card-stripe-setupintent · Feb-2026 */}
+          <Route path="/customer-portal/add-card/:token" element={<CustomerCardCapturePage />} />
 
           {/* Phase P30 · Feb 2026 — Stripe-hosted Checkout Session
               (mode=setup) redirect target. No auth — customer arrives
