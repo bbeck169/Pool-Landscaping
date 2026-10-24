@@ -16,6 +16,7 @@ import MergeCustomersModal from "@/components/customers/MergeCustomersModal";
 import { MergeDialog } from "@/components/customers/MergeDialog";
 import PortalOnboardingHealthTile from "@/components/customers/PortalOnboardingHealthTile";
 import BulkPortalInviteConfirm from "@/components/customers/BulkPortalInviteConfirm";
+import RequestCardOnFileModal from "@/pages/customers/RequestCardOnFileModal";
 import { PhoneLink, AddressLink, CustomerLink } from "@/components/customer";
 import NavyFilterBar from "@/components/ui/NavyFilterBar";
 
@@ -1124,6 +1125,8 @@ export default function CustomersList() {
   // The prior "type INACTIVATE" gate was removed per user feedback —
   // the header count + first-5 preview is enough friction on its own.
   const [confirmInactiveOpen, setConfirmInactiveOpen] = useState(false);
+  // TD-customer-list-bulk-request-card-on-file · Feb-2026
+  const [requestCardOpen, setRequestCardOpen] = useState(false);
   const [bulkInactiveBusy, setBulkInactiveBusy] = useState(false);
 
   const bulk = async (action, extra = {}) => {
@@ -3477,9 +3480,30 @@ export default function CustomersList() {
               setConfirmInactiveOpen(true);
             },
           }] : []),
+          // TD-customer-list-bulk-request-card-on-file · Feb-2026 —
+          // "Request card on file" opens a modal that picks tenant-
+          // scoped marketing templates (one per channel) and fires
+          // POST /customers/bulk-request-card.  Admin-only; the BE
+          // itself enforces the role gate + strict tenant preflight
+          // (403 on any cross-tenant customer_id OR template_id).
+          // Guarded on !selectAllMatching because the modal needs
+          // the concrete selected ids (unbounded selects can't be
+          // enumerated in the browser).
+          ...(isAdmin && !selectAllMatching ? [{
+            key: "request-card",
+            label: "Request card on file",
+            onClick: () => setRequestCardOpen(true),
+          }] : []),
           { key: "delete", label: "Delete selected", tone: "danger",
             onClick: () => setConfirmDeleteOpen(true) },
         ]}
+      />
+      {/* TD-customer-list-bulk-request-card-on-file · Feb-2026 */}
+      <RequestCardOnFileModal
+        open={requestCardOpen}
+        onClose={() => setRequestCardOpen(false)}
+        customerIds={Array.from(selected)}
+        onSent={() => { setSelected(new Set()); setSelectAllMatching(false); }}
       />
       {/* Feb-2026 · Unlimited bulk delete — surfaces the "Select all
           N matching this filter" affordance INSIDE the floating
