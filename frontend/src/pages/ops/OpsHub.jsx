@@ -599,42 +599,72 @@ function Crews() {
   // blue-500 is a safe, on-palette default that matches the
   // tech-side default hue.
   const [form, setForm] = useState({ name: "", color: "#3B82F6", tech_ids: [] });
-  // TD-86 · # of ids dropped during the last ``openEdit`` seed —
-  // drives the inline warning banner inside the Edit modal.
-  const [prunedCount, setPrunedCount] = useState(0);
+  // TD-crew-edit-no-auto-remove-and-save-full-roster · Feb-2026 —
+  // ``incomingMembers`` holds the raw ``members[]`` the server
+  // returned for the crew we opened, so unavailable-chip rendering
+  // can resolve names (admin / super_admin / inactive / soft-
+  // deleted members still appear in ``/api/crews`` member joins
+  // even though ``/api/technicians`` filters them out).  Falls
+  // back to "Unknown user (<short-id>)" for ids missing from both.
+  // ``beErrors`` holds the categorised ``errors[]`` payload returned
+  // by a BE 400 so the inline banner can list which ids are
+  // orphan vs foreign-tenant.
+  const [incomingMembers, setIncomingMembers] = useState([]);
+  const [beErrors, setBeErrors] = useState([]);
   const [toast, setToast] = useState(null);
   const openNew = () => {
     setEditing(null);
     setForm({ name: "", color: "#3B82F6", tech_ids: [] });
-    setPrunedCount(0);
+    setIncomingMembers([]);
+    setBeErrors([]);
     setOpen(true);
   };
   const openEdit = (c) => {
     setEditing(c);
     const incoming = Array.isArray(c.tech_ids) ? c.tech_ids : [];
-    // TD-86 · prune orphan / cross-tenant ids so the operator can
-    // save the crew after cleanup without hitting the BE guard's
-    // categorised 400.  Only ids that resolve against the current
-    // tenant's tech list land in the form state.
-    const pruned = incoming.filter((x) => validTechIds.has(x));
+    // TD-crew-edit-no-auto-remove-and-save-full-roster · Feb-2026
+    //
+    // Prior behaviour auto-pruned ``incoming`` by ``validTechIds``
+    // on open, silently dropping admin / super_admin / inactive /
+    // soft-deleted members (``/api/technicians`` filters those out
+    // of the roster even though the BE accepts them on save).
+    // Operators clicked Edit on a crew with 6 members, saw 1
+    // member + a "5 members removed" banner, and the next Save
+    // persisted the 1-member roster — losing the other 5.
+    //
+    // New rule: operator-selected is the source of truth.  Seed
+    // ``form.tech_ids`` with the full ``incoming`` array; flag any
+    // id that's missing from the current tenant's roster as
+    // "unavailable" with the reason surfaced in the banner + per-
+    // chip marker.  Operator decides whether to keep, remove, or
+    // replace each one.  Save sends exactly what the operator
+    // sees.  Downstream BE-side 400 handling for truly structural
+    // refs (orphan / foreign-tenant) is wired through ``save()``
+    // below so operators see categorised toast errors.
     setForm({
       name: c.name,
       color: c.color || "#3B82F6",
-      tech_ids: pruned,
+      tech_ids: incoming,
     });
-    setPrunedCount(incoming.length - pruned.length);
+    setIncomingMembers(Array.isArray(c.members) ? c.members : []);
+    setBeErrors([]);
     setOpen(true);
   };
   const save = async () => {
-    // Feb-2026 · Crew-save P0 fix. The prior implementation did TWO
-    // things: (1) ``api.put('/crews/…')`` inside a try/except that
-    // silently swallowed the 405 (no PUT route on the backend), and
-    // (2) a raw ``fetch(..., PATCH)`` that DOESN'T throw on 4xx/5xx —
-    // so a server-side rejection surfaced as a false "Saved" toast
-    // and the members never landed. Use ``api.patch`` which routes
-    // through the standard ``request()`` wrapper (throws on ≥400) so
-    // failures now surface as red toasts and successes actually
-    // round-trip.
+    // TD-crew-edit-no-auto-remove-and-save-full-roster · Feb-2026 —
+    // Send ``form.tech_ids`` as-is (no pre-filter).  Operator-
+    // selected is source of truth.  If the BE 400s on genuinely
+    // structural refs (orphan / foreign-tenant), surface the
+    // categorised ``errors[]`` payload inline in the banner so the
+    // operator can remove just those ids and re-save.
+    //
+    // Pre-Phase-9 history (preserved as a load-bearing contract):
+    // ``fetch(..., PATCH)`` DIDN'T throw on 4xx/5xx, so a BE
+    // rejection surfaced as a false "Saved" toast.  ``api.patch``
+    // routes through the standard ``request()`` wrapper (throws on
+    // ≥400) so failures now surface — and the thrown error carries
+    // the structured ``detail`` payload the BE emits.
+    setBeErrors([]);
     try {
       if (editing) {
         await api.patch(`/crews/${editing.id}`, form);
@@ -643,7 +673,23 @@ function Crews() {
       }
       setOpen(false); refresh();
       setToast({ tone: "success", message: "Saved" });
-    } catch (e) { setToast({ tone: "error", message: e.message }); }
+    } catch (e) {
+      // The ``api`` client stashes the parsed response body on
+      // ``e.data`` (see ``api.js`` request() wrapper).  Categorised
+      // crew errors live at ``e.data.detail.errors`` per the BE
+      // ``update_crew`` + ``_resolve_tenant_members`` contract
+      // (routers/ops.py).
+      const _detail = e?.data?.detail ?? null;
+      const _errs = (_detail && Array.isArray(_detail.errors))
+        ? _detail.errors : [];
+      if (_errs.length > 0) {
+        setBeErrors(_errs);
+        setToast({ tone: "error",
+          message: `Save failed — ${_errs.length} member(s) must be removed before saving.` });
+      } else {
+        setToast({ tone: "error", message: e?.message || "Save failed" });
+      }
+    }
   };
   const del = async (cid) => {
     const ok = await mustConfirm({
@@ -701,28 +747,83 @@ function Crews() {
           </div>
           <div>
             <div className="text-xs font-semibold mb-2" style={{ color: colors.muted }}>MEMBERS</div>
-            {/* TD-86 · Feb-2026 — inline banner surfaced when
-                 orphan / cross-tenant ids were pruned on
-                 ``openEdit`` seed.  Tells the operator why some
-                 members disappeared and instructs them to click
-                 Save to persist the pruned roster. Only renders
-                 while editing an existing crew that had drift —
-                 new-crew flow never shows it. */}
-            {prunedCount > 0 ? (
-              <div
-                className="text-xs rounded-lg px-3 py-2 mb-2"
-                style={{
-                  backgroundColor: colors.warning100 || "#FEF3C7",
-                  color: colors.warning800 || "#92400E",
-                  border: `1px solid ${colors.warning300 || "#FCD34D"}`,
-                }}
-                data-testid="crew-pruned-banner"
-              >
-                {prunedCount} member{prunedCount === 1 ? "" : "s"} removed
-                because they are no longer available in this tenant.
-                Click Save to apply.
-              </div>
-            ) : null}
+            {/* TD-crew-edit-no-auto-remove-and-save-full-roster ·
+                 Feb-2026 — unavailable members are NO LONGER
+                 pre-pruned on open.  They stay in ``form.tech_ids``
+                 and render as warning-styled chips below the
+                 available-tech grid, each with an explicit "×"
+                 so the operator can decide.  The pre-save banner
+                 lists reasons (role / lifecycle / ...) when
+                 anything in the roster isn't currently in
+                 ``/api/technicians``; the post-save banner lists
+                 the BE's categorised 400 errors (orphan /
+                 foreign-tenant). */}
+            {(() => {
+              // Compute the display-only unavailable set from the
+              // current form state — recomputes as the operator
+              // removes chips.
+              const _memberNameById = {};
+              for (const m of incomingMembers || []) {
+                if (m && m.id) _memberNameById[m.id] = m.name || m.email;
+              }
+              const _unavailable = (form.tech_ids || []).filter(
+                (x) => !validTechIds.has(x),
+              );
+              if (_unavailable.length === 0 && beErrors.length === 0) return null;
+              // Partition BE errors by category for the post-save
+              // banner.
+              const _orphan = beErrors.filter((e) => e?.reason === "orphan");
+              const _foreign = beErrors.filter((e) => e?.reason === "foreign_tenant");
+              return (
+                <div
+                  className="text-xs rounded-lg px-3 py-2 mb-2 space-y-1"
+                  style={{
+                    backgroundColor: colors.warning100 || "#FEF3C7",
+                    color: colors.warning800 || "#92400E",
+                    border: `1px solid ${colors.warning300 || "#FCD34D"}`,
+                  }}
+                  data-testid="crew-unavailable-banner"
+                >
+                  {_unavailable.length > 0 && beErrors.length === 0 ? (
+                    <div data-testid="crew-unavailable-pre-save">
+                      {_unavailable.length} member{_unavailable.length === 1 ? "" : "s"}
+                      {" "}flagged as unavailable in your current tech roster
+                      {" "}(role changed, inactive, or no longer on this tenant).
+                      {" "}They remain assigned to the crew — remove them
+                      explicitly or replace them before saving.
+                    </div>
+                  ) : null}
+                  {_orphan.length > 0 ? (
+                    <div data-testid="crew-unavailable-orphan">
+                      Save failed. {_orphan.length} unknown member{_orphan.length === 1 ? "" : "s"}
+                      {" "}(no user record) must be removed:
+                      <ul className="list-disc pl-5">
+                        {_orphan.map((e) => (
+                          <li key={`o-${e.tech_id}`} data-testid={`crew-err-orphan-${e.tech_id}`}>
+                            {_memberNameById[e.tech_id]
+                              || `Unknown user (${String(e.tech_id).slice(0, 8)}…)`}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+                  {_foreign.length > 0 ? (
+                    <div data-testid="crew-unavailable-foreign">
+                      Save failed. {_foreign.length} member{_foreign.length === 1 ? "" : "s"}
+                      {" "}from another tenant must be removed:
+                      <ul className="list-disc pl-5">
+                        {_foreign.map((e) => (
+                          <li key={`f-${e.tech_id}`} data-testid={`crew-err-foreign-${e.tech_id}`}>
+                            {_memberNameById[e.tech_id]
+                              || `Foreign tenant user (${String(e.tech_id).slice(0, 8)}…)`}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })()}
             <div className="flex flex-wrap gap-2">
               {scopedTechs.map((t) => {
                 const on = form.tech_ids.includes(t.id);
@@ -751,6 +852,57 @@ function Crews() {
                     data-testid={`crew-tech-${t.id}`}>{t.name}</button>
                 );
               })}
+              {/* TD-crew-edit · Feb-2026 — unavailable chips.  One
+                   row per ``form.tech_ids`` id that isn't in the
+                   current ``/api/technicians`` roster.  Resolves the
+                   display name from the crew's embedded ``members``
+                   join (which includes admin / super_admin /
+                   inactive rows) and falls back to a short-id
+                   stub for truly orphan ids.  Explicit "×" lets the
+                   operator remove each one — no silent prune. */}
+              {(() => {
+                const _memberNameById = {};
+                for (const m of incomingMembers || []) {
+                  if (m && m.id) _memberNameById[m.id] = m.name || m.email;
+                }
+                const _unavailable = (form.tech_ids || []).filter(
+                  (x) => !validTechIds.has(x),
+                );
+                return _unavailable.map((uid) => {
+                  const _name = _memberNameById[uid]
+                    || `Unknown user (${String(uid).slice(0, 8)}…)`;
+                  return (
+                    <span
+                      key={`un-${uid}`}
+                      className="text-xs font-semibold px-3 py-1 rounded-full inline-flex items-center gap-1"
+                      style={{
+                        backgroundColor: colors.warning100 || "#FEF3C7",
+                        color: colors.warning800 || "#92400E",
+                        border: `1px solid ${colors.warning300 || "#FCD34D"}`,
+                      }}
+                      data-testid={`crew-tech-unavailable-${uid}`}
+                      title="This member is not available in your current roster"
+                    >
+                      {_name}
+                      <button
+                        type="button"
+                        onClick={() => setForm((prev) => ({
+                          ...prev,
+                          tech_ids: (prev.tech_ids || []).filter((x) => x !== uid),
+                        }))}
+                        className="text-xs"
+                        style={{ color: colors.warning800 || "#92400E",
+                                 background: "transparent", border: 0,
+                                 cursor: "pointer" }}
+                        data-testid={`crew-tech-unavailable-remove-${uid}`}
+                        aria-label={`Remove ${_name}`}
+                      >
+                        ×
+                      </button>
+                    </span>
+                  );
+                });
+              })()}
             </div>
           </div>
         </div>
