@@ -19,14 +19,21 @@ Scope
       wrapped in ``{"entry": {...}}`` when one exists; returns
       ``{"entry": null}`` when none.
     * Tenant isolation — tech on tenant A cannot see tenant B's
-      open shift via ``/open-shift``.
+      open shift via ``/open-shift``.  Second tenant + tech are
+      self-seeded inline (sync pymongo + self-minted JWT, mirrors
+      the ``test_account_correction_parity`` CARAC pattern) so the
+      security-sensitive assertion runs green on every env without
+      depending on an upstream ``tech@sunbelt.com`` seed.
     * ``/auth/me`` projects ``effective_department`` +
       ``show_time_clock`` for landscape techs (smoke so the FE
       widget visibility contract stays locked).
 """
 import os
+import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import jwt
 import pytest
 import requests
 from dotenv import dotenv_values
@@ -44,12 +51,35 @@ API = f"{BASE_URL}/api"
 MONGO_URL = _BE_ENV.get("MONGO_URL") or os.environ.get("MONGO_URL")
 DB_NAME = _BE_ENV.get("DB_NAME") or os.environ.get("DB_NAME")
 
+JWT_SECRET = (
+    _BE_ENV.get("JWT_SECRET") or os.environ.get("JWT_SECRET")
+    or "dev-secret-change-me"
+)
+JWT_ALGO = "HS256"
+
 
 def _login(email: str, password: str = "password123") -> str:
     r = requests.post(f"{API}/auth/login",
                       json={"email": email, "password": password}, timeout=20)
     r.raise_for_status()
     return r.json()["access_token"]
+
+
+def _mint_jwt(uid: str, email: str, tid: str, role: str = "technician") -> str:
+    """Self-mint a JWT for a self-seeded user, bypassing /auth/login.
+
+    Follows the ``test_account_correction_parity`` CARAC pattern:
+    the token is signed with the same ``JWT_SECRET`` the server
+    verifies against, so ``get_current_user`` + ``get_current_tenant``
+    treat it as a real session.  Lets this test file self-seed a
+    second-tenant landscape tech instead of depending on a
+    ``tech@sunbelt.com`` seed that may not exist in every env.
+    """
+    return jwt.encode(
+        {"sub": uid, "email": email, "role": role, "tenant_id": tid,
+         "exp": datetime.now(timezone.utc) + timedelta(hours=1)},
+        JWT_SECRET, algorithm=JWT_ALGO,
+    )
 
 
 @pytest.fixture(scope="module")
@@ -66,22 +96,35 @@ def tech_h():
 
 
 @pytest.fixture(scope="module")
-def pool_tech_h():
-    # ``mike@aquaterra.com`` is a pool tech on a different tenant
-    # scope -> used only for the tenant-isolation probe where we
-    # need a SECOND tenant.  For same-tenant, we rely on
-    # ``landscaper@aquaterra.com``.
-    return {"Authorization": f"Bearer {_login('mike@aquaterra.com')}"}
+def tenant_b(db):
+    """Self-seed a second tenant + its own landscape tech so the
+    tenant-isolation assertion runs in every environment.
 
-
-@pytest.fixture(scope="module")
-def sunbelt_tech_h():
-    # Sunbelt tenant tech — used for cross-tenant isolation probe.
-    # Seed suite guarantees ``tech@sunbelt.com``.
-    try:
-        return {"Authorization": f"Bearer {_login('tech@sunbelt.com')}"}
-    except Exception:
-        pytest.skip("sunbelt tech seed not present")
+    Yields a dict ``{tenant_id, user_id, headers}``.  Tears down at
+    module scope to leave the DB in its original state.
+    """
+    tid = f"td-tc-tenantb-{uuid.uuid4().hex[:8]}"
+    uid = f"u-{uuid.uuid4().hex[:8]}"
+    email = f"{uid}@td-timeclock-isolation.test"
+    db.tenants.insert_one({
+        "id": tid, "name": "TD-timeclock isolation tenant",
+        "slug": tid, "active": True,
+    })
+    db.users.insert_one({
+        "id": uid, "tenant_id": tid, "role": "technician",
+        "name": "Isolation Tech", "email": email,
+        "department": "landscaping", "active": True,
+    })
+    token = _mint_jwt(uid, email, tid, role="technician")
+    yield {
+        "tenant_id": tid, "user_id": uid, "email": email,
+        "headers": {"Authorization": f"Bearer {token}"},
+    }
+    # Teardown — remove everything we created so the test is
+    # idempotent across reruns and leaves no residue.
+    db.time_entries.delete_many({"tenant_id": tid})
+    db.users.delete_many({"id": uid})
+    db.tenants.delete_many({"id": tid})
 
 
 @pytest.fixture(autouse=True)
@@ -90,7 +133,7 @@ def _cleanup_open(db):
     # so cases don't bleed into each other.  We ONLY touch open
     # (clock_out_at None) rows; completed historical rows stay.
     uid_rows = list(db.users.find(
-        {"email": {"$in": ["landscaper@aquaterra.com", "tech@sunbelt.com"]}},
+        {"email": "landscaper@aquaterra.com"},
         {"id": 1, "_id": 0},
     ))
     uids = [r["id"] for r in uid_rows]
@@ -213,15 +256,50 @@ def _iso_minutes_ago(n: int) -> str:
 
 
 # ─── Tenant isolation ─────────────────────────────────────────────
-def test_open_shift_is_tenant_scoped(tech_h, sunbelt_tech_h):
-    # Aquaterra landscaper clocks in …
-    requests.post(f"{API}/workforce/clock-in",
-                  headers=tech_h, json={}, timeout=20)
-    # … Sunbelt tech probes `/open-shift` and sees nothing.
-    r = requests.get(f"{API}/workforce/open-shift",
-                     headers=sunbelt_tech_h, timeout=20)
-    assert r.status_code == 200
-    assert r.json() == {"entry": None}
+def test_open_shift_is_tenant_scoped(tech_h, tenant_b, db):
+    """A tech on tenant B must NOT see tenant A's open shift via
+    ``/workforce/open-shift``, and vice versa.  Second tenant +
+    tech are self-seeded inline so the assertion runs green on
+    every env without depending on an upstream sunbelt seed.
+    """
+    # Aquaterra landscaper (tenant A) clocks in.
+    ci_a = requests.post(f"{API}/workforce/clock-in",
+                         headers=tech_h, json={}, timeout=20)
+    assert ci_a.status_code == 200
+    a_entry_id = ci_a.json()["id"]
+
+    # Tenant B tech probes /open-shift and must see nothing — their
+    # own open shift list is empty.
+    r_b = requests.get(f"{API}/workforce/open-shift",
+                       headers=tenant_b["headers"], timeout=20)
+    assert r_b.status_code == 200
+    assert r_b.json() == {"entry": None}
+
+    # Reverse leak probe — tenant B's own clock-in must land in
+    # tenant B's bucket and MUST NOT surface to tenant A.
+    ci_b = requests.post(f"{API}/workforce/clock-in",
+                         headers=tenant_b["headers"], json={},
+                         timeout=20)
+    assert ci_b.status_code == 200, ci_b.text
+    b_entry_id = ci_b.json()["id"]
+    assert b_entry_id != a_entry_id
+
+    # Tenant A's open-shift probe still returns tenant A's row,
+    # not tenant B's.
+    r_a = requests.get(f"{API}/workforce/open-shift",
+                       headers=tech_h, timeout=20)
+    assert r_a.status_code == 200
+    a_entry = r_a.json()["entry"]
+    assert a_entry is not None
+    assert a_entry["id"] == a_entry_id
+    assert a_entry["tenant_id"] != tenant_b["tenant_id"]
+
+    # DB-level receipt — tenant B's row carries tenant B's id so a
+    # future denormalisation regression surfaces here too.
+    b_doc = db.time_entries.find_one({"id": b_entry_id}, {"_id": 0})
+    assert b_doc is not None
+    assert b_doc["tenant_id"] == tenant_b["tenant_id"]
+    assert b_doc["user_id"] == tenant_b["user_id"]
 
 
 # ─── /auth/me projects department (visibility smoke) ──────────────
