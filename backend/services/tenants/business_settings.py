@@ -22,6 +22,14 @@ from typing import Any, Dict, Optional
 # renderer will see, keeping the current visual identity intact.
 DEFAULT_PRIMARY_HEX = "#0B4A6F"
 DEFAULT_SECONDARY_HEX = "#F97316"
+# TD-email-template-header-bg-white · Feb-2026 — new per-tenant
+# branding fields that drive the shared email-shell header band
+# (``services.email.theming.wrap_html_in_shell``). Default: white
+# background + dark body-text-colored company-name fallback. Operator
+# escape hatch for white-logo tenants is a dark hex on
+# ``email_header_bg`` + ``#FFFFFF`` on ``email_header_text``.
+DEFAULT_EMAIL_HEADER_BG = "#FFFFFF"
+DEFAULT_EMAIL_HEADER_TEXT = "#111827"
 
 # The full set of Business Settings columns on ``db.tenants``.
 BUSINESS_SETTINGS_KEYS = (
@@ -35,6 +43,16 @@ BUSINESS_SETTINGS_KEYS = (
     "logo_url",
     "footer_note",
     "tax_id",
+    # TD-email-template-header-bg-white · Feb-2026 — per-tenant
+    # email-header styling fields. White default on bg + dark on
+    # text keeps every tenant's shell on a white header on next
+    # email render post-deploy. Operator opts into a dark header
+    # by setting ``email_header_bg`` to a hex color on the Business
+    # Settings page (and should also set ``email_header_text`` to
+    # white to maintain contrast for the no-logo fallback header
+    # span). Validator enforces ``#RRGGBB`` on both.
+    "email_header_bg",
+    "email_header_text",
     # Feb-2026 · Routing Traffic-Aware phase — per-tenant opt-in for
     # the Google Routes API v2 ``TRAFFIC_AWARE`` routing preference.
     # Default: OFF for every tenant (existing + new) — the higher-tier
@@ -84,6 +102,14 @@ def build_business_settings_view(tenant: Dict[str, Any]) -> Dict[str, Any]:
         "company_display_name": company_fallback,
         "brand_primary_hex": stored["brand_primary_hex"] or DEFAULT_PRIMARY_HEX,
         "brand_secondary_hex": stored["brand_secondary_hex"] or DEFAULT_SECONDARY_HEX,
+        # TD-email-template-header-bg-white · Feb-2026 — defaults
+        # applied here (not at render time) so every call site that
+        # consumes the effective view (email shell, settings page,
+        # audit logs) sees a stable hex string instead of ``None``.
+        "email_header_bg":
+            stored["email_header_bg"] or DEFAULT_EMAIL_HEADER_BG,
+        "email_header_text":
+            stored["email_header_text"] or DEFAULT_EMAIL_HEADER_TEXT,
         # Feb-2026 · Routing Traffic-Aware phase — coerce the stored
         # bool to an explicit ``False`` when the tenant never PATCHed
         # the field. Downstream (routing optimizer + settings page)

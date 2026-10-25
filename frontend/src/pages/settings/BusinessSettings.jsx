@@ -48,6 +48,15 @@ function _validate(fields) {
   if (fields.brand_secondary_hex && !HEX_RE.test(fields.brand_secondary_hex)) {
     errs.brand_secondary_hex = "Use #RRGGBB";
   }
+  // TD-email-template-header-bg-white · Feb-2026 — per-tenant
+  // email-header color overrides. Same hex validator as the brand
+  // colors.
+  if (fields.email_header_bg && !HEX_RE.test(fields.email_header_bg)) {
+    errs.email_header_bg = "Use #RRGGBB";
+  }
+  if (fields.email_header_text && !HEX_RE.test(fields.email_header_text)) {
+    errs.email_header_text = "Use #RRGGBB";
+  }
   if (fields.email && !EMAIL_RE.test(fields.email)) {
     errs.email = "Invalid email";
   }
@@ -78,6 +87,14 @@ export default function BusinessSettings() {
     email: "",
     brand_primary_hex: "",
     brand_secondary_hex: "",
+    // TD-email-template-header-bg-white · Feb-2026 — per-tenant
+    // email-header overrides. Default (empty on tenant doc) means
+    // the shared shell renders white header + dark fallback-text;
+    // operator fills these in to opt into a dark header (typically
+    // for tenants with white-silhouette logos designed for a dark
+    // background).
+    email_header_bg: "",
+    email_header_text: "",
     footer_note: "",
     tax_id: "",
     // Feb-2026 · Routing Traffic-Aware phase — bool toggle. Kept in
@@ -124,6 +141,12 @@ export default function BusinessSettings() {
         email: stored.email || "",
         brand_primary_hex: stored.brand_primary_hex || "",
         brand_secondary_hex: stored.brand_secondary_hex || "",
+        // TD-email-template-header-bg-white · Feb-2026 — hydrate
+        // from stored (empty when the tenant hasn't opted into a
+        // dark header). Effective-view defaults are applied on
+        // the backend, so the FE just surfaces the stored value.
+        email_header_bg: stored.email_header_bg || "",
+        email_header_text: stored.email_header_text || "",
         footer_note: stored.footer_note || "",
         tax_id: stored.tax_id || "",
         // Feb-2026 · Routing Traffic-Aware phase — coerce the stored
@@ -578,6 +601,42 @@ export default function BusinessSettings() {
                 err={errs.brand_secondary_hex}
                 placeholder="#F97316"
               />
+
+              {/* TD-email-template-header-bg-white · Feb-2026 — per-
+                  tenant email-header styling. Default (blank) means
+                  the shared email shell renders a white header with
+                  dark fallback-text. Tenants whose logo is designed
+                  for a dark background can opt back into a dark
+                  header by setting both fields. */}
+              <ColorField
+                label="Email header background"
+                testidPrefix="bs-email-header-bg"
+                value={fields.email_header_bg}
+                onChange={onChange("email_header_bg")}
+                err={errs.email_header_bg}
+                placeholder="#FFFFFF"
+                helpText={
+                  "Header background color. White by default. If " +
+                  "your company logo is designed for a dark " +
+                  "background, enter your old brand color here " +
+                  "(e.g. #0B4A6F) and change Email header text " +
+                  "below to white (#FFFFFF)."
+                }
+              />
+
+              <ColorField
+                label="Email header text"
+                testidPrefix="bs-email-header-text"
+                value={fields.email_header_text}
+                onChange={onChange("email_header_text")}
+                err={errs.email_header_text}
+                placeholder="#111827"
+                helpText={
+                  "Only visible when your logo isn't uploaded. " +
+                  "Match this to your header background: dark text " +
+                  "on a white header, white text on a dark header."
+                }
+              />
             </div>
           </section>
 
@@ -732,7 +791,8 @@ function Field({ label, value, onChange, placeholder, err, testid }) {
 }
 
 
-function ColorField({ label, testidPrefix, value, onChange, err, placeholder }) {
+function ColorField({ label, testidPrefix, value, onChange, err,
+                      placeholder, helpText }) {
   const isValid = !value || HEX_RE.test(value);
   return (
     <div data-testid={`${testidPrefix}-field`}>
@@ -770,6 +830,14 @@ function ColorField({ label, testidPrefix, value, onChange, err, placeholder }) 
       {err ? (
         <div className="text-xs mt-1" style={{ color: "#DC2626" }}
               data-testid={`${testidPrefix}-error`}>{err}</div>
+      ) : null}
+      {/* TD-email-template-header-bg-white · Feb-2026 — optional
+          operator-facing help text for color fields whose semantics
+          aren't obvious from the label alone (e.g. the dark-logo
+          guidance under email_header_bg). */}
+      {helpText ? (
+        <p className="text-xs mt-1" style={{ color: colors.muted }}
+            data-testid={`${testidPrefix}-help`}>{helpText}</p>
       ) : null}
     </div>
   );

@@ -67,6 +67,17 @@ from typing import Any, Dict, Mapping, Optional
 _DEFAULT_PRIMARY_HEX = "#0B4A6F"   # colors.brand — matches web + PDF
 _DEFAULT_FOOTER_NOTE = "Thank you for your business!"
 _DEFAULT_COMPANY = "Our team"
+# TD-email-template-header-bg-white · Feb-2026 — email-shell header
+# band + no-logo fallback-text defaults. Kept at module level so
+# the pytest regression suite can import + assert on the exact
+# values the shell will render under default branding.
+_DEFAULT_EMAIL_HEADER_BG = "#FFFFFF"
+_DEFAULT_EMAIL_HEADER_TEXT = "#111827"
+# TD-email-template-header-bg-white · Feb-2026 — unconditional
+# header-to-body separator. Lives at module level so the pytest
+# suite's regression lock imports the exact literal instead of
+# duplicating the hex string.
+_HEADER_BORDER_BOTTOM = "border-bottom:1px solid #E5E7EB;"
 _DEFAULT_FONT = (
     "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, "
     "Arial, sans-serif"
@@ -129,6 +140,23 @@ def _resolve_branding(branding: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
         or _valid_hex(b.get("primary_hex"))
         or _DEFAULT_PRIMARY_HEX
     )
+    # TD-email-template-header-bg-white · Feb-2026 — the email shell
+    # header band now renders on a per-tenant color (white default)
+    # instead of the tenant brand color. The companion
+    # ``email_header_text`` drives the no-logo company-name text
+    # fallback inside the header cell. Both default to a safe
+    # white-bg + dark-text combo for every tenant on first email
+    # render post-deploy; operator opts into a dark header by
+    # setting ``email_header_bg`` on the Business Settings page.
+    # Footer stays on ``primary`` — scope was header-only.
+    email_header_bg = (
+        _valid_hex(b.get("email_header_bg"))
+        or _DEFAULT_EMAIL_HEADER_BG
+    )
+    email_header_text = (
+        _valid_hex(b.get("email_header_text"))
+        or _DEFAULT_EMAIL_HEADER_TEXT
+    )
     company = _first_non_empty(
         b.get("company_display_name"),
         b.get("company_name"),
@@ -149,6 +177,8 @@ def _resolve_branding(branding: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
     # appear in a customer-facing email footer.
     return {
         "primary_hex": primary,
+        "email_header_bg": email_header_bg,
+        "email_header_text": email_header_text,
         "company_display_name": company,
         "logo_url": logo_url,
         "footer_note": footer_note,
@@ -197,6 +227,8 @@ def wrap_html_in_shell(
     """
     r = _resolve_branding(branding)
     primary = r["primary_hex"]
+    header_bg = r["email_header_bg"]
+    header_text = r["email_header_text"]
     company_txt = _esc(r["company_display_name"])
     footer_note_txt = _esc(r["footer_note"])
     inner = inner_html or ""
@@ -209,7 +241,7 @@ def wrap_html_in_shell(
         # ``width:auto`` preserves the natural aspect ratio in every
         # major email client, and ``margin:0 auto;display:block``
         # combined with the surrounding ``<td align="center">`` (see
-        # below) centers the logo inside the dark brand header bar.
+        # below) centers the logo inside the brand header bar.
         header_cell = (
             f'<img src="{_esc(r["logo_url"])}" '
             f'alt="{company_txt}" '
@@ -219,9 +251,15 @@ def wrap_html_in_shell(
             f'line-height:100%;-ms-interpolation-mode:bicubic;" />'
         )
     else:
+        # TD-email-template-header-bg-white · Feb-2026 — fallback
+        # company-name text uses the per-tenant ``email_header_text``
+        # (dark default) instead of the hardcoded ``#FFFFFF`` so the
+        # no-logo text stays legible on a white header. Operator
+        # pairs this with ``email_header_bg`` for a dark-header
+        # tenant (text goes back to ``#FFFFFF``).
         header_cell = (
-            f'<span style="color:#FFFFFF;font-weight:700;font-size:24px;'
-            f'line-height:32px;">{company_txt}</span>'
+            f'<span style="color:{header_text};font-weight:700;'
+            f'font-size:24px;line-height:32px;">{company_txt}</span>'
         )
 
     small_print = _footer_small_print(r)
@@ -232,14 +270,17 @@ def wrap_html_in_shell(
         f'{small_print}</td></tr>'
     ) if small_print else ""
 
-    # MSO / Outlook VML fallback so the header band still renders
-    # its brand colour in Outlook 2007-2019 (Windows). Modern email
-    # clients ignore the conditional comment and use the CSS bg.
+    # TD-email-template-header-bg-white · Feb-2026 — the MSO/Outlook
+    # VML fallback inherits the per-tenant ``email_header_bg`` so
+    # Outlook 2007-2019 (Windows) renders the same white header the
+    # modern CSS path uses. Prior code tiled ``primary`` (dark
+    # brand), which would have left Outlook with a dark header
+    # even after this ticket flipped every other client to white.
     mso_header = (
         f'<!--[if mso]>'
         f'<v:rect xmlns:v="urn:schemas-microsoft-com:vml" '
         f'fill="true" stroke="false" style="width:640px;height:88px;">'
-        f'<v:fill type="tile" color="{primary}" />'
+        f'<v:fill type="tile" color="{header_bg}" />'
         f'<v:textbox inset="0,0,0,0">'
         f'<![endif]-->'
     )
@@ -278,10 +319,18 @@ def wrap_html_in_shell(
         f'style="width:640px;max-width:100%;background:#FFFFFF;'
         f'border-collapse:collapse;">'
         # Header band.
+        # TD-email-template-header-bg-white · Feb-2026 — background
+        # drives off the per-tenant ``email_header_bg`` (white
+        # default). ``_HEADER_BORDER_BOTTOM`` is UNCONDITIONAL (every
+        # tenant gets the thin gray-200 divider) — operator Decision 2
+        # locked the border independently of the bg flip so a
+        # dark-header tenant still gets visual separation from the
+        # body cell below.
         f'<tr>'
         f'<td align="center" '
-        f'style="background:{primary};padding:22px 28px;text-align:center;" '
-        f'bgcolor="{primary}">'
+        f'style="background:{header_bg};padding:22px 28px;'
+        f'text-align:center;{_HEADER_BORDER_BOTTOM}" '
+        f'bgcolor="{header_bg}">'
         f'{mso_header}'
         f'{header_cell}'
         f'{mso_header_close}'

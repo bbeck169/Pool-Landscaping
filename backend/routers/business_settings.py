@@ -51,6 +51,12 @@ class BusinessSettingsPatch(BaseModel):
     email: Optional[str] = Field(default=None, max_length=200)
     brand_primary_hex: Optional[str] = Field(default=None)
     brand_secondary_hex: Optional[str] = Field(default=None)
+    # TD-email-template-header-bg-white · Feb-2026 — per-tenant
+    # email-header styling. Hex-validated on write; defaults applied
+    # in ``build_business_settings_view``. Nullable so a clear-out
+    # PATCH (``null``) restores the default on next render.
+    email_header_bg: Optional[str] = Field(default=None)
+    email_header_text: Optional[str] = Field(default=None)
     footer_note: Optional[str] = Field(default=None, max_length=300)
     tax_id: Optional[str] = Field(default=None, max_length=100)
     # Feb-2026 · Routing Traffic-Aware phase — nullable bool. Callers
@@ -60,7 +66,8 @@ class BusinessSettingsPatch(BaseModel):
     # lives in ``build_business_settings_view``.
     routing_traffic_aware: Optional[bool] = None
 
-    @validator("brand_primary_hex", "brand_secondary_hex")
+    @validator("brand_primary_hex", "brand_secondary_hex",
+                "email_header_bg", "email_header_text")
     def _hex_ok(cls, v):
         if v in (None, ""):
             return v
