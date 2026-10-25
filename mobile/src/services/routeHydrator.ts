@@ -67,18 +67,26 @@ export function getHydrationMeta(): HydrationMeta {
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
-/** Last error swallowed by `_safeFetch` (TD-mobile-sync-tech-not-linked: lets the
- *  caller tell an admin-action 409 apart from a transient failure). */
-let _lastFetchError: unknown = null;
+export type SafeFetchResult =
+  | { ok: true; data: any }
+  | { ok: false; status: number | null; detail: unknown; error: unknown };
 
-/** Fetch a single endpoint, returning null on failure (never throws). */
-async function _safeFetch(url: string, signal?: AbortSignal): Promise<any | null> {
+/** Fetch a single endpoint (never throws). Failures surface status + body so the
+ *  caller can tell an admin-action 409 apart from a transient failure. */
+export async function _safeFetch(url: string, signal?: AbortSignal): Promise<SafeFetchResult> {
   try {
-    return await api.get(url, signal ? { signal } : undefined);
-  } catch (e) {
-    _lastFetchError = e;
-    return null;
+    return { ok: true, data: await api.get(url, signal ? { signal } : undefined) };
+  } catch (e: any) {
+    return { ok: false, status: typeof e?.status === "number" ? e.status : null, detail: e?.detail ?? null, error: e };
   }
+}
+
+/** Any sync endpoint (e.g. POST /mobile/sync via sync/queue) reports its errors here;
+ *  only the orphan-tech 409 changes state — matched by error code, not endpoint. */
+export function noteSyncError(e: unknown): void {
+  if (!isTechNotLinked(e)) return;
+  _meta = { ..._meta, syncStatus: "tech_not_linked", lastError: TECH_NOT_LINKED_COPY, lastPartialSyncAt: new Date().toISOString() };
+  _notify();
 }
 
 // ── Main hydration ───────────────────────────────────────────────────
@@ -110,18 +118,18 @@ export async function hydrateToday(
   _abortController = ac;
 
   _meta = { ..._meta, inProgress: true, lastError: "" };
-  _lastFetchError = null;
   _notify();
 
   try {
     // ─── Fix 1: Single bundle call replaces N+1 ─────────────────────
-    const bundle = await _safeFetch("/mobile/offline-bundle", ac.signal);
+    const res = await _safeFetch("/mobile/offline-bundle", ac.signal);
     if (ac.signal.aborted) return _meta;
+    const bundle = res.ok ? res.data : null;
 
     if (!bundle) {
       // TD-mobile-sync-tech-not-linked · orphan-tech 409 is an admin-action state,
       // not a transient failure; everything else keeps the existing "failed".
-      const notLinked = isTechNotLinked(_lastFetchError);
+      const notLinked = !res.ok && isTechNotLinked(res.error);
       _meta = {
         ..._meta,
         syncStatus: notLinked ? "tech_not_linked" : "failed",

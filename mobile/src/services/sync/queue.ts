@@ -20,6 +20,7 @@ import { isOnlineNow, on } from "./netBus";
 import { api, ApiNetworkError } from "@/src/api";
 import { recordConflict } from "./conflicts";
 import { invalidateForEntry } from "../cacheInvalidation";
+import { noteSyncError } from "../routeHydrator";
 
 // ─── types ─────────────────────────────────────────────────────────
 export type SyncEntry = {
@@ -271,6 +272,7 @@ async function _dispatchOne(
   } catch (e: any) {
     const attempt = entry.attempt_count + 1;
     const errMsg = (e?.message || "Unknown error").slice(0, 500);
+    noteSyncError(e); // TD-mobile-sync-tech-not-linked · orphan-tech 409 → amber badge
 
     if (e instanceof ApiNetworkError) {
       // Network dropped — mark back to pending, don't increment attempt.
