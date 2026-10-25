@@ -103,10 +103,21 @@ async def _call(invoice_ids: List[str], *, tenant_id: str,
     tenant = {"id": tenant_id, "name": "Test Tenant"}
     user = {"id": f"usr_{uuid.uuid4().hex[:8]}", "role": user_role}
 
-    # Patch _send_email + _send_sms + _get_settings so the
-    # pytest run doesn't hit Resend or RingCentral.
-    with patch("routers.dunning._send_email",
-                new=AsyncMock(return_value={"status": "sent"})) as _, \
+    # TD-bulk-send-invoice-email-reuse-individual-send-template ·
+    # Feb-2026 — the email branch now delegates to the canonical
+    # ``emailer.send_invoice_reminder_email`` renderer, so we patch
+    # it (as imported in the function scope) instead of the legacy
+    # ``routers.dunning._send_email`` the pre-fix path used.  SMS +
+    # ``_get_settings`` + ``_payment_link_for`` patches stay — the
+    # SMS branch is unchanged and ``_build_context`` still runs for
+    # it.  Also patch ``automation_enabled`` at its import site in
+    # the bulk-send endpoint so the test loop doesn't hit a
+    # real tenant doc lookup via the shared ``config.db`` global
+    # (which can be loop-bound by sibling suites).
+    with patch("emailer.send_invoice_reminder_email",
+                new=AsyncMock(return_value=True)) as _, \
+         patch("services.tenant_automation_gates.automation_enabled",
+                new=AsyncMock(return_value=True)) as _, \
          patch("routers.dunning._send_sms",
                 new=AsyncMock(return_value={"status": "sent"})) as _, \
          patch("routers.dunning._get_settings",

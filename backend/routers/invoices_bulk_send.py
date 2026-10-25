@@ -5,48 +5,63 @@ New endpoint: ``POST /api/invoices/bulk-send``.
 
 Admin selects one or more invoices on the Invoices list and
 clicks "Send Invoice".  For every selected invoice the backend
-dispatches BOTH email + SMS via the shipped single-channel
-helpers (``routers.dunning._send_email`` +
-``services.sms.rc_adapter.send``) and returns a per-invoice
-result.  Partial failures surface in the response — the endpoint
-never 500s the whole request on a single-invoice error.
+dispatches BOTH email + SMS and returns a per-invoice result.
+Partial failures surface in the response — the endpoint never
+500s the whole request on a single-invoice error.
 
-Why this file does not reuse a pre-existing "send invoice"
-single endpoint
--------------------------------------------------------------
-Recon surfaced that no unified per-invoice ``send-email`` route
-exists — the shipped surface is:
-  * ``POST /invoices/{iid}/send-sms``    (SMS only)
-  * ``POST /dunning/invoices/{iid}/send-reminder``
-    (email+SMS, dunning-flavoured, requires a dunning stage)
-  * ``POST /customers/{cid}/send-email`` (generic, not
-    invoice-specific)
+TD-bulk-send-invoice-email-reuse-individual-send-template · Feb-2026
+Email branch now delegates to the canonical
+:func:`emailer.send_invoice_reminder_email` single-send renderer so
+every bulk-sent invoice gets the SAME branded "Payment reminder"
+template (logo header, bolded invoice number, red "View Invoice"
+CTA, company sign-off, DB-template override) as a single-row Send
+Reminder action. The prior path built a crude ``<p>``-wrapped plain-
+text body + a "raw UUID in subject" fallback.
 
-Creating a new per-invoice send-email route is deferred (not
-in scope for this ticket).  This bulk endpoint calls the two
-private helpers directly, scoped tightly to the bulk-send
-flow.  If a separate single-invoice "send both channels"
-endpoint is wanted later, it can factor out
-``_send_single_invoice`` below.
+SMS branch stays unchanged — uses dunning's ``_send_sms`` + a short
+plain-text body. The SMS cosmetic ``invoice_total`` vs ``balance``
+drift is tracked separately as ``TD-sms-reminder-use-balance-not-total``
+(P3, operator discretion).
+
+Primary-email behavior
+----------------------
+Operator spec is explicit: use ``customer.email`` ONLY, no users-
+table fallback. The canonical ``send_invoice_reminder_email`` DOES
+fall back to ``users.email where customer_id=cid AND role="customer"``
+when ``customer.email`` is empty — the bulk path pre-checks
+``customer.email`` BEFORE calling the canonical fn and short-circuits
+to ``skipped_no_contact`` on empty. This inverts the users-table
+fallback for the bulk path only, matching the operator's literal
+spec. If a future ticket wants bulk-send and single-send to agree
+on edge-case fallback behavior, the fix is to tighten the single-
+send call site in ``routers/quotes.py:2341`` — do NOT silently
+re-add the fallback here.
 
 Status vocabulary
 -----------------
-  * ``sent_both``             — email and SMS both succeeded.
-  * ``sent_email_only``       — email ok, SMS failed / skipped.
-  * ``sent_sms_only``         — SMS ok, email failed / skipped.
-  * ``skipped_already_paid``  — ``payment_status == "paid"``.
-  * ``skipped_draft``         — ``status == "draft"``.
-  * ``skipped_no_contact``    — customer has no email and
-                                 no phone on file.
-  * ``skipped_recent_send``   — operator dedupe window hit
-                                 (another send attempt against
-                                 the same invoice fired within
-                                 the last 60 seconds).
-  * ``skipped_not_found``     — invoice id not found in this
-                                 tenant (prevents cross-tenant
-                                 enumeration).
-  * ``error``                 — unexpected per-invoice failure;
-                                 ``error`` field carries detail.
+  * ``sent_both``                       — email and SMS both succeeded.
+  * ``sent_email_only``                 — email ok, SMS failed / skipped.
+  * ``sent_sms_only``                   — SMS ok, email failed / skipped.
+  * ``skipped_already_paid``            — ``payment_status == "paid"``.
+  * ``skipped_draft``                   — ``status == "draft"``.
+  * ``skipped_no_contact``              — customer has no ``customers.email``
+                                          and no ``customers.phone`` on file.
+  * ``skipped_recent_send``             — operator dedupe window hit
+                                          (another send attempt against
+                                          the same invoice fired within
+                                          the last 60 seconds).
+  * ``skipped_not_found``               — invoice id not found in this
+                                          tenant (prevents cross-tenant
+                                          enumeration).
+  * ``skipped_automation_disabled``     — tenant's
+                                          ``invoice_past_due_enabled`` flag
+                                          is off; canonical renderer
+                                          refuses to fire. Surfaced as a
+                                          skip (NOT an error) so the
+                                          operator sees the actual reason
+                                          instead of a bogus "failed".
+  * ``error``                           — unexpected per-invoice failure;
+                                          ``error`` field carries detail.
 
 Idempotency notes
 -----------------
@@ -54,14 +69,11 @@ Idempotency notes
     an ``idempotency_key``; we pass
     ``f"invoice-bulk-send:{invoice_id}"`` so provider-level
     dedupe handles replays.
-  * **Email**: Resend has no server-side idempotency on the
-    direct SDK call.  We insert a doc into
-    ``db.invoice_send_attempts`` for every send attempt
-    (success or failure).  Before each attempt we check for
-    a prior attempt on the SAME invoice in the LAST 60 SECONDS
-    (per-invoice, NOT per-operator — more conservative; two
-    admins moving fast won't double-send).  Hit → skip as
-    ``skipped_recent_send``.
+  * **Email**: the canonical ``send_invoice_reminder_email`` has
+    NO server-side idempotency. The bulk endpoint preserves the
+    60-second dedupe window via ``db.invoice_send_attempts``
+    — this is operator safety (admin double-click guard), NOT a
+    canonical-fn concern.
 """
 from __future__ import annotations
 
@@ -106,6 +118,11 @@ _STATUS_SKIPPED_DRAFT = "skipped_draft"
 _STATUS_SKIPPED_NO_CONTACT = "skipped_no_contact"
 _STATUS_SKIPPED_RECENT = "skipped_recent_send"
 _STATUS_SKIPPED_NOT_FOUND = "skipped_not_found"
+# TD-bulk-send-invoice-email-reuse-individual-send-template · Feb-2026
+# Tenant-level feature-flag suppression surfaced as a distinct skip
+# so operator doesn't see a bogus "failed" when
+# ``invoice_past_due_enabled`` is off at the tenant level.
+_STATUS_SKIPPED_AUTOMATION_DISABLED = "skipped_automation_disabled"
 _STATUS_ERROR = "error"
 
 
@@ -151,9 +168,20 @@ async def _record_attempt(
 async def _send_single_invoice(
     *, invoice_id: str, tenant: Dict[str, Any],
     operator_id: str,
+    email_automation_enabled: bool = True,
 ) -> Dict[str, Any]:
     """Dispatch email + SMS for one invoice.  Returns the per-row
     result dict that gets appended to the bulk response.
+
+    TD-bulk-send-invoice-email-reuse-individual-send-template ·
+    Feb-2026 — email branch delegates to the canonical
+    ``emailer.send_invoice_reminder_email`` so the bulk flow
+    renders the SAME branded template as a single-row Send
+    Reminder action.  The caller is responsible for pre-computing
+    ``email_automation_enabled`` ONCE per batch
+    (``invoice_past_due_enabled`` tenant flag — tenant is shared
+    across the whole batch, so we read it once at the endpoint
+    level and thread it in to avoid N tenant doc lookups).
     """
     tenant_id = tenant["id"]
     inv = await db.quotes.find_one(
@@ -179,6 +207,20 @@ async def _send_single_invoice(
                 "status": _STATUS_SKIPPED_RECENT}
 
     # Resolve customer + contact fields.
+    #
+    # TD-bulk-send-invoice-email-reuse-individual-send-template ·
+    # Feb-2026 — ``email_to`` is sourced from ``customers.email``
+    # ONLY per operator spec ("do not fall back to a secondary or
+    # alternate email"). The canonical
+    # ``emailer.send_invoice_reminder_email`` DOES have a
+    # ``users.email where customer_id=cid AND role="customer"``
+    # fallback at ``emailer.py:573``; the pre-check below short-
+    # circuits to ``skipped_no_contact`` on empty ``customers.email``
+    # BEFORE the canonical fn runs so the fallback is never
+    # consulted for the bulk path. If a future ticket decides
+    # bulk and single-send should agree on fallback behavior, the
+    # fix is to tighten the single-send call site, NOT to re-
+    # introduce the fallback here.
     customer = None
     if inv.get("customer_id"):
         customer = await db.customers.find_one(
@@ -198,38 +240,54 @@ async def _send_single_invoice(
         return {"invoice_id": invoice_id,
                 "status": _STATUS_SKIPPED_NO_CONTACT}
 
-    # ── Build message context + fire channels.
-    # Reuse the dunning helpers so the message copy matches the
-    # single-send manual reminder shape operators already know.
-    from routers.dunning import (  # noqa: PLC0415
-        _build_context, _send_email, _send_sms, _get_settings,
-    )
-    settings = await _get_settings(tenant_id)
-    ctx = await _build_context(inv, tenant, settings, src="link")
-
-    # Minimal subject/body — short enough for both channels.
-    subject = f"Invoice {ctx['invoice_number']} from {ctx['tenant_name']}"
-    email_body = (
-        f"Hi {ctx['customer_name']},\n\n"
-        f"Your invoice {ctx['invoice_number']} for "
-        f"${ctx['invoice_total']} is ready.\n\n"
-        f"View / pay: {ctx['payment_link']}\n\n"
-        f"Thanks,\n{ctx['tenant_name']}"
-    )
-    sms_body = (
-        f"{ctx['tenant_name']}: invoice {ctx['invoice_number']} "
-        f"(${ctx['invoice_total']}) ready. Pay: {ctx['payment_link']}"
-    )
-
+    # ── Email: delegate to the canonical single-send renderer.
+    # No DI needed — the fn is a plain async callable taking the
+    # invoice dict.  Branding + locale + DB-template override + CTA
+    # token + customer email lookup all happen inside the canonical
+    # path, so the rendered email is byte-for-byte the same shape
+    # the single-row Send Reminder action emits.
     email_result: Dict[str, Any] = {"status": "skipped"}
-    sms_result: Dict[str, Any] = {"status": "skipped"}
     if email_to:
-        try:
-            email_result = await _send_email(
-                email_to, subject, email_body, ctx["tenant_name"])
-        except Exception as exc:  # noqa: BLE001
-            email_result = {"status": "failed", "error": str(exc)}
+        if not email_automation_enabled:
+            # Tenant has ``invoice_past_due_enabled`` off — the
+            # canonical fn would silently return False.  Surface
+            # the actual reason to the operator instead of a bogus
+            # "failed" per the ticket spec.
+            email_result = {
+                "status": "skipped",
+                "reason": "automation_disabled",
+            }
+        else:
+            try:
+                from emailer import (  # noqa: PLC0415
+                    send_invoice_reminder_email,
+                )
+                ok = await send_invoice_reminder_email(inv)
+                email_result = (
+                    {"status": "sent"} if ok
+                    else {"status": "failed",
+                           "error": "send_invoice_reminder_email returned False"}
+                )
+            except Exception as exc:  # noqa: BLE001
+                email_result = {"status": "failed",
+                                 "error": str(exc)}
+
+    # ── SMS: unchanged.  Reuse the dunning helpers for the short
+    # plain-text body.  SMS has no "template" concept beyond text
+    # and the operator did not flag it.  The ``invoice_total`` vs
+    # ``balance`` cosmetic drift is tracked separately as
+    # ``TD-sms-reminder-use-balance-not-total`` (P3).
+    sms_result: Dict[str, Any] = {"status": "skipped"}
     if phone_to:
+        from routers.dunning import (  # noqa: PLC0415
+            _build_context, _send_sms, _get_settings,
+        )
+        settings = await _get_settings(tenant_id)
+        ctx = await _build_context(inv, tenant, settings, src="sms")
+        sms_body = (
+            f"{ctx['tenant_name']}: invoice {ctx['invoice_number']} "
+            f"(${ctx['invoice_total']}) ready. Pay: {ctx['payment_link']}"
+        )
         try:
             sms_result = await _send_sms(
                 phone_to, sms_body,
@@ -241,17 +299,34 @@ async def _send_single_invoice(
 
     email_ok = (email_result.get("status") == "sent")
     sms_ok = (sms_result.get("status") == "sent")
+    # Automation-disabled email surfaces as its own skip even when
+    # SMS succeeds — operator needs to see the per-channel reason.
+    automation_blocked_email = (
+        email_result.get("status") == "skipped"
+        and email_result.get("reason") == "automation_disabled"
+    )
     if email_ok and sms_ok:
         final = _STATUS_SENT_BOTH
     elif email_ok:
         final = _STATUS_SENT_EMAIL_ONLY
+    elif sms_ok and automation_blocked_email:
+        # Email suppressed by tenant flag, SMS sent.  Surface the
+        # suppression as the final status so the operator sees
+        # "automation disabled" rather than a confusing
+        # ``sent_sms_only`` for an invoice they expected to also
+        # email.
+        final = _STATUS_SKIPPED_AUTOMATION_DISABLED
     elif sms_ok:
         final = _STATUS_SENT_SMS_ONLY
+    elif automation_blocked_email and not phone_to:
+        # Email suppressed, no SMS to try. Surface the suppression,
+        # NOT "error".
+        final = _STATUS_SKIPPED_AUTOMATION_DISABLED
     else:
         final = _STATUS_ERROR
 
     err_bits: List[str] = []
-    if not email_ok and email_to:
+    if not email_ok and email_to and not automation_blocked_email:
         err_bits.append(
             f"email:{email_result.get('error') or email_result.get('reason') or email_result.get('status') or 'failed'}")
     if not sms_ok and phone_to:
@@ -309,6 +384,18 @@ async def bulk_send_invoices(
     tenant_id = tenant["id"]
     operator_id = user["id"]
 
+    # TD-bulk-send-invoice-email-reuse-individual-send-template ·
+    # Feb-2026 — pre-compute the ``invoice_past_due_enabled`` tenant
+    # flag ONCE per batch and thread it to every per-row call. The
+    # flag is tenant-scoped and the whole batch shares a tenant, so
+    # reading it 500 times inside the loop would be a wasted round
+    # trip. ``automation_enabled`` defaults to True on an unset
+    # tenant doc per the shipped contract.
+    from services.tenant_automation_gates import automation_enabled
+    email_automation_enabled = await automation_enabled(
+        tenant_id, "invoice_past_due_enabled",
+    )
+
     results: List[Dict[str, Any]] = []
     counts: Dict[str, int] = {}
     for iid in invoice_ids:
@@ -316,6 +403,7 @@ async def bulk_send_invoices(
             row = await _send_single_invoice(
                 invoice_id=iid, tenant=tenant,
                 operator_id=operator_id,
+                email_automation_enabled=email_automation_enabled,
             )
         except Exception as exc:  # noqa: BLE001
             # Shouldn't happen — _send_single_invoice swallows
@@ -343,6 +431,8 @@ async def bulk_send_invoices(
             counts.get(_STATUS_SKIPPED_RECENT, 0),
         "skipped_not_found":
             counts.get(_STATUS_SKIPPED_NOT_FOUND, 0),
+        "skipped_automation_disabled":
+            counts.get(_STATUS_SKIPPED_AUTOMATION_DISABLED, 0),
         "errored": counts.get(_STATUS_ERROR, 0),
     }
     request_id = new_id()
