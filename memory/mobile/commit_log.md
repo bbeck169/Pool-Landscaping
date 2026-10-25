@@ -2376,3 +2376,10 @@
 - **Templates Library Phase 3 (Mobile)**: re-requested in this session's prompt but ALREADY SHIPPED (PRD §5, `src/screens/templates/*`, `src/components/templates/*`, `src/api/templates.ts`, `app/(app)/templates/*`, 4 test suites green). Not rebuilt. No external repo cloned.
 - **Files modified**: mobile/app/(app)/schedule/calendar.tsx, mobile/src/components/OfflineBadge.tsx, mobile/src/services/routeHydrator.ts, mobile/src/lib/syncErrors.ts (new), mobile/src/components/fleet/FleetEmitterRunner.tsx, mobile/__tests__/td-mobile-header-layout-cleanup.test.tsx (new), mobile/__tests__/td-mobile-sync-tech-not-linked.test.tsx (new), mobile/__tests__/td-mobile-fleet-enrollment-pending-toast.test.tsx (new)
 - **Web files referenced**: none (mobile-only)
+
+## Iteration 182 — Issues 1 + 2 spec-alignment follow-ups
+- **Commits**: Issue 2 `94b10f310` (`_safeFetch` → `{ok:false,status,detail,error}`; `noteSyncError` wired into the sync/queue `/mobile/sync` catch). Issue 1 `49e246ebd` (`src/lib/scheduleHeader.ts` + 320/375/414 width suite) and `4abc2707a` (fix-forward: test `n: any`, tsc back to 629).
+- **Date**: 2026-10-25
+- **Checks**: contract suite 6/6; sync suites 45/45; header suites 13/13; tsc 629; eslint 0 errors. Live preview (tech Mike): title scrollWidth == clientWidth at 320 (170/170), 375 (141/141) and 414 (180/180); at 320 sync-route moves into the strip.
+- **Pre-existing failures (not caused by this work)**: 8 schedule suites (colour / tech-filter source checks, map pins, ExpoTaskManager, k32 theme). `schedule-sync-route.test.tsx` runs out of JS heap; it imports no changed file.
+- **Files modified**: mobile/src/services/routeHydrator.ts, mobile/src/services/sync/queue.ts, mobile/src/lib/scheduleHeader.ts (new), mobile/app/(app)/schedule/calendar.tsx, mobile/__tests__/td-mobile-sync-tech-not-linked-contract.test.ts (new), mobile/__tests__/td-mobile-header-layout-cleanup-widths.test.tsx (new), mobile/__tests__/td-mobile-header-layout-cleanup.test.tsx
