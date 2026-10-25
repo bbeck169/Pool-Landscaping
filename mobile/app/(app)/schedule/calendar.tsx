@@ -24,7 +24,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   View, Text, StyleSheet, ScrollView, Pressable, Platform, Linking,
-  ActivityIndicator, Alert, Modal, FlatList } from "react-native";
+  ActivityIndicator, Alert, Modal, FlatList, useWindowDimensions } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useRouter, Redirect } from "expo-router";
 
@@ -200,6 +200,7 @@ function ScheduleCalendarInner() {
 
   // Phase 1 Offline Read — trigger hydration + get cache stats.
   const { meta: hydrationMeta, triggerHydrate } = useRouteHydration();
+  const { width: winWidth } = useWindowDimensions(); // TD-mobile-header-layout-cleanup (compact header)
   const online = useOnline();
   const [syncingRoute, setSyncingRoute] = useState(false);
   const [syncToast, setSyncToast] = useState<string | null>(null);
@@ -720,49 +721,67 @@ function ScheduleCalendarInner() {
   if (role === "customer") return <Redirect href="/(app)/jobs" />;
   if (!modeLoaded) return null;
 
+  // TD-mobile-header-layout-cleanup · on narrow phones (<360 dp, e.g. 320) the
+  // Sync-route + Refresh buttons move to the status strip so the title row only
+  // carries the bell + hamburger and "Schedule" never truncates. (Hook is
+  // called above the early returns — see useWindowDimensions near useRouteHydration.)
+  const compactHeader = winWidth < 360;
+  const routeActions = (
+    <>
+      {/* Sync route button */}
+      <Pressable
+        onPress={handleSyncRoute}
+        disabled={syncingRoute || hydrationMeta?.inProgress || !online}
+        style={[gStyles.refreshBtn, (!online || syncingRoute || hydrationMeta?.inProgress) && { opacity: 0.5 }]}
+        hitSlop={8}
+        testID="schedule-sync-route"
+        accessibilityLabel={!online ? "You're offline — sync when connected" : "Sync route"}
+      >
+        {(syncingRoute || hydrationMeta?.inProgress)
+          ? <ActivityIndicator size={14} color={colors.brand} testID="schedule-sync-route-progress" />
+          : <Ionicons name="cloud-download-outline" size={16} color={colors.brand} />}
+      </Pressable>
+      {/* ITEM 2 — Schedule Refresh Button */}
+      <Pressable
+        onPress={() => { if (!refreshing) { setRefreshing(true); load(true).finally(() => setRefreshing(false)); } }}
+        disabled={refreshing}
+        style={[gStyles.refreshBtn, refreshing && { opacity: 0.6 }]}
+        hitSlop={8}
+        testID="schedule-refresh"
+        accessibilityLabel="Refresh schedule"
+      >
+        {refreshing
+          ? <ActivityIndicator size={14} color={colors.onSurface} testID="schedule-refresh-spinner" />
+          : <Ionicons name="refresh" size={16} color={colors.onSurface} />}
+      </Pressable>
+    </>
+  );
+
   return (
     <View style={styles.root}>
       <Header
         title="Schedule"
         subtitle={loading ? "Loading…" : `${visibleJobs.length} jobs in window · ${mode}`}
         right={
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-            {/* Sync route button */}
-            <Pressable
-              onPress={handleSyncRoute}
-              disabled={syncingRoute || hydrationMeta?.inProgress || !online}
-              style={[gStyles.refreshBtn, (!online || syncingRoute || hydrationMeta?.inProgress) && { opacity: 0.5 }]}
-              hitSlop={8}
-              testID="schedule-sync-route"
-              accessibilityLabel={!online ? "You're offline — sync when connected" : "Sync route"}
-            >
-              {(syncingRoute || hydrationMeta?.inProgress)
-                ? <ActivityIndicator size={14} color={colors.brand} testID="schedule-sync-route-progress" />
-                : <Ionicons name="cloud-download-outline" size={16} color={colors.brand} />}
-            </Pressable>
-            {/* ITEM 2 — Schedule Refresh Button */}
-            <Pressable
-              onPress={() => { if (!refreshing) { setRefreshing(true); load(true).finally(() => setRefreshing(false)); } }}
-              disabled={refreshing}
-              style={[gStyles.refreshBtn, refreshing && { opacity: 0.6 }]}
-              hitSlop={8}
-              testID="schedule-refresh"
-              accessibilityLabel="Refresh schedule"
-            >
-              {refreshing
-                ? <ActivityIndicator size={14} color={colors.onSurface} testID="schedule-refresh-spinner" />
-                : <Ionicons name="refresh" size={16} color={colors.onSurface} />}
-            </Pressable>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexShrink: 0 }}>
+            {!compactHeader && routeActions}
             <SyncBadge testID="schedule-header-sync-badge" />
-            <OfflineBadge testID="schedule-header-offline-badge" cacheStats={hydrationMeta ? { cached: hydrationMeta.cachedJobs, total: hydrationMeta.totalJobs, lastSyncedAt: hydrationMeta.lastSyncedAt, syncStatus: hydrationMeta.syncStatus } : undefined} />
             {isTech ? (
-              <View style={{ marginRight: 52 }} testID="schedule-header-bell">
+              <View testID="schedule-header-bell">
                 <NotificationBell />
               </View>
             ) : null}
           </View>
         }
       />
+
+      {/* TD-mobile-header-layout-cleanup · sync/offline status is a strip under the
+          Header (not in the title row) so the title + icons never get squeezed.
+          OfflineBadge renders null when there is nothing to report → strip collapses. */}
+      <View style={gStyles.statusStrip} testID="schedule-status-strip">
+        {compactHeader && routeActions}
+        <OfflineBadge testID="schedule-header-offline-badge" cacheStats={hydrationMeta ? { cached: hydrationMeta.cachedJobs, total: hydrationMeta.totalJobs, lastSyncedAt: hydrationMeta.lastSyncedAt, syncStatus: hydrationMeta.syncStatus } : undefined} />
+      </View>
 
       {/* Sync route toast */}
       {syncToast && (
@@ -2075,6 +2094,7 @@ const gStyles = StyleSheet.create({
     gap: 2, backgroundColor: "#FEF3C7", borderColor: "#F59E0B", borderWidth: 1,
     paddingHorizontal: 6, paddingVertical: 1, borderRadius: radius.pill,
   },
+  statusStrip: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 16, paddingTop: 6 },
   refreshBtn: {
     width: 34, height: 34, borderRadius: radius.md,
     backgroundColor: colors.surfaceSecondary,
