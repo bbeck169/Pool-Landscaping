@@ -215,6 +215,12 @@ async def payments_summary(user: Dict[str, Any] = Depends(get_current_user),
         "customer_name": 1, "total": 1, "amount_paid": 1, "paid_at": 1,
         "due_date": 1, "status": 1, "deleted_at": 1, "doc_type": 1,
         "created_at": 1,
+        # TD-stripe-webhook-mark-invoice-paid · Feb-2026 — Fix B
+        # belt-and-braces guard reads ``payment_status`` directly off
+        # the row so a sub-penny ``balance > 0`` floating-point drift
+        # can't surface a paid invoice in Outstanding. See the Fix B
+        # comment at the ``if balance > 0`` gate below.
+        "payment_status": 1,
     }
 
     collected = 0.0
@@ -276,7 +282,20 @@ async def payments_summary(user: Dict[str, Any] = Depends(get_current_user),
                     if date_to is not None and _dd > date_to:
                         _in_date_range = False
 
-        if balance > 0 and status in _LIVE_STATUSES and _in_date_range:
+        # TD-stripe-webhook-mark-invoice-paid · Feb-2026 — Fix B.
+        # Belt-and-braces: an invoice with ``payment_status="paid"``
+        # must NEVER tally into Outstanding, even if ``balance > 0``
+        # leaks true by sub-penny floating-point drift
+        # (``_mark_invoice_paid``'s fully-paid gate uses
+        # ``new_paid + 0.01 >= total``, so ``amount_paid`` can lag
+        # ``total`` by up to one cent). Also keeps the BE filter
+        # in agreement with ``InvoicesList.jsx:555`` which uses
+        # ``isUnpaid`` (``payment_status`` gate) instead of ``balance``.
+        payment_status = (inv.get("payment_status") or "").lower()
+        if (balance > 0
+                and payment_status != "paid"
+                and status in _LIVE_STATUSES
+                and _in_date_range):
             outstanding_total += balance
             outstanding_count += 1
             if status == "past_due":

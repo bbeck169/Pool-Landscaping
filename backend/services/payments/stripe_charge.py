@@ -1823,7 +1823,12 @@ async def _mark_invoice_paid(*, tenant_id: str, invoice_id: str,
     inv = await db.quotes.find_one(
         {"id": invoice_id, "tenant_id": tenant_id, "doc_type": "invoice"},
         {"_id": 0, "amount_paid": 1, "total": 1, "payment_status": 1,
-         "paid_from_intents": 1},
+         "paid_from_intents": 1,
+         # TD-stripe-webhook-mark-invoice-paid · Feb-2026 — need the
+         # pre-paid ``status`` so Fix A can stamp
+         # ``previous_status_before_paid`` as an audit crumb for the
+         # eventual refund-restore flow.
+         "status": 1},
     )
     if not inv:
         return False
@@ -1847,6 +1852,32 @@ async def _mark_invoice_paid(*, tenant_id: str, invoice_id: str,
     }
     if fully:
         set_doc["paid_at"] = paid_at
+        # TD-stripe-webhook-mark-invoice-paid · Feb-2026 — Fix A.
+        # Flip ``status`` to the terminal ``"paid"`` state when the
+        # payment fully covers the invoice. Before this fix,
+        # ``_mark_invoice_paid`` touched only ``payment_status`` +
+        # ``amount_paid`` + ``paid_at`` + ``payment_method`` — ``status``
+        # stayed on whatever lifecycle value it carried pre-payment
+        # (``"issued"`` post-Ticket L, ``"draft"`` for pre-fix rows,
+        # etc.). The ``routers/payments_summary.py`` Outstanding filter
+        # double-gates on ``status in _LIVE_STATUSES`` AND ``balance > 0``;
+        # a sub-penny floating-point drift (``new_paid + 0.01 >= total``
+        # above means ``amount_paid`` can lag ``total`` by up to one
+        # cent) leaks ``balance > 0`` → spuriously stays in Outstanding.
+        # Flipping ``status`` here closes the lifecycle coherence gap
+        # and backstops any downstream filter that uses ``status`` as a
+        # live/paid proxy (reports, aging, admin dashboards).
+        #
+        # Audit crumb ``previous_status_before_paid`` preserves the
+        # pre-paid status so a future refund flow (or operator-triggered
+        # revert) can restore the lifecycle value instead of leaving
+        # the invoice stuck at ``"paid"`` after a full refund.  See
+        # follow-up ticket ``TD-stripe-refund-restore-prepaid-status``
+        # (P2) for the restore pass on ``_apply_refund_to_invoice``.
+        set_doc["status"] = "paid"
+        set_doc["previous_status_before_paid"] = (
+            inv.get("status") or ""
+        )
     if payment_intent_id:
         set_doc["stripe_payment_intent_id"] = payment_intent_id
 
