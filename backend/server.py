@@ -3616,6 +3616,52 @@ async def _run_perf_customers_v2_boot(db_handle) -> dict:
     return res if res is not None else {"ok": False, "error": "see logs"}
 
 
+# ── TD-customers-indexes-and-counts-400 · Feb-2026 — v3 compound
+# indexes catalogue. Sibling to ``_run_perf_customers_v2_boot``
+# above. Adds three compound indexes on ``customers`` and
+# ``properties`` for the ``service_category`` filter, the default
+# ``created_desc`` pagination tiebreaker, and the active-property
+# nested lookup. Verify-only pass on ``jobs``/``invoices`` reports
+# existing v1 coverage without re-creating. See
+# ``services.migrations.perf_customers_indexes_v3`` for the
+# catalogue + rollback runbook.
+#
+# Wired as ``must_succeed=False`` — perf polish, not correctness.
+# Mirrors v2's ruling R1 so a background index-build hiccup records
+# ERROR on
+# ``/api/health.init.structural_migrations.perf_customers_v3``
+# without 503'ing ``/health/ready``.
+async def _run_perf_customers_v3_boot(db_handle) -> dict:
+    """Run the ``perf_customers_v3`` structural migration.
+
+    Sentinel-gated internally so a second boot is a no-op. Routed
+    through ``_run_structural_migration`` so any Mongo hiccup
+    surfaces on
+    ``/api/health.init.structural_migrations.perf_customers_v3``
+    with the full traceback in the boot log.
+    """
+    async def _factory():
+        from services.migrations.perf_customers_indexes_v3 import (
+            run as _perf_customers_v3_run,
+        )
+        res = await _perf_customers_v3_run(db_handle)
+        logger.info(
+            "[perf-customers-v3] structural pass — skipped=%s created=%s "
+            "already=%s verified=%s collections=%s",
+            res.get("skipped"),
+            res.get("created"),
+            res.get("already"),
+            res.get("verified"),
+            res.get("collections"),
+        )
+        return res
+
+    res = await _run_structural_migration(
+        "perf_customers_v3", _factory, must_succeed=False,
+    )
+    return res if res is not None else {"ok": False, "error": "see logs"}
+
+
 # Feb-2026 · PDF Importer Sub-phase A — one-shot backfill of
 # ``doc_date`` from ``created_at`` on every PDF-imported quote row.
 # See ``services/migrations/pdf_doc_date_backfill_v1.py`` for the
@@ -4261,6 +4307,12 @@ async def _run_boot_sequence():
     # _lifespan_yield) + the CUS-perf sibling lint. Best-effort per
     # ruling R1 (must_succeed=False inside the wrapper).
     await _run_perf_customers_v2_boot(db)
+    # TD-customers-indexes-and-counts-400 · Feb-2026 — v3 compound
+    # indexes catalogue. Line-adjacent to v2's call so a boot-order
+    # regression that moves either helper out of the STRUCTURAL
+    # bucket is caught by the same pre-yield lint. Best-effort per
+    # the v2 ruling (must_succeed=False inside the wrapper).
+    await _run_perf_customers_v3_boot(db)
     # Feb-2026 · PDF Importer Sub-phase A — historical ``doc_date``
     # backfill.  Copies ``created_at`` → ``doc_date`` on every
     # ``imported_from_pdf=True`` quote missing the new field.  Line-

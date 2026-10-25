@@ -1399,7 +1399,18 @@ async def list_customers(
     # admin can't accidentally rely on a silently-ignored param.
     # Shape mirrors the ``page_size`` validator below so the frontend
     # error-handling layer treats both the same way.
-    if size is not None:
+    #
+    # TD-customers-indexes-and-counts-400 · Feb-2026 — the gate
+    # intentionally uses ``isinstance(size, int)`` instead of
+    # ``size is not None`` so a direct-call bypass from
+    # ``customer_counts`` (which composes ``base`` without a ``size``
+    # key) doesn't inherit the ``Query(None, deprecated=True, ...)``
+    # sentinel object as the default and spuriously 400. HTTP callers
+    # passing ``?size=100`` still land as a real ``int`` through
+    # FastAPI's query-param parser → still rejected with the same
+    # payload (contract preserved). Mirrors the identical
+    # ``isinstance(slim, bool)`` guard a few lines below.
+    if isinstance(size, int):
         raise HTTPException(
             status_code=400,
             detail={
@@ -1446,7 +1457,17 @@ async def list_customers(
     # whitespace entries are dropped; a param that is syntactically
     # present but materially empty (e.g. ``ids_in=`` or ``ids_in=,,``)
     # evaluates to an empty whitelist → immediate empty response.
-    if ids_in is not None:
+    #
+    # TD-customers-indexes-and-counts-400 · Feb-2026 — guard with
+    # ``isinstance(ids_in, str)`` instead of ``is not None`` so a
+    # direct-call bypass from ``customer_counts`` (which composes
+    # ``base`` without an ``ids_in`` key) doesn't inherit the
+    # ``Query(None, ...)`` sentinel and crash on ``.split`` below.
+    # HTTP callers passing ``?ids_in=`` or ``?ids_in=a,b`` still
+    # land as a real ``str`` through FastAPI's query parser.
+    # Mirrors the ``isinstance(size, int)`` fix on the ``size``
+    # gate above.
+    if isinstance(ids_in, str):
         whitelist = [
             x.strip() for x in ids_in.split(",") if x and x.strip()
         ]
@@ -1631,7 +1652,18 @@ async def list_customers(
     # null-or-missing. Legacy clients passing ``?service_category=pool``
     # see a slightly larger result set — that's the semantic
     # correction (not a regression).
-    _p26_cat = (service_category or "").strip().lower() if service_category else None
+    # TD-customers-indexes-and-counts-400 · Feb-2026 — guard with
+    # ``isinstance(service_category, str)`` instead of truthy check
+    # so a direct-call bypass from ``customer_counts`` (which does
+    # not compose ``service_category`` in its ``base`` dict)
+    # doesn't inherit the ``Query(None, ...)`` sentinel (truthy!)
+    # and crash on ``.strip()``. HTTP callers still land as a
+    # real str through FastAPI's query parser.
+    _p26_cat = (
+        service_category.strip().lower()
+        if isinstance(service_category, str) and service_category
+        else None
+    )
     if _p26_cat == "pool":
         q["service_category"] = {"$in": ["pool", "both"]}
     elif _p26_cat == "landscaping":
