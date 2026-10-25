@@ -34,6 +34,7 @@ from pydantic import BaseModel
 
 from config import db
 from routers.tenants import get_current_tenant
+from services.mobile_tech_linkage import assert_user_linked_to_technician
 from utils import get_current_user, new_id, now_iso
 
 logger = logging.getLogger(__name__)
@@ -708,6 +709,13 @@ async def mobile_sync(body: _SyncBatchIn,
     tenant_id = tenant["id"]
     user_id = user.get("id")
 
+    # TD-tech-record-sync-and-fleet-enrollment · Feb-2026 —
+    # Reject tech-role users with no linked ``technicians`` row
+    # (409 ``technician_not_linked``) so the mobile FE can surface
+    # "Contact admin" instead of a generic sync failure.  Admin /
+    # non-tech principals pass through unchanged (helper no-ops).
+    await assert_user_linked_to_technician(user, tenant_id)
+
     # Upsert device record for auditing.
     await db.mobile_devices.update_one(
         {"device_id": body.device_id, "tenant_id": tenant_id},
@@ -837,6 +845,16 @@ async def mobile_offline_bundle(tech_id: str = "me",
                                      user: dict = Depends(get_current_user),
                                      tenant: dict = Depends(get_current_tenant)) -> dict:
     tenant_id = tenant["id"]
+
+    # TD-tech-record-sync-and-fleet-enrollment · Feb-2026 —
+    # Same gate as the POST /mobile/sync companion endpoint: a
+    # tech-role user with no linked ``technicians`` row would
+    # otherwise receive 200 with ``jobs: []`` (silent empty bundle
+    # — mobile FE shows "no work" instead of "contact admin").
+    # 409 is thrown BEFORE the tech_id fallback so an orphan can
+    # never ride on ``user.id`` as the effective tech id.
+    await assert_user_linked_to_technician(user, tenant_id)
+
     if tech_id == "me":
         target_tech = user.get("technician_id") or user.get("id")
     else:
