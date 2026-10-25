@@ -2365,3 +2365,14 @@
 - **Blocked roles unchanged**: admin, manager, customer, super_admin, owner. No cadence/status change. No prod deploy.
 - **Files modified**: mobile/src/lib/fleetRoles.ts (new), mobile/src/hooks/useFleetEmitter.ts, mobile/src/components/fleet/FleetStatusChip.tsx, mobile/app/(app)/more.tsx, mobile/__tests__/td-fleet-emitter-role-gate.test.tsx (new)
 - **Web files referenced**: none; backend/services/technicians_core.py ASSIGNABLE_ROLES (read-only)
+
+## Iteration 181 — Operator 3-issue batch (header cleanup · tech-not-linked sync copy · fleet enrollment toast)
+- **Commits**: `e49e39cb9` (td-mobile-header-layout-cleanup-schedule-only) · `db938fb7c` + `0f3fe6c91` fix-forward (td-mobile-sync-tech-not-linked-error-copy) · `80d0547b4` (td-mobile-fleet-enrollment-pending-toast) · this doc commit
+- **Date**: 2026-10-25
+- **Issue 1**: Schedule only. OfflineBadge moved into a status strip under the Header, which collapses when online + synced. The bell's `marginRight: 52` was removed. On phones narrower than 360 dp, Sync-route + Refresh move into the strip. Test 6/6.
+- **Issue 2**: NEW `src/lib/syncErrors.ts` `isTechNotLinked` (match on `err.detail?.error === 'technician_not_linked'`). routeHydrator sets SyncStatus `tech_not_linked`; OfflineBadge shows an amber "contact your admin" banner with no retry wording. Real failures keep the red retry pill. Test 7/7. The fix-forward widened OfflineBadge's SyncStatus union (tsc back to 629).
+- **Issue 3**: `FleetEmitterRunner` subscribes `onStatusChange` and shows ONE info toast "Enrollment pending — contact admin" on `not_in_fleet` (403). It uses a sync `_claimed` guard + the AsyncStorage flag `fleet_enrollment_pending_toast_shown`, so it shows once per device, including across restarts. Emitter stop-on-403 / no-retry unchanged. Test 6/6. While the test was being written, the mock factory used TS parameter properties, which `jest.mock`'s hoist guard rejects (`status` out-of-scope); replaced with explicit field assignment.
+- **Checks**: fleet + templates suites 10/10, 110/110 · tsc 629 baseline · eslint clean. Preview only; no OTA / deploy triggered.
+- **Templates Library Phase 3 (Mobile)**: re-requested in this session's prompt but ALREADY SHIPPED (PRD §5, `src/screens/templates/*`, `src/components/templates/*`, `src/api/templates.ts`, `app/(app)/templates/*`, 4 test suites green). Not rebuilt. No external repo cloned.
+- **Files modified**: mobile/app/(app)/schedule/calendar.tsx, mobile/src/components/OfflineBadge.tsx, mobile/src/services/routeHydrator.ts, mobile/src/lib/syncErrors.ts (new), mobile/src/components/fleet/FleetEmitterRunner.tsx, mobile/__tests__/td-mobile-header-layout-cleanup.test.tsx (new), mobile/__tests__/td-mobile-sync-tech-not-linked.test.tsx (new), mobile/__tests__/td-mobile-fleet-enrollment-pending-toast.test.tsx (new)
+- **Web files referenced**: none (mobile-only)

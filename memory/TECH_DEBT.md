@@ -2494,3 +2494,12 @@ Original approval-request note:
 
 
 
+
+---
+
+## Operator 3-issue mobile batch — CLOSED (2026-10-25)
+
+- **td-mobile-header-layout-cleanup-schedule-only — CLOSED** (`e49e39cb9`). Applies to the Schedule header only; the shared Header (`widgets.tsx`) is untouched. Follow-up candidate: apply the same strip pattern to other screens if the operator wants it.
+- **td-mobile-sync-tech-not-linked-error-copy — CLOSED** (`db938fb7c`, fix-forward `0f3fe6c91`). A 409 with `technician_not_linked` now shows an amber "contact your admin" banner instead of the generic "Sync failed — retry". The match is on the error code, so it works on any endpoint. The BE contract was dispatched separately.
+- **td-mobile-fleet-enrollment-pending-toast — CLOSED** (`80d0547b4`). A 403 `not_in_fleet` shows a one-time "Enrollment pending — contact admin" toast, persisted per device. Root fix is still an operator/BE action: create `fleet_membership` rows (the preview tenant has 0).
+- Baselines held: tsc 629; the pre-existing failing Jest suites were not touched.
