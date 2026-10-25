@@ -51,10 +51,10 @@ describe.each([
     expect(isCompactScheduleHeader(width)).toBe(compact);
     const right = q.getByTestId("schedule-right");
     const strip = q.getByTestId("schedule-status-strip");
-    expect(!!right.findAll((n) => n.props.testID === "route-actions").length).toBe(!compact);
-    expect(!!strip.findAll((n) => n.props.testID === "route-actions").length).toBe(compact);
+    expect(!!right.findAll((n: any) => n.props.testID === "route-actions").length).toBe(!compact);
+    expect(!!strip.findAll((n: any) => n.props.testID === "route-actions").length).toBe(compact);
     expect(q.getAllByTestId("route-actions")).toHaveLength(1);
-    expect(right.findAll((n) => n.props.testID === "schedule-header-bell").length).toBeGreaterThan(0);
+    expect(right.findAll((n: any) => n.props.testID === "schedule-header-bell").length).toBeGreaterThan(0);
   });
 
   it("title is the only shrinking element: full 'Schedule' text, single line, shrinkable box; right cluster no-shrink, no fixed bell margin", () => {
