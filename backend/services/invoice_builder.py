@@ -39,6 +39,25 @@ from utils import new_id, now_iso
 DEFAULT_DUE_DATE_OFFSET_DAYS = 30
 
 
+# TD-estimate-to-invoice-conversion-doctype-and-balance · Feb-2026
+# ─ Fix A — placeholder-title catalogue. See the per-call usage site
+# below for the full rationale. Case-insensitive match; the normalised
+# comparison key is ``.strip().lower()`` so trailing whitespace +
+# capitalisation variations ("Estimate ", "ESTIMATE", "estimate") all
+# collapse to the same bucket. "" is included so an explicit blank
+# title also folds to "Invoice" (previously that case already fell to
+# "Invoice" via the ``or`` clause — the new path keeps parity).
+_PLACEHOLDER_SOURCE_TITLES: frozenset[str] = frozenset({
+    "",
+    "estimate",
+    "new estimate",
+    "quote",
+    "new quote",
+    "proposal",
+    "untitled",
+})
+
+
 async def build_invoice_doc_from_source(
     *,
     src_doc: Dict[str, Any],
@@ -115,6 +134,28 @@ async def build_invoice_doc_from_source(
         src_doc.get("notes") or ""
     )
 
+    # TD-estimate-to-invoice-conversion-doctype-and-balance · Feb-2026
+    # ─ Fix A — placeholder-title normalization. ``build_invoice_doc_from_source``
+    # previously copied ``src_doc["title"]`` verbatim, which meant a source
+    # estimate whose admin never renamed from the "Estimate" default landed
+    # as ``title="Estimate"`` on the destination invoice — visible under
+    # the InvoicesList "Invoice" column (``InvoicesList.jsx:1034`` renders
+    # ``invoice.title`` in that column). Operator-reported bug:
+    # ``INV-2026-00076`` displayed as "Estimate".
+    #
+    # Guard swaps a tight placeholder set (case-insensitive, trimmed) for
+    # "Invoice"; non-placeholder titles pass through unchanged so custom
+    # titles like "Pool Repair — Main pump" are preserved verbatim.
+    src_title_raw = src_doc.get("title")
+    src_title_norm = (src_title_raw or "").strip().lower()
+    if src_title_norm in _PLACEHOLDER_SOURCE_TITLES:
+        resolved_title = "Invoice"
+    else:
+        # Preserve the admin's custom title. Fall back to "Invoice" only
+        # when the source had no title at all (matches pre-fix behaviour
+        # on empty/null source titles).
+        resolved_title = (src_title_raw or "").strip() or "Invoice"
+
     customer_id = src_doc.get("customer_id")
     customer_name = src_doc.get("customer_name") or ""
     if customer_id and not customer_name:
@@ -140,8 +181,9 @@ async def build_invoice_doc_from_source(
         "recipient_type": recipient_type or None,
         "recipient_id": recipient_id,
         "property_id": src_doc.get("property_id"),
-        # Title carries verbatim — admin can rename post-conversion.
-        "title": src_doc.get("title") or "Invoice",
+        # Title carries verbatim unless the source title is a known
+        # placeholder — see Fix A rationale above.
+        "title": resolved_title,
         "doc_type": "invoice",            # Phase 11 invariant
         "line_items": items,
         "tax_rate": _tax_rate,
@@ -151,7 +193,22 @@ async def build_invoice_doc_from_source(
         "amount_paid": 0.0,
         "issue_date": issue_date,
         "due_date": due_date,
-        "status": "draft",
+        # TD-estimate-to-invoice-conversion-doctype-and-balance ·
+        # Feb-2026 — Fix B. Converted invoices are semantically
+        # ``issued`` (admin explicitly committed to invoicing), NOT
+        # ``draft``. The pre-fix ``status="draft"`` kept converted
+        # rows out of ``routers/payments_summary.py``'s outstanding
+        # tally (``_LIVE_STATUSES`` filter) AND out of the canonical
+        # ``services/reporting/paid_date.py::OUTSTANDING_STATUS_FILTER``
+        # — operator-visible symptom: Outstanding tile was under-
+        # reporting AR by every converted invoice's balance. Mirrors
+        # the ``services/auto_invoice.py:253`` pattern which also
+        # stamps ``status="issued"`` on job-complete auto-invoices.
+        # ``issued_at`` stamp added for parity with that sibling path
+        # so downstream aging / reports have a single consistent
+        # anchor for "when did this become an obligation?".
+        "status": "issued",
+        "issued_at": now_iso(),
         "payment_status": "unpaid",
         # Feb-2026 · Automation suppression — convert-from-quote
         # produces a native invoice; stamp False explicitly so

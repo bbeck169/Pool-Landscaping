@@ -78,7 +78,17 @@ _MONTH_LABELS = [
     "Jan", "Feb", "Mar", "Apr", "May", "Jun",
     "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ]
-_LIVE_STATUSES = {"sent", "accepted", "past_due"}
+# TD-estimate-to-invoice-conversion-doctype-and-balance · Feb-2026 —
+# Fix C. ``_LIVE_STATUSES`` previously omitted ``"issued"`` even though
+# the canonical ``services/reporting/paid_date.py::OUTSTANDING_STATUS_FILTER``
+# includes it, AND the native ``services/auto_invoice.py:253`` write
+# path stamps ``status="issued"`` on job-complete auto-invoices. The
+# drift meant every ``issued`` invoice was invisible to the
+# ``/api/payments/summary`` Outstanding tile. Aligning the two
+# filters surfaces real AR + fixes the operator-reported
+# convert-to-invoice bug (converted rows now also carry
+# ``status="issued"`` per the Fix B change in ``invoice_builder.py``).
+_LIVE_STATUSES = {"issued", "sent", "accepted", "past_due"}
 # TD-93 · Feb-2026 — same whitelist as
 # ``routers/quotes.py::_LIST_QUOTES_DATE_FIELD_VALUES``.  Kept
 # duplicated (not imported) so the summary endpoint has no

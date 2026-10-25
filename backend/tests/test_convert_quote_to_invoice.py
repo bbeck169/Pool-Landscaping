@@ -232,7 +232,12 @@ def test_quote_happy_path_creates_invoice_and_marks_source():
     assert inv["customer_id"] == cid
     assert inv["source"] == "convert_from_quote"
     assert inv["source_quote_id"] == qid
-    assert inv["status"] == "draft"
+    # TD-estimate-to-invoice-conversion-doctype-and-balance · Feb-2026
+    # — converted invoices now carry status="issued" (was "draft")
+    # so they land in the Outstanding tile immediately. See
+    # ``services/invoice_builder.py`` Fix B.
+    assert inv["status"] == "issued"
+    assert inv["issued_at"]
     assert inv["payment_status"] == "unpaid"
     assert len(inv["line_items"]) == 2
     assert inv["tax_rate"] == 8.0
