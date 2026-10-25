@@ -15,7 +15,7 @@ import { useOnline, getSecondsSinceLastSuccess } from "@/src/lib/offline/netStat
 import { font, fontSize, radius, spacing } from "@/src/theme";
 import { TECH_NOT_LINKED_COPY } from "@/src/lib/syncErrors";
 
-type SyncStatus = "synced" | "partial" | "failed" | "idle";
+type SyncStatus = "synced" | "partial" | "failed" | "idle" | "tech_not_linked";
 
 type CacheStats = {
   cached: number;
