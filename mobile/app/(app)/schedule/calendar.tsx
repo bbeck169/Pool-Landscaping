@@ -56,6 +56,7 @@ import RainFlag from "@/src/components/weather/RainFlag";
 import WeekStrip from "@/src/components/schedule/WeekStrip";
 import { showConfirm } from "@/src/components/ConfirmModal";
 import { bulkDeleteJobs } from "@/src/lib/jobsBulkDelete";
+import { isCompactScheduleHeader } from "@/src/lib/scheduleHeader";
 import { useToast } from "@/src/components/ToastProvider";
 // Phase 23 · 2026-08-02 — Service / Repair progress ring tiles above the grid.
 import JobTrackerTiles from "./JobTrackerTiles";
@@ -725,7 +726,7 @@ function ScheduleCalendarInner() {
   // Sync-route + Refresh buttons move to the status strip so the title row only
   // carries the bell + hamburger and "Schedule" never truncates. (Hook is
   // called above the early returns — see useWindowDimensions near useRouteHydration.)
-  const compactHeader = winWidth < 360;
+  const compactHeader = isCompactScheduleHeader(winWidth);
   const routeActions = (
     <>
       {/* Sync route button */}

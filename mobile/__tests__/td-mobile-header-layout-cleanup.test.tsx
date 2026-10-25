@@ -30,7 +30,7 @@ it("H2 · OfflineBadge renders in a separate strip directly under the Header", (
 });
 
 it("H2b · narrow phones (<360): Sync-route + Refresh move from the title row to the strip; wide keep them in the header", () => {
-  expect(SRC).toContain("const compactHeader = winWidth < 360;");
+  expect(SRC).toContain("const compactHeader = isCompactScheduleHeader(winWidth);");
   expect(RIGHT).toContain("{!compactHeader && routeActions}");
   const strip = HEADER.slice(HEADER.indexOf('testID="schedule-status-strip"'));
   expect(strip).toContain("{compactHeader && routeActions}");
