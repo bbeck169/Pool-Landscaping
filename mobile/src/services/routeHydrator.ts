@@ -15,6 +15,7 @@ import { api } from "@/src/api";
 import { writeCache, readCache } from "@/src/services/readCache";
 import { isOnlineNow } from "@/src/services/sync/netBus";
 import { stripBase64FromReport } from "@/src/services/photoUrlCache";
+import { isTechNotLinked, TECH_NOT_LINKED_COPY } from "@/src/lib/syncErrors";
 
 // ── Cache key helpers ────────────────────────────────────────────────
 export const CK = {
@@ -24,7 +25,7 @@ export const CK = {
   hydrationMeta: (userId: string) => `hydration:meta:${userId}`,
 } as const;
 
-export type SyncStatus = "synced" | "partial" | "failed" | "idle";
+export type SyncStatus = "synced" | "partial" | "failed" | "idle" | "tech_not_linked";
 
 export type HydrationMeta = {
   lastSyncedAt: string;        // ISO — only stamped when cached === total (clean sync)
@@ -66,11 +67,16 @@ export function getHydrationMeta(): HydrationMeta {
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
+/** Last error swallowed by `_safeFetch` (TD-mobile-sync-tech-not-linked: lets the
+ *  caller tell an admin-action 409 apart from a transient failure). */
+let _lastFetchError: unknown = null;
+
 /** Fetch a single endpoint, returning null on failure (never throws). */
 async function _safeFetch(url: string, signal?: AbortSignal): Promise<any | null> {
   try {
     return await api.get(url, signal ? { signal } : undefined);
-  } catch {
+  } catch (e) {
+    _lastFetchError = e;
     return null;
   }
 }
@@ -104,6 +110,7 @@ export async function hydrateToday(
   _abortController = ac;
 
   _meta = { ..._meta, inProgress: true, lastError: "" };
+  _lastFetchError = null;
   _notify();
 
   try {
@@ -112,11 +119,13 @@ export async function hydrateToday(
     if (ac.signal.aborted) return _meta;
 
     if (!bundle) {
-      // Network error or endpoint failure — mark as failed.
+      // TD-mobile-sync-tech-not-linked · orphan-tech 409 is an admin-action state,
+      // not a transient failure; everything else keeps the existing "failed".
+      const notLinked = isTechNotLinked(_lastFetchError);
       _meta = {
         ..._meta,
-        syncStatus: "failed",
-        lastError: "Could not reach the server.",
+        syncStatus: notLinked ? "tech_not_linked" : "failed",
+        lastError: notLinked ? TECH_NOT_LINKED_COPY : "Could not reach the server.",
         lastPartialSyncAt: new Date().toISOString(),
         inProgress: false,
       };
@@ -217,11 +226,12 @@ export async function hydrateToday(
     _notify();
     return _meta;
   } catch (e: any) {
+    const notLinked = isTechNotLinked(e);
     _meta = {
       ..._meta,
       inProgress: false,
-      syncStatus: "failed",
-      lastError: e?.message || "Hydration failed.",
+      syncStatus: notLinked ? "tech_not_linked" : "failed",
+      lastError: notLinked ? TECH_NOT_LINKED_COPY : e?.message || "Hydration failed.",
       lastPartialSyncAt: new Date().toISOString(),
     };
     _notify();

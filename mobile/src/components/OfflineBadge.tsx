@@ -13,6 +13,7 @@ import { Ionicons } from "@expo/vector-icons";
 
 import { useOnline, getSecondsSinceLastSuccess } from "@/src/lib/offline/netStatus";
 import { font, fontSize, radius, spacing } from "@/src/theme";
+import { TECH_NOT_LINKED_COPY } from "@/src/lib/syncErrors";
 
 type SyncStatus = "synced" | "partial" | "failed" | "idle";
 
@@ -44,8 +45,8 @@ export default function OfflineBadge({ renderStale = false, cacheStats, testID }
   const staleForced = renderStale && getSecondsSinceLastSuccess() > 60;
   const status = cacheStats?.syncStatus || "idle";
 
-  // Show when offline, stale, or sync is partial/failed (even online)
-  const showPartialOnline = online && (status === "partial" || status === "failed");
+  // Show when offline, stale, or sync is partial/failed/tech-not-linked (even online)
+  const showPartialOnline = online && (status === "partial" || status === "failed" || status === "tech_not_linked");
   if (online && !staleForced && !showPartialOnline) return null;
 
   const hasStats = cacheStats && cacheStats.total > 0;
@@ -55,10 +56,17 @@ export default function OfflineBadge({ renderStale = false, cacheStats, testID }
   // ── Determine pill style + label ────────────────────────────────────
   let bg = "#E5E7EB";
   let fg = "#4B5563";
-  let icon: "cloud-offline-outline" | "alert-circle" | "sync-outline" | "checkmark-circle-outline" = "cloud-offline-outline";
+  let icon: "cloud-offline-outline" | "alert-circle" | "sync-outline" | "checkmark-circle-outline" | "information-circle" = "cloud-offline-outline";
   let label = "";
 
-  if (offline) {
+  if (status === "tech_not_linked") {
+    // TD-mobile-sync-tech-not-linked · admin-action state (BE 409), not a
+    // transient failure: amber + info icon, no "retry" wording. Online or offline.
+    bg = "#FEF3C7";
+    fg = "#92400E";
+    icon = "information-circle";
+    label = TECH_NOT_LINKED_COPY;
+  } else if (offline) {
     if (status === "failed" || (hasStats && cacheStats!.cached === 0)) {
       bg = "#FEE2E2";
       fg = "#991B1B";
