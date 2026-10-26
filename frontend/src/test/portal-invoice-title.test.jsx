@@ -178,23 +178,39 @@ describe("TD-71 · PortalPages.jsx wires through the shared helpers", () => {
     );
   });
 
-  it("LIST row title reads from resolvePortalInvoiceTitle(r), not r.title directly", () => {
-    // Negative lock — the pre-TD-71 ``{r.title}`` inside the
-    // invoice LIST row is replaced.
-    expect(PP_SRC).toMatch(/_displayTitle\s*=\s*resolvePortalInvoiceTitle\(r\)/);
-    expect(PP_SRC).toMatch(/>\s*\{_displayTitle\}\s*</);
+  it("LIST row renders via shared <InvoiceTable /> primitive (Ticket FF)", () => {
+    // Ticket FF · Feb-2026 — the pre-TD-71 ``<li>`` card list was
+    // replaced with the shared ``<InvoiceTable />`` primitive.
+    // The title still flows through ``getInvoiceDisplayTitle``
+    // (now owned by the primitive) and the FF case-reorder
+    // handles the ``Import #<n>`` retroactive promise.  The
+    // ``resolvePortalInvoiceTitle`` composition that TD-71 added
+    // to this surface is intentionally dropped — Date column
+    // replaces the ``Created MM/DD/YYYY`` affordance per FF spec.
+    expect(PP_SRC).toMatch(
+      /import\s+InvoiceTable\s+from\s+"@\/components\/invoices\/InvoiceTable"/,
+    );
+    expect(PP_SRC).toMatch(
+      /<InvoiceTable[\s\S]{0,300}testidPrefix="portal-invoices"/,
+    );
+    expect(PP_SRC).toMatch(
+      /viewHref=\{\(r\)\s*=>\s*`\/portal\/invoices\/\$\{r\.id\}`\}/,
+    );
   });
 
-  it("LIST row surfaces the Created MM/DD/YYYY line additive to the due-date line", () => {
-    expect(PP_SRC).toMatch(/_createdLine\s*=\s*formatInvoiceCreatedDate\(r\)/);
-    expect(PP_SRC).toMatch(/\{_createdLine\s*\?\s*\(/);
-    // Due-date line stays as-is below (operator-ruled "additive").
-    expect(PP_SRC).toMatch(/\{r\.due_date\s*\?\s*`Due\s*\$\{r\.due_date\}`\s*:\s*"No due date"\}/);
-  });
-
-  it("Addressable testids for both new lines (QA + regression)", () => {
-    expect(PP_SRC).toMatch(/data-testid=\{`port-inv-title-\$\{r\.id\}`\}/);
-    expect(PP_SRC).toMatch(/data-testid=\{`port-inv-created-\$\{r\.id\}`\}/);
+  it("Pre-FF ``_displayTitle`` + ``_createdLine`` card wiring is retired on /portal/invoices", () => {
+    // The PortalInvoices body should no longer carry the TD-71
+    // ``_displayTitle = resolvePortalInvoiceTitle(r)`` composition
+    // or the ``_createdLine`` line.  ``PortalEstimates`` below is
+    // unchanged (its own test block in §5 locks that).
+    const invBlock = PP_SRC.match(
+      /export function PortalInvoices\(\)[\s\S]*?^\}/m,
+    );
+    expect(invBlock).not.toBeNull();
+    expect(invBlock[0]).not.toMatch(/_displayTitle/);
+    expect(invBlock[0]).not.toMatch(/_createdLine/);
+    expect(invBlock[0]).not.toMatch(/port-inv-title-/);
+    expect(invBlock[0]).not.toMatch(/port-inv-created-/);
   });
 });
 

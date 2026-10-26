@@ -331,13 +331,30 @@ describe("Surface wire-up · all 3 consume the helper", () => {
       /resolvePortalInvoiceTitle\(\s*\{[\s\S]{0,200}title:\s*getInvoiceDisplayTitle\(r\)/);
   });
 
-  it("PortalPages imports + uses the helper on BOTH call sites", () => {
+  it("PortalPages still imports getInvoiceDisplayTitle; PortalInvoices moved to shared primitive", () => {
+    // Ticket FF · Feb-2026 — ``PortalInvoices`` was migrated to
+    // the shared ``<InvoiceTable />`` primitive (which owns the
+    // ``getInvoiceDisplayTitle`` call internally), so the TOP
+    // call site in PortalPages.jsx is gone.  The BOTTOM call
+    // site in ``PortalEstimates`` keeps the pre-FF composition
+    // (``resolvePortalInvoiceTitle({...r, title: getInvoice...})``)
+    // because the estimates surface is OUT OF SCOPE for FF.
     expect(portal).toMatch(
       /import\s+\{\s*getInvoiceDisplayTitle\s*\}\s+from\s+"@\/utils\/invoiceTitle"/);
+    expect(portal).toMatch(
+      /import\s+InvoiceTable\s+from\s+"@\/components\/invoices\/InvoiceTable"/);
     const matches = portal.match(
       /resolvePortalInvoiceTitle\(\s*\{[\s\S]{0,200}title:\s*getInvoiceDisplayTitle\(r\)/g);
+    // Exactly ONE call site remains — the PortalEstimates list.
     expect(matches).toBeTruthy();
-    expect(matches.length).toBe(2);
+    expect(matches.length).toBe(1);
+    // Shared primitive still carries the helper.
+    const invTable = fs.readFileSync(
+      path.resolve(process.cwd(),
+        "src/components/invoices/InvoiceTable.jsx"),
+      "utf-8");
+    expect(invTable).toMatch(
+      /import\s+\{\s*getInvoiceDisplayTitle\s*\}\s+from\s+"@\/utils\/invoiceTitle"/);
   });
 
   it("no 'invoice.title || \"Invoice\"' hardcode in any surface", () => {

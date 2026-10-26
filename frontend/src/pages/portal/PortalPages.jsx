@@ -38,6 +38,10 @@ import {
 // helper used in composition with resolvePortalInvoiceTitle on
 // the two invoice-list surfaces below.
 import { getInvoiceDisplayTitle } from "@/utils/invoiceTitle";
+// Ticket FF · Feb-2026 — Shared invoice-table primitive, used by
+// PortalInvoices below (list surface).  PortalEstimates keeps its
+// legacy ``<ul>`` + ``resolvePortalInvoiceTitle`` composition.
+import InvoiceTable from "@/components/invoices/InvoiceTable";
 // DTP-1 · Feb-2026 — Shared portal lightbox for PortalServiceDetail
 // (pilot). Other exports in this file keep their light ``colors``
 // binding untouched.
@@ -222,63 +226,35 @@ export function PortalServiceDetail() {
 
 // ──────────────── /portal/invoices ────────────────
 export function PortalInvoices() {
-  const navigate = useNavigate();
   const [rows, setRows] = useState(null);
   useEffect(() => {
     api.get("/quotes?doc_type=invoice").then(setRows).catch(() => setRows([]));
   }, []);
-  // TD-77 · Feb-2026 — "Total outstanding" green-gradient tile
-  // removed per operator directive.  The pre-TD-77 ``total``
-  // reduce + hero tile has been deleted.  Per-row balance stays
-  // (computed inline in the ``.map`` below) so individual
-  // invoice rows keep showing their due amounts; only the
-  // aggregate header tile is gone.
+  // Ticket FF · Feb-2026 — the pre-FF ``<li>`` card list was
+  // replaced with the shared ``<InvoiceTable />`` primitive so the
+  // portal and the admin Customer Profile Invoices tab render the
+  // same 6-column shape (sans Client Name on this surface — the
+  // viewer IS the client).  The TD-71 ``resolvePortalInvoiceTitle``
+  // "Import #<n>" rewrite + ``formatInvoiceCreatedDate`` created-
+  // line affordances are intentionally dropped on this surface
+  // (operator Ticket FF table-redesign decision — the Date column
+  // replaces the created line, and the FF helper reorder means
+  // ``getInvoiceDisplayTitle`` prefers the first line item name
+  // which already handles the Import #<n> case retroactively).
+  // ``resolvePortalInvoiceTitle`` + ``formatInvoiceCreatedDate``
+  // remain in use on the PortalEstimates list below (unchanged).
   return (
     <PortalPageShell>
-    <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="portal-invoices" data-tour-id="invoices-list">
+    <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="portal-invoices" data-tour-id="invoices-list">
       <PageHeader title="My Invoices" subtitle="Pay online, download receipts." />
       {rows === null ? <Skeleton style={{ height: 220 }} /> :
        rows.length === 0 ? <EmptyState icon={FileText} title="No invoices yet" /> :
-       <ul className="space-y-2">
-         {rows.map((r) => {
-           const balance = Math.max(0, Number(r.total || 0) - Number(r.amount_paid || 0));
-           // TD-71 · Feb-2026 — customer-friendly title (rewrites
-           // ``Import #<n>`` on imported invoices only, else
-           // passthrough) + additive ``Created MM/DD/YYYY`` line
-           // below the title. The pre-TD-71 "No due date" row
-           // stays as the SECOND line (unchanged).
-           const _displayTitle = resolvePortalInvoiceTitle({
-             ...r, title: getInvoiceDisplayTitle(r),
-           });
-           const _createdLine = formatInvoiceCreatedDate(r);
-           return (
-             <li key={r.id} onClick={() => navigate(`/portal/invoices/${r.id}`)}
-               className="cursor-pointer flex items-center gap-3 p-4 rounded-xl"
-               style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
-               data-testid={`port-inv-${r.id}`}>
-               <div className="flex-1 min-w-0">
-                 <div
-                   className="text-sm font-semibold"
-                   style={{ color: colors.onSurface }}
-                   data-testid={`port-inv-title-${r.id}`}
-                 >{_displayTitle}</div>
-                 {_createdLine ? (
-                   <div
-                     className="text-xs"
-                     style={{ color: colors.muted }}
-                     data-testid={`port-inv-created-${r.id}`}
-                   >{_createdLine}</div>
-                 ) : null}
-                 <div className="text-xs" style={{ color: colors.muted }}>{r.due_date ? `Due ${r.due_date}` : "No due date"}</div>
-               </div>
-               <div className="text-right">
-                 <div className="font-semibold" style={{ color: colors.onSurface }}>{money(r.total)}</div>
-                 <Chip label={r.payment_status || "unpaid"} tone={r.payment_status === "paid" ? "success" : balance > 0 ? "danger" : "warning"} />
-               </div>
-             </li>
-           );
-         })}
-       </ul>}
+       <InvoiceTable
+         rows={rows}
+         columns={["invoice_number", "title", "date", "amount", "status", "actions"]}
+         viewHref={(r) => `/portal/invoices/${r.id}`}
+         testidPrefix="portal-invoices"
+       />}
     </div>
       </PortalPageShell>
   );
