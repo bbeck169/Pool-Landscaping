@@ -113,6 +113,45 @@ export default function PropertiesTab({ customer, onToast, onRefreshCustomer }) 
     }
   };
 
+  // Ticket AA · Feb-2026 — per-property service_category chip-group.
+  // Click a chip to PATCH; click the currently-selected chip to
+  // clear (writes null, source=admin_cleared on the BE).  Optimistic
+  // local state update + rollback on error.
+  const patchCategory = React.useCallback(async (pid, nextCat) => {
+    const prevRow = rows.find((r) => r.id === pid);
+    const prevCat = prevRow?.service_category || null;
+    const payloadCat = nextCat === prevCat ? null : nextCat;
+    // Optimistic update.
+    setRows((rs) => rs.map((r) =>
+      r.id === pid ? { ...r, service_category: payloadCat } : r,
+    ));
+    try {
+      const updated = await api.patch(
+        `/properties/${pid}`, { service_category: payloadCat },
+      );
+      setRows((rs) => rs.map((r) =>
+        r.id === pid ? { ...r, ...updated } : r,
+      ));
+      onToast?.({
+        tone: "success",
+        message: payloadCat
+          ? `Property category set to ${payloadCat}`
+          : "Property category cleared",
+      });
+      // Nav-based refetch of dashboard tiles happens naturally on
+      // next dashboard visit — no cache invalidation plumbing
+      // needed per operator decision 3c.  Signal parent so the
+      // combined-category badge recomputes from the fresh list.
+      onRefreshCustomer?.();
+    } catch (e) {
+      setRows((rs) => rs.map((r) =>
+        r.id === pid ? { ...r, service_category: prevCat } : r,
+      ));
+      onToast?.({ tone: "error",
+                     message: `Category update failed: ${e.message}` });
+    }
+  }, [rows, onToast, onRefreshCustomer]);
+
   if (loading) {
     return (
       <div className="text-sm" style={{ color: colors.onSurfaceSecondary }} data-testid="props-loading">
@@ -161,6 +200,7 @@ export default function PropertiesTab({ customer, onToast, onRefreshCustomer }) 
               onOpen={() => setDrawerId(p.id)}
               onDuplicate={() => duplicate(p.id)}
               onDeleteAsk={() => setPendingDeleteId(p.id)}
+              onCategoryChange={(next) => patchCategory(p.id, next)}
               draggable
               onDragStart={onCardDragStart(p.id)}
               onDragOver={onCardDragOver(p.id)}
@@ -216,7 +256,63 @@ export default function PropertiesTab({ customer, onToast, onRefreshCustomer }) 
   );
 }
 
-function PropertyCard({ property, onOpen, onDuplicate, onDeleteAsk, draggable, onDragStart, onDragOver, onDragEnd }) {
+function PropertyCategorySelector({ propertyId, current, onPick }) {
+  // Ticket AA · Feb-2026 — three-chip inline selector matching the
+  // ServiceCategoryControl visual language.  Click a chip to PATCH;
+  // click the selected chip to clear.
+  const OPTIONS = [
+    { value: "pool",         label: "Pool",         tone: "sky" },
+    { value: "landscaping",  label: "Landscaping",  tone: "emerald" },
+    { value: "both",         label: "Both",         tone: "violet" },
+  ];
+  const toneBg = {
+    sky:     { on: "#DBEAFE", off: "transparent",  fg: "#1E3A8A", border: "#93C5FD" },
+    emerald: { on: "#D1FAE5", off: "transparent",  fg: "#064E3B", border: "#6EE7B7" },
+    violet:  { on: "#EDE9FE", off: "transparent",  fg: "#4C1D95", border: "#C4B5FD" },
+  };
+  return (
+    <div
+      className="inline-flex items-center gap-1"
+      // Prevent card's onClick (opens drawer) from firing when the
+      // operator picks a chip.
+      onClick={(e) => e.stopPropagation()}
+      data-testid={`pc-category-group-${propertyId}`}
+      role="radiogroup"
+      aria-label="Property service category"
+    >
+      {OPTIONS.map((o) => {
+        const selected = current === o.value;
+        const t = toneBg[o.tone];
+        return (
+          <button
+            key={o.value}
+            type="button"
+            role="radio"
+            aria-checked={selected}
+            onClick={() => onPick?.(o.value)}
+            title={selected
+              ? `Clear category (currently ${o.label})`
+              : `Set category to ${o.label}`}
+            className="px-2 py-0.5 rounded-full text-[11px] font-semibold transition hover:brightness-95"
+            style={{
+              backgroundColor: selected ? t.on : t.off,
+              color: selected ? t.fg : t.fg,
+              border: `1px solid ${selected ? t.border : t.border}`,
+              opacity: selected ? 1 : 0.55,
+            }}
+            data-testid={`pc-cat-${o.value}-${propertyId}`}
+            data-selected={selected ? "true" : "false"}
+          >
+            {o.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+
+function PropertyCard({ property, onOpen, onDuplicate, onDeleteAsk, onCategoryChange, draggable, onDragStart, onDragOver, onDragEnd }) {
   const contact = property.site_contact || {};
   const primaryPhone = (contact.mobiles || []).find((m) => m.is_primary)?.number_e164;
   const primaryEmail = (contact.emails || []).find((e) => e.is_primary)?.address;
@@ -276,21 +372,14 @@ function PropertyCard({ property, onOpen, onDuplicate, onDeleteAsk, draggable, o
       </div>
 
       <div className="flex flex-wrap gap-1 mt-1">
-        {property.service_category === "pool" ? (
-          <Chip label="Pool"
-                 tone="sky"
-                 testid={`pc-cat-pool-${property.id}`} />
-        ) : null}
-        {property.service_category === "landscaping" ? (
-          <Chip label="Landscaping"
-                 tone="emerald"
-                 testid={`pc-cat-landscaping-${property.id}`} />
-        ) : null}
-        {property.service_category === "both" ? (
-          <Chip label="Both services"
-                 tone="violet"
-                 testid={`pc-cat-both-${property.id}`} />
-        ) : null}
+        {/* Ticket AA · Feb-2026 — per-property category chip-group.
+            Interactive: click to PATCH; click the selected chip to
+            clear.  Replaces the P2 #6 read-only chips. */}
+        <PropertyCategorySelector
+          propertyId={property.id}
+          current={property.service_category || null}
+          onPick={onCategoryChange}
+        />
         {svcTypes.map((s) => (
           <Chip key={s} label={s} tone="brandTertiary" />
         ))}

@@ -18,7 +18,8 @@ import ClickToCallButton from "@/components/telephony/ClickToCallButton";
 import { Button, Modal, TextInput, Skeleton, Chip, StatusPill, EmptyState, Toast } from "@/components/ui-kit";
 import { MediaLibraryPicker } from "@/components/marketing/MediaLibraryPicker";
 import { ActivationControl } from "@/components/customers/ActivationControl";
-import { ServiceCategoryControl } from "@/components/customers/ServiceCategoryControl";
+import { CombinedCategoryBadge }
+  from "@/components/customers/CombinedCategoryBadge";
 import CustomerEquipmentLibrary from "@/components/customers/CustomerEquipmentLibrary";
 import CustomerWarrantiesLibrary from "@/components/customers/CustomerWarrantiesLibrary";
 import CustomerActionDropdowns from "@/components/customers/CustomerActionDropdowns";
@@ -1512,16 +1513,18 @@ export default function CustomerDetail() {
                   Inactive
                 </span>
               ) : null}
-              {/* P2 #6 · Feb-2026 — Service Category dropdown. Admin-
-                  only edit affordance; PATCH /customers/{cid}/service-
-                  category.  Values "pool"/"landscaping"/"both" + the
-                  "Not set" clear option.  Toast on success/error. */}
-              <ServiceCategoryControl
-                customer={customer}
-                onOptimisticSet={(next) =>
-                  setCustomer((c) => ({ ...c, service_category: next }))
-                }
-              />
+              {/* Ticket AA · Feb-2026 — the P2 #6 editable
+                  ``<ServiceCategoryControl>`` was retired in
+                  favour of a read-only combined badge computed
+                  from the customer's property-level categories.
+                  Per-property authoring lives on each
+                  ``PropertyCard`` chip-group in the Properties
+                  tab below.  TD-aa-customer-category-cascade
+                  tracks making the legacy
+                  ``PATCH /customers/{cid}/service-category``
+                  endpoint cascade to its properties on write
+                  (not just at migration time). */}
+              <CombinedCategoryBadge properties={properties} />
               <ActivationControl
                 customer={customer}
                 onOptimisticFlip={(next) => setCustomer((c) => ({ ...c, is_active: next }))}
