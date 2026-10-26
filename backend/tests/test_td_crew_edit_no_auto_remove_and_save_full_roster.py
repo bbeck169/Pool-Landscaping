@@ -186,24 +186,28 @@ def test_patch_persists_full_roster_with_admin_super_admin_inactive_soft_deleted
     assert len(doc["tech_ids"]) == 5
 
 
-# ─── 400 on orphan id (truly structural) ───────────────────────
-def test_patch_returns_400_with_orphan_category_for_unknown_id(
+# ─── TD-crew-silently-drop-orphan-members-and-backfill ────────
+# Operator reversed the Ticket G strict-reject posture on orphan
+# tech_ids (ghosts persisted in the crew doc but didn't render in
+# the FE → infinite 400 loop on save).  New posture: orphan ids
+# are silently DROPPED from the persisted tech_ids list; the save
+# returns 200 OK with the surviving ids.  Foreign-tenant ids STILL
+# 400 (unchanged security behavior — see the next test).
+def test_patch_silently_drops_orphan_and_returns_200(
     seeded, crew,
 ):
     r = requests.patch(
         f"{API}/crews/{crew}",
         headers=seeded["admin_h"],
-        json={"tech_ids": [seeded["field_tech"], seeded["orphan_id"]]},
+        json={"tech_ids": [seeded["field_tech"],
+                                seeded["orphan_id"]]},
         timeout=20,
     )
-    assert r.status_code == 400, r.text
-    detail = r.json().get("detail")
-    # detail may be the structured payload directly or wrapped.
-    payload = detail if isinstance(detail, dict) else detail
-    errors = (payload or {}).get("errors") or []
-    orphan_hits = [e for e in errors if e.get("tech_id") == seeded["orphan_id"]]
-    assert orphan_hits, errors
-    assert orphan_hits[0]["reason"] == "orphan"
+    assert r.status_code == 200, r.text
+    body = r.json()
+    # Orphan dropped silently; valid tech_id persisted.
+    assert seeded["field_tech"] in body["tech_ids"]
+    assert seeded["orphan_id"] not in body["tech_ids"]
 
 
 # ─── 400 on foreign-tenant id ───────────────────────────────────

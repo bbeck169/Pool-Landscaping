@@ -211,17 +211,45 @@ async def create_crew(body: CrewIn, user: dict = Depends(require_admin),
     # implementation accepted whatever the FE sent, which is the
     # mechanism by which the preview DB accumulated orphan ids on
     # existing crew docs (see /app/memory/td86_crew_tenant_audit.md).
+    #
+    # TD-crew-silently-drop-orphan-members-and-backfill · Feb-2026 —
+    # Operator reversal of the Ticket G strict-reject posture.  The
+    # 400 on orphans created a stuck UX when ghosts persisted in the
+    # crew doc but didn't render as member cards in the FE: operator
+    # couldn't "see" them to "explicitly remove" them → infinite 400
+    # loop on save.  New posture:
+    #   * ``foreign_tenant`` errors STILL 400 (security concern — a
+    #     foreign user_id leaking into a crew save means something
+    #     cross-tenant is wrong; refuse the write).
+    #   * ``orphan`` errors are SILENTLY DROPPED from the persisted
+    #     ``tech_ids`` list.  INFO log emitted via config.logger
+    #     (pool_crm) for operator audit trail.
     normalised = await _normalise_crew_tech_ids(doc.get("tech_ids"))
     if normalised:
         probe = await _resolve_tenant_members(tenant["id"], normalised)
-        if probe["errors"]:
+        foreign_errors = [
+            e for e in probe["errors"]
+            if e.get("reason") == "foreign_tenant"
+        ]
+        orphan_errors = [
+            e for e in probe["errors"] if e.get("reason") == "orphan"
+        ]
+        if foreign_errors:
             raise HTTPException(
                 status_code=400,
                 detail={
                     "detail": "crew tech_ids validation failed",
                     "field": "tech_ids",
-                    "errors": probe["errors"],
+                    "errors": foreign_errors,
                 },
+            )
+        if orphan_errors:
+            orphan_ids = [e["tech_id"] for e in orphan_errors]
+            normalised = [x for x in normalised if x not in orphan_ids]
+            logger.info(
+                "[crews] silently dropped orphan tech_ids "
+                "crew_id=<new> tenant_id=%s dropped=%s",
+                tenant["id"], orphan_ids,
             )
     doc["tech_ids"] = normalised
     _now = now_iso()
@@ -279,18 +307,38 @@ async def update_crew(cid: str, body: dict, user: dict = Depends(require_admin),
     # enriched the 400 payload with a categorised ``errors`` array
     # that distinguishes foreign-tenant ids from fully orphan ids.
     # See /app/memory/td86_crew_tenant_audit.md for the shape spec.
+    # TD-crew-silently-drop-orphan-members-and-backfill · Feb-2026 —
+    # see POST /crews docstring; same split applied here.
     if "tech_ids" in body:
         normalised = await _normalise_crew_tech_ids(body.get("tech_ids"))
         if normalised:
             probe = await _resolve_tenant_members(tenant["id"], normalised)
-            if probe["errors"]:
+            foreign_errors = [
+                e for e in probe["errors"]
+                if e.get("reason") == "foreign_tenant"
+            ]
+            orphan_errors = [
+                e for e in probe["errors"]
+                if e.get("reason") == "orphan"
+            ]
+            if foreign_errors:
                 raise HTTPException(
                     status_code=400,
                     detail={
                         "detail": "crew tech_ids validation failed",
                         "field": "tech_ids",
-                        "errors": probe["errors"],
+                        "errors": foreign_errors,
                     },
+                )
+            if orphan_errors:
+                orphan_ids = [e["tech_id"] for e in orphan_errors]
+                normalised = [
+                    x for x in normalised if x not in orphan_ids
+                ]
+                logger.info(
+                    "[crews] silently dropped orphan tech_ids "
+                    "crew_id=%s tenant_id=%s dropped=%s",
+                    cid, tenant["id"], orphan_ids,
                 )
         body["tech_ids"] = normalised
     body["updated_at"] = now_iso()
