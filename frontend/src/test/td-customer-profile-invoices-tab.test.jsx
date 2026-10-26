@@ -216,13 +216,13 @@ describe("CustomerInvoicesTab — states", () => {
     await waitFor(() => expect(
       screen.getByTestId("cd-invoices-tab-count")).toBeTruthy());
     // rule 1 — verbatim title
-    expect(screen.getByTestId("cd-invoices-tab-row-title-inv-1")
+    expect(screen.getByTestId("cd-invoices-tab-cell-title-inv-1")
       .textContent).toBe("Monthly maintenance");
     // rule 2 — item_name fallback
-    expect(screen.getByTestId("cd-invoices-tab-row-title-inv-2")
+    expect(screen.getByTestId("cd-invoices-tab-cell-title-inv-2")
       .textContent).toBe("Opening service");
     // rule 4 — description fallback (short — not truncated)
-    expect(screen.getByTestId("cd-invoices-tab-row-title-inv-3")
+    expect(screen.getByTestId("cd-invoices-tab-cell-title-inv-3")
       .textContent).toBe("Weekly recurring landscape service");
   });
 
@@ -259,7 +259,7 @@ describe("CustomerInvoicesTab — states", () => {
     await waitFor(() => expect(
       screen.getByTestId("cd-invoices-tab-row-new")).toBeTruthy());
     const rows = screen.getAllByTestId(
-      /cd-invoices-tab-row-(?!number-|title-|date-|amount-|status-)/);
+      /^cd-invoices-tab-row-(?!number-|title-|date-|amount-|status-)/);
     expect(rows[0].getAttribute("data-testid"))
       .toBe("cd-invoices-tab-row-new");
     expect(rows[1].getAttribute("data-testid"))
@@ -300,10 +300,24 @@ describe("Surface wire-up · all 3 consume the helper", () => {
       "src/pages/portal/PortalPages.jsx"),
     "utf-8");
 
-  it("CustomerInvoicesTab imports + uses the helper", () => {
+  it("CustomerInvoicesTab renders rows via shared <InvoiceTable />", () => {
+    // Ticket FF · Feb-2026 — the tab's old inline <table> was
+    // replaced with the shared ``InvoiceTable`` primitive which
+    // owns the ``getInvoiceDisplayTitle`` call site.  Semantic
+    // Ticket-B contract preserved: titles still flow through the
+    // helper; the lock just moved into the primitive.
     expect(tab).toMatch(
+      /import\s+InvoiceTable\s+from\s+"@\/components\/invoices\/InvoiceTable"/);
+    expect(tab).toMatch(/<InvoiceTable\b[\s\S]{0,400}columns=\{/);
+    // Shared primitive still imports the helper so the semantic
+    // behaviour is identical.
+    const invTable = fs.readFileSync(
+      path.resolve(process.cwd(),
+        "src/components/invoices/InvoiceTable.jsx"),
+      "utf-8");
+    expect(invTable).toMatch(
       /import\s+\{\s*getInvoiceDisplayTitle\s*\}\s+from\s+"@\/utils\/invoiceTitle"/);
-    expect(tab).toMatch(/getInvoiceDisplayTitle\(/);
+    expect(invTable).toMatch(/getInvoiceDisplayTitle\(/);
   });
 
   it("CustomerInvoiceList imports + uses the helper", () => {
