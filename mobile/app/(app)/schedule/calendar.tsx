@@ -57,6 +57,9 @@ import WeekStrip from "@/src/components/schedule/WeekStrip";
 import { showConfirm } from "@/src/components/ConfirmModal";
 import { bulkDeleteJobs } from "@/src/lib/jobsBulkDelete";
 import { isCompactScheduleHeader } from "@/src/lib/scheduleHeader";
+import { serviceCategoryParam, canWriteThroughJobs } from "@/src/lib/scheduleServiceCategory";
+import { useScheduleServiceCategory } from "@/src/hooks/useScheduleServiceCategory";
+import ServiceCategoryChips from "@/src/components/schedule/ServiceCategoryChips";
 import { useToast } from "@/src/components/ToastProvider";
 // Phase 23 · 2026-08-02 — Service / Repair progress ring tiles above the grid.
 import JobTrackerTiles from "./JobTrackerTiles";
@@ -294,6 +297,8 @@ function ScheduleCalendarInner() {
     isTech ? (user?.technician_id || "all") : "all",
   );
   const [techPickerOpen, setTechPickerOpen] = useState(false);
+  // M3a · Service Category filter (web Ticket Y) — all roles, persisted.
+  const [serviceCategory, setServiceCategory] = useScheduleServiceCategory();
 
   // K43 — Resolved technician_id: when user.technician_id is null
   // (pre-backfill tenant), we resolve it via GET /api/technicians/me.
@@ -484,7 +489,12 @@ function ScheduleCalendarInner() {
       // K43 — use resolvedTechId which falls back to /api/technicians/me
       // when user.technician_id is null (pre-backfill tenants).
       const techScope = isTech && resolvedTechId ? `&technician_id=${resolvedTechId}` : "";
-      const jobsUrl = `/jobs?start=${start}&end=${end}${!isTech && crewFiltered ? `&crew_id=${crewFilter}` : ""}${techScope}`;
+      // M3a · Ticket Y parity — service_category composes AS AND with crew/tech scope.
+      const jobsUrl = `/jobs?start=${start}&end=${end}${!isTech && crewFiltered ? `&crew_id=${crewFilter}` : ""}${techScope}${serviceCategoryParam(serviceCategory)}`;
+      // Skip the offline write-through for ANY filtered subset (crew OR non-All
+      // category): cacheWeekJobs is a per-user bulk replace, so a subset would
+      // wipe the unfiltered jobs techs need offline.
+      const writeThroughOk = canWriteThroughJobs({ crewFiltered, serviceCategory });
       // K15 · outer timeout race — if cachedGet (network+SQLite)
       // hasn't resolved in 25 s, give up and show the error card.
       const timeoutPromise = new Promise<never>((_, reject) =>
@@ -492,7 +502,7 @@ function ScheduleCalendarInner() {
       );
       const data = await Promise.race([
         cachedGet<any>(jobsUrl, {
-          writeThrough: crewFiltered ? undefined : async (d) => { await writeThroughJobs(techUserId, d, isTech ? { role: "technician", technicianId: resolvedTechId ?? null } : undefined); },
+          writeThrough: writeThroughOk ? async (d) => { await writeThroughJobs(techUserId, d, isTech ? { role: "technician", technicianId: resolvedTechId ?? null } : undefined); } : undefined,
           readCache:    async ()  => { return techUserId ? await readCachedWeekJobs(techUserId) : []; },
           signal: ac.signal,
         }),
@@ -512,7 +522,15 @@ function ScheduleCalendarInner() {
       // Only write loading=false if THIS controller is still current.
       if (loadAbortRef.current === ac) { setLoading(false); setLoadingTimedOut(false); }
     }
-  }, [focus, user?.id, crewFilter, isTech, resolvedTechId]);
+  }, [focus, user?.id, crewFilter, isTech, resolvedTechId, serviceCategory]);
+
+  // M3a · category change must FORCE a refetch (web: load({force:true}) on change) —
+  // a plain load() returns early while the focus day is inside the cached range.
+  const categoryEffectMounted = useRef(false);
+  useEffect(() => {
+    if (!categoryEffectMounted.current) { categoryEffectMounted.current = true; return; }
+    load(true);
+  }, [serviceCategory]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useFocusEffect(useCallback(() => {
     logNav("schedule/calendar.focus", {
@@ -872,6 +890,9 @@ function ScheduleCalendarInner() {
           );
         })}
       </View>
+
+      {/* M3a · Service Category chip-group (web Ticket Y) — drives Grid + Calendar. */}
+      <ServiceCategoryChips value={serviceCategory} onChange={setServiceCategory} />
 
       {/* Phase S1 — Per-tech filter dropdown (admin/manager/owner only). */}
       {!isTech && (
