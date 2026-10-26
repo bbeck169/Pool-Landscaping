@@ -185,7 +185,26 @@ class RingCentralSMSAdapter:
         ``provider_status``, ``was_mock``).  On
         ``RedirectTargetMissing`` the send is SUPPRESSED with
         ``provider_status="skipped_no_redirect_target"``.
+
+        Ticket NN · Feb-2026 — adapter-level HTML strip safety net.
+        Reuses Ticket JJ's ``services.text.html_to_plain.html_to_plain``
+        helper (preserves ``\\n`` for ``<br>`` / ``</p>``, decodes
+        entities, keeps list bullets) BEFORE any gate fires.  Catches
+        the case where a template with inline HTML was authored on
+        the email surface and a caller mistakenly reused the raw
+        body for an SMS dispatch.  Idempotent on already-plain
+        bodies.  Merge-tag resolution still happens UPSTREAM at the
+        call site (``services.marketing.merge_tags.render_template``)
+        because the adapter has no customer / tenant ctx — this
+        strip is a last-line safety net, not a resolver.
         """
+        # Ticket NN · Feb-2026 — HTML strip safety net.  Runs before
+        # phone normalisation so a stripped-body hits every
+        # downstream gate consistently (idempotency, consent,
+        # redirect, provider).
+        if body:
+            from services.text.html_to_plain import html_to_plain as _nn_strip
+            body = _nn_strip(body)
         addr_e164 = normalize_phone_e164(to)
         if not addr_e164:
             return {"provider": "ringcentral", "provider_status": "failed",

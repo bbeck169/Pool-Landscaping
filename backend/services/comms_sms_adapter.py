@@ -97,7 +97,25 @@ async def send_sms(tenant_id: str, to_phone: str, body: str,
     ``get_redirect_targets`` BEFORE any opt-out, quiet-hours,
     BYO, or RingCentral gate fires.  SYSTEM passes through
     untouched.  Missing context → ``TypeError`` at call time.
+
+    Ticket NN · Feb-2026 — adapter-level HTML strip safety net.
+    Reuses Ticket JJ's ``services.text.html_to_plain.html_to_plain``
+    helper (preserves ``\\n`` for ``<br>`` / ``</p>``, decodes
+    entities, keeps list bullets) BEFORE any gate fires.  Catches
+    the case where a template with inline HTML was authored on
+    the email surface and a caller mistakenly reused the raw body
+    for an SMS dispatch.  Idempotent on already-plain bodies.
+    Merge-tag resolution still happens UPSTREAM at the call site
+    (``services.marketing.merge_tags.render_template``) because
+    the adapter has no customer / tenant ctx — this strip is a
+    last-line safety net, not a resolver.
     """
+    # Ticket NN · Feb-2026 — HTML strip safety net.  Runs BEFORE
+    # the redirect gate so the MARCO-TEST prefix is appended to a
+    # cleaned body (not an HTML-tagged body).
+    if body:
+        from services.text.html_to_plain import html_to_plain as _nn_strip
+        body = _nn_strip(body)
     # SAFE-SEND-A · redirect FIRST — runs before opt-out check so
     # a customer's opt-out never suppresses an admin-directed
     # test / agent sample.
