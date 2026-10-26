@@ -127,7 +127,8 @@ export function computeRevenueBarFills(series, now = new Date()) {
   });
 }
 
-function KpiCard({ icon: Icon, label, value, onClick, testId, tone }) {
+function KpiCard({ icon: Icon, label, value, onClick, testId, tone,
+                   sublabel }) {
   // Feb 2026 · Color pass — each KPI tile picks up a distinct
   // accent tone (violet / amber / sky / emerald / rose) so the
   // dashboard headline row visually pops.  ``tone`` maps to a
@@ -175,6 +176,16 @@ function KpiCard({ icon: Icon, label, value, onClick, testId, tone }) {
       <div className="text-2xl font-bold" style={{ color: colors.onSurface }}>
         {value}
       </div>
+      {sublabel ? (
+        <div
+          className="text-[11px] mt-0.5"
+          style={{ color: colors.onSurfaceMuted || "#64748B",
+                   opacity: 0.75 }}
+          data-testid={testId ? `${testId}-sublabel` : undefined}
+        >
+          {sublabel}
+        </div>
+      ) : null}
       <div
         className="text-xs mt-1 font-semibold uppercase tracking-wide"
         style={{ color: palette[700] }}
@@ -677,13 +688,40 @@ export default function AdminDashboard() {
                 so the tile count = list cardinality exactly. Tile
                 testids (``kpi-pool-properties`` etc.) kept intact —
                 they're referenced by locked DOM-order vitest and
-                mobile tests; a rename is a separate sweep. */}
+                mobile tests; a rename is a separate sweep.
+
+                Ticket V · Feb-2026 — DATA SOURCE REWIRED AGAIN
+                (forward-fix on Ticket U — the ``*_customers_count``
+                fields are kept in the response with a 2026-05-01
+                deprecation marker). Operator's final spec is
+                property-level inclusive counts with an active-
+                customer gate: Pool tile = active-customer
+                properties with service_category in {pool, both},
+                Landscaping = {landscaping, both}, Both = exact
+                ``both``. Values now come from
+                ``*_properties_active_count`` (sibling fields to the
+                pre-Ticket-U ``*_properties_count`` family, same
+                values, canonical post-Ticket-V name).
+
+                Deep-link uses the NEW ``?property_service_category=X``
+                customer-list filter (shares an identical active-
+                customer-id resolver with the aggregator — see
+                ``services.dashboard_property_category_counts.
+                active_customer_ids_with_category``). The pre-
+                existing ``?service_category=X`` filter is NOT
+                replaced — both coexist and AND when combined.
+
+                Honest-UX sublabel "properties" surfaces the X-
+                divergence (tile property-count can exceed list
+                customer-count when any customer owns multiple
+                matching properties). */}
             <KpiCard
               icon={Home}
               label="Pool Customers"
-              value={data.pool_customers_count}
+              sublabel="properties"
+              value={data.pool_properties_active_count}
               onClick={() => navigate(
-                "/customers?service_category=pool&is_active=true",
+                "/customers?property_service_category=pool&is_active=true",
               )}
               testId="kpi-pool-properties"
               tone="sky"
@@ -691,9 +729,10 @@ export default function AdminDashboard() {
             <KpiCard
               icon={Home}
               label="Landscaping Customers"
-              value={data.landscaping_customers_count}
+              sublabel="properties"
+              value={data.landscaping_properties_active_count}
               onClick={() => navigate(
-                "/customers?service_category=landscaping&is_active=true",
+                "/customers?property_service_category=landscaping&is_active=true",
               )}
               testId="kpi-landscaping-properties"
               tone="emerald"
@@ -701,9 +740,10 @@ export default function AdminDashboard() {
             <KpiCard
               icon={Home}
               label="Both Service Customers"
-              value={data.both_customers_count}
+              sublabel="properties"
+              value={data.both_properties_active_count}
               onClick={() => navigate(
-                "/customers?service_category=both&is_active=true",
+                "/customers?property_service_category=both&is_active=true",
               )}
               testId="kpi-both-properties"
               tone="amber"

@@ -54,7 +54,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
 from services.properties_active_predicate import (
     active_customer_ids,
@@ -66,6 +66,82 @@ logger = logging.getLogger(__name__)
 
 
 _PERF_WARN_MS = 100
+
+
+# Ticket V · Feb-2026 — Property-category inclusive-match rule.
+# Mirrors the regex ladder ``compute_property_counts`` emits so the
+# aggregator and the new ``/api/customers?property_service_category=X``
+# list filter are provably identical in their inclusive-rule
+# semantics (case-insensitive, union on Pool / Landscaping, exact
+# on Both). Centralised here so both call-sites stay in lockstep.
+_PROPERTY_CATEGORY_REGEX = {
+    "pool":        r"^(pool|both)$",
+    "landscaping": r"^(landscaping|both)$",
+    "both":        r"^both$",
+}
+
+
+def _category_match(category: str) -> Optional[Dict[str, Any]]:
+    """Return the Mongo ``service_category`` match clause for
+    ``category`` (``pool`` / ``landscaping`` / ``both``), or
+    ``None`` for an unknown value.  Case-insensitive input + output.
+    """
+    key = (category or "").strip().lower()
+    pattern = _PROPERTY_CATEGORY_REGEX.get(key)
+    if not pattern:
+        return None
+    return {"$regex": pattern, "$options": "i"}
+
+
+async def active_customer_ids_with_category(
+    *, db, tenant_id: str, category: str,
+) -> List[str]:
+    """Ticket V · Feb-2026 — distinct customer_ids who own at
+    least one active property whose ``service_category`` matches
+    the inclusive rule for ``category``.
+
+    Shared single source of truth between the Dashboard property-
+    count tiles (``compute_property_counts``) and the new
+    ``/api/customers?property_service_category=X&is_active=true``
+    list filter.  Both call-sites consume this helper so the
+    aggregator's contributing-customer set and the list filter's
+    matched-customer set are provably identical (verified by the
+    ``test_customers_property_service_category_filter`` cross-
+    check case).
+
+    Returns an empty list when:
+      * ``category`` is not one of ``pool`` / ``landscaping`` /
+        ``both`` (case-insensitive);
+      * no active customers exist for the tenant;
+      * no properties match the active + category gate.
+
+    Preserves the active-property gate (``active != False`` + no
+    soft-delete) + the active-parent-customer gate baked into
+    :func:`active_customer_ids` so divergence vs the aggregator
+    is impossible by construction.
+    """
+    match = _category_match(category)
+    if match is None:
+        return []
+    active_cust_ids = await active_customer_ids(
+        db=db, tenant_id=tenant_id,
+    )
+    if not active_cust_ids:
+        return []
+    base = active_property_match_base(tenant_id)
+    q = {
+        **base,
+        "customer_id": {"$in": active_cust_ids},
+        "service_category": match,
+    }
+    seen = await db.properties.distinct("customer_id", q)
+    # Mongo returns None entries for missing/empty customer_id
+    # fields on the matched docs — drop them.
+    return [cid for cid in seen if cid]
+
+
+_PERF_WARN_MS = _PERF_WARN_MS  # (preserve the pre-existing export)
+
 
 
 async def compute_property_counts(

@@ -422,6 +422,22 @@ async def dashboard(user: dict = Depends(get_current_user),
         "landscaping_properties_count":
             _property_counts["landscaping_properties_count"],
         "both_properties_count": _property_counts["both_properties_count"],
+        # ── Ticket V · Feb-2026 — Canonical property-count tile fields ──
+        # The admin Dashboard "Pool / Landscaping / Both Service
+        # Customers" tiles now consume these fields (post Ticket V).
+        # Same values as the deprecated ``*_properties_count``
+        # trio above — identical source (``compute_property_counts``)
+        # — just published under the canonical post-Ticket-V names
+        # so the dashboard FE flip is explicit and the deprecated
+        # ``*_properties_count`` + ``*_customers_count`` field
+        # families can both age out on 2026-05-01 without
+        # ambiguity on the surviving successor.
+        "pool_properties_active_count":
+            _property_counts["pool_properties_count"],
+        "landscaping_properties_active_count":
+            _property_counts["landscaping_properties_count"],
+        "both_properties_active_count":
+            _property_counts["both_properties_count"],
         # deprecated 2026-02, remove 2026-05-01 — replaced by the
         # Active/Inactive Customers pair above. The Technicians KPI
         # tile was retired from the dashboard on the same date but

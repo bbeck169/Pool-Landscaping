@@ -88,18 +88,24 @@ const _DASHBOARD_PAYLOAD = {
   total_customers: 150,
   active_customers_count: 100,
   inactive_customers_count: 50,
-  // Ticket U · Feb-2026 — Dashboard "Pool/Landscaping/Both Service
-  // Customers" tiles now consume these customer-count fields
-  // instead of the ``*_properties_count`` fields (which stay in
-  // the response for one deprecation window per BE comment).
+  // Ticket U · Feb-2026 — deprecated 2026-05-01 (kept to prove
+  // tiles ignore them after Ticket V flip).
   pool_customers_count: 90,
   landscaping_customers_count: 38,
   both_customers_count: 11,
   active_accounts_count: 128,
-  // Deprecated (kept in fixture to prove tiles ignore them).
+  // Pre-Ticket-U deprecated 2026-05-01 — kept to prove tiles
+  // ignore them.
   pool_properties_count: 42,
   landscaping_properties_count: 17,
   both_properties_count: 5,
+  // Ticket V · Feb-2026 — canonical post-Ticket-V fields. These
+  // are what the Pool/Landscape/Both Service Customers tiles
+  // consume. Values chosen to be digit-disjoint from the two
+  // deprecated families so the vitest can disambiguate.
+  pool_properties_active_count: 777,
+  landscaping_properties_active_count: 444,
+  both_properties_active_count: 222,
   total_technicians: 4,
   total_leads: 0, open_leads: 0,
   recent_jobs: [], revenue_series: [], revenue_by_service: [],
@@ -144,19 +150,23 @@ describe("Dashboard · Property-count tiles (P2 #6)", () => {
     );
     const both = await screen.findByTestId("kpi-both-properties");
     expect(active.textContent).toMatch(/128/);
-    // Ticket U · Feb-2026 — the Pool / Landscaping / Both Service
-    // Customers tiles now read the ``*_customers_count`` fields
-    // (90 / 38 / 11), NOT the deprecated ``*_properties_count``
-    // fields (42 / 17 / 5) which are kept in the fixture to prove
-    // the tiles ignore them.
-    expect(pool.textContent).toMatch(/90/);
-    expect(land.textContent).toMatch(/38/);
-    expect(both.textContent).toMatch(/11/);
-    // Negative assertion — deprecated property counts MUST NOT
+    // Ticket V · Feb-2026 — tiles read the canonical
+    // ``*_properties_active_count`` fields (777 / 444 / 222) and
+    // MUST ignore both deprecated families (``*_customers_count``
+    // 90 / 38 / 11 and ``*_properties_count`` 42 / 17 / 5).
+    expect(pool.textContent).toMatch(/777/);
+    expect(land.textContent).toMatch(/444/);
+    expect(both.textContent).toMatch(/222/);
+    // Negative — Ticket U ``*_customers_count`` values must not
     // appear in these tiles.
+    expect(pool.textContent).not.toMatch(/90/);
+    expect(land.textContent).not.toMatch(/38/);
+    expect(both.textContent).not.toMatch(/11/);
+    // Negative — pre-Ticket-U ``*_properties_count`` values must
+    // not appear either.
     expect(pool.textContent).not.toMatch(/42/);
     expect(land.textContent).not.toMatch(/17/);
-    expect(both.textContent).not.toMatch(/5/);
+    expect(both.textContent).not.toMatch(/\b5\b/);
   });
 
   it("Active Accounts tile deep-links to /properties?is_active=true",
@@ -167,52 +177,55 @@ describe("Dashboard · Property-count tiles (P2 #6)", () => {
     expect(navigateMock).toHaveBeenCalledWith("/properties?is_active=true");
   });
 
-  it("Pool Customers tile deep-links to /customers?service_category=pool&is_active=true",
+  it("Pool Customers tile deep-links to /customers?property_service_category=pool&is_active=true",
      async () => {
-    // Ticket U · Feb-2026 — deep-link flipped from
-    // ``/properties?is_active=true&service_category=pool`` to
-    // ``/customers?service_category=pool&is_active=true`` so the
-    // tile count equals the Customer-list filter cardinality
-    // exactly (unified data source).
+    // Ticket V · Feb-2026 — deep-link flipped from
+    // ``/customers?service_category=pool&is_active=true`` (Ticket U)
+    // to the NEW ``?property_service_category=`` param. The
+    // customer-level ``?service_category=`` filter is NOT replaced
+    // (coexists; ANDs when both passed).
     await _renderDashboard();
     fireEvent.click(await screen.findByTestId("kpi-pool-properties"));
     expect(navigateMock).toHaveBeenCalledWith(
-      "/customers?service_category=pool&is_active=true",
+      "/customers?property_service_category=pool&is_active=true",
     );
   });
 
-  it("Landscaping Customers tile deep-links to /customers?service_category=landscaping&is_active=true",
+  it("Landscaping Customers tile deep-links to /customers?property_service_category=landscaping&is_active=true",
      async () => {
     await _renderDashboard();
     fireEvent.click(
       await screen.findByTestId("kpi-landscaping-properties"),
     );
     expect(navigateMock).toHaveBeenCalledWith(
-      "/customers?service_category=landscaping&is_active=true",
+      "/customers?property_service_category=landscaping&is_active=true",
     );
   });
 
-  it("Both Service Customers tile deep-links to /customers?service_category=both&is_active=true",
+  it("Both Service Customers tile deep-links to /customers?property_service_category=both&is_active=true",
      async () => {
     await _renderDashboard();
     fireEvent.click(await screen.findByTestId("kpi-both-properties"));
     expect(navigateMock).toHaveBeenCalledWith(
-      "/customers?service_category=both&is_active=true",
+      "/customers?property_service_category=both&is_active=true",
     );
   });
 
   it("zero-count tiles still render (do not hide)", async () => {
     _applyPayload({
       active_accounts_count: 0,
-      pool_customers_count: 0,
-      landscaping_customers_count: 0,
-      both_customers_count: 0,
-      // Keep deprecated fields non-zero to prove the tile hides
-      // on the Customers field (post Ticket U), not the Properties
-      // field.
-      pool_properties_count: 99,
-      landscaping_properties_count: 99,
-      both_properties_count: 99,
+      pool_properties_active_count: 0,
+      landscaping_properties_active_count: 0,
+      both_properties_active_count: 0,
+      // Keep deprecated families non-zero to prove tiles hide on
+      // the active-count fields (post Ticket V), not the deprecated
+      // *_customers_count or *_properties_count fallbacks.
+      pool_customers_count: 99,
+      landscaping_customers_count: 99,
+      both_customers_count: 99,
+      pool_properties_count: 77,
+      landscaping_properties_count: 77,
+      both_properties_count: 77,
     });
     await _renderDashboard();
     expect(await screen.findByTestId("kpi-active-accounts"))
@@ -223,11 +236,29 @@ describe("Dashboard · Property-count tiles (P2 #6)", () => {
     expect(pool).toBeInTheDocument();
     expect(land).toBeInTheDocument();
     expect(both).toBeInTheDocument();
-    // Confirm the tiles read 0 from ``*_customers_count`` and NOT
-    // 99 from the deprecated ``*_properties_count`` fallbacks.
+    // Confirm the tiles read 0 from ``*_properties_active_count``
+    // and NOT 99 from ``*_customers_count`` or 77 from
+    // ``*_properties_count``.
     expect(pool.textContent).not.toMatch(/99/);
     expect(land.textContent).not.toMatch(/99/);
     expect(both.textContent).not.toMatch(/99/);
+    expect(pool.textContent).not.toMatch(/\b77\b/);
+    expect(land.textContent).not.toMatch(/\b77\b/);
+    expect(both.textContent).not.toMatch(/\b77\b/);
+  });
+
+  it("renders the 'properties' sublabel on all three category tiles (Ticket V honest-UX)",
+     async () => {
+    await _renderDashboard();
+    const pool = await screen.findByTestId("kpi-pool-properties");
+    const land = await screen.findByTestId("kpi-landscaping-properties");
+    const both = await screen.findByTestId("kpi-both-properties");
+    expect(pool.textContent).toMatch(/properties/);
+    expect(land.textContent).toMatch(/properties/);
+    expect(both.textContent).toMatch(/properties/);
+    // The explicit sublabel node renders with its own testid.
+    expect(screen.getByTestId("kpi-pool-properties-sublabel")
+      .textContent).toMatch(/properties/);
   });
 
   it("renders the renamed Customers labels on the property-count tiles (Pool/Landscaping/Both Service)",

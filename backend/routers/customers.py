@@ -1301,6 +1301,39 @@ async def list_customers(
             "other filter."
         ),
     ),
+    # Ticket V · Feb-2026 — property-level inclusive filter.
+    # DISTINCT from ``service_category`` above (which gates on the
+    # per-row ``customers.service_category`` denorm). This filter
+    # gates on PROPERTY ownership: a customer matches when they own
+    # at least one active property whose ``service_category`` meets
+    # the inclusive rule:
+    #   * ``pool``        → property.service_category in {pool, both}
+    #   * ``landscaping`` → property.service_category in {landscaping, both}
+    #   * ``both``        → property.service_category == both (exact)
+    # Shared helper: ``services.dashboard_property_category_counts.
+    # active_customer_ids_with_category`` — identical semantics to
+    # the Dashboard "Pool/Landscaping/Both Service Customers" tile
+    # aggregator. When BOTH ``service_category`` and
+    # ``property_service_category`` are supplied, they AND together
+    # (narrowing). Values outside the enum are silently ignored.
+    # Deep-link target from the Dashboard tiles after Ticket V.
+    property_service_category: Optional[str] = Query(
+        None,
+        description=(
+            "Ticket V · Feb-2026 — property-level inclusive filter. "
+            "Returns customers who own ≥1 active property whose "
+            "``service_category`` matches the inclusive rule: "
+            "``pool`` → {pool,both}, ``landscaping`` → "
+            "{landscaping,both}, ``both`` → exact ``both``. "
+            "Case-insensitive. Composes as AND with "
+            "``service_category`` + every other filter. "
+            "Deep-link target for the Dashboard property-count "
+            "tiles — tile count = aggregator contributing-customer "
+            "set, exactly matching the result-row customer set "
+            "under this filter + ``is_active=true`` on the same "
+            "tenant/fixtures (verified by cross-check pytest)."
+        ),
+    ),
     # Feb-2026 · P44 — "No payment on file" data-quality chip.
     #   ``has_payment_method=false`` → customer has ZERO saved
     #     payment methods (no card AND no us_bank_account). Uses the
@@ -1683,6 +1716,60 @@ async def list_customers(
             "$or": [{"service_category": None},
                         {"service_category": {"$exists": False}}],
         }]
+    # Ticket V · Feb-2026 — property-level inclusive filter.
+    # Resolve to the active-customer-id set via the shared helper
+    # (same source the Dashboard property-count tile aggregator
+    # uses — provable identical semantics). AND into the query via
+    # ``$in`` on ``id``. Composes with the ``ids_in`` whitelist
+    # above (both end up as ``$in`` predicates on ``id`` so AND
+    # becomes the intersection via a nested ``$and`` guard).
+    # Values outside the inclusive enum are silently ignored so
+    # bookmarked legacy URLs don't 400.
+    # TD-customers-indexes-and-counts-400 posture: guard with
+    # ``isinstance(..., str)`` so a direct-call bypass that does
+    # not compose this kwarg doesn't inherit the ``Query(None, ...)``
+    # sentinel.
+    _psc_raw = (
+        property_service_category.strip().lower()
+        if isinstance(property_service_category, str)
+           and property_service_category
+        else None
+    )
+    if _psc_raw in {"pool", "landscaping", "both"}:
+        from services.dashboard_property_category_counts import (
+            active_customer_ids_with_category,
+        )
+        _psc_cust_ids = await active_customer_ids_with_category(
+            db=db, tenant_id=tenant["id"], category=_psc_raw,
+        )
+        if not _psc_cust_ids:
+            # Short-circuit: no properties match → no customer rows.
+            if count_only:
+                return {"count": 0}
+            if page is not None or page_size is not None:
+                return {
+                    "items": [], "total": 0, "page": 1,
+                    "page_size": page_size or 50, "total_pages": 0,
+                }
+            return []
+        if "id" in q and isinstance(q["id"], dict) and "$in" in q["id"]:
+            # ``ids_in`` already seeded ``id: {"$in": [...]}`` — AND
+            # the two whitelists via intersection so both narrowing
+            # filters hold.
+            prior = set(q["id"]["$in"])
+            q["id"] = {"$in": [cid for cid in _psc_cust_ids
+                                 if cid in prior]}
+            if not q["id"]["$in"]:
+                if count_only:
+                    return {"count": 0}
+                if page is not None or page_size is not None:
+                    return {
+                        "items": [], "total": 0, "page": 1,
+                        "page_size": page_size or 50, "total_pages": 0,
+                    }
+                return []
+        else:
+            q["id"] = {"$in": _psc_cust_ids}
     # Feb-2026 · P43 — "No email" / "No phone number" data-quality
     # chips. Null, missing key, empty string, and whitespace-only all
     # count as missing. Predicates compose into ``$and`` so they
