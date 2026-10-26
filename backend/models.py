@@ -896,6 +896,17 @@ class BillingPlanIn(BaseModel):
     # field default to "first_of_month" at read time to preserve prior
     # behavior (no bulk migration required).
     run_schedule: Optional[str] = "first_of_month"
+    # Ticket II · Feb-2026 — Auto-Billing New Plan modal replaced the
+    # free-text Service field with a searchable pricebook combobox.
+    # The source item id is stored on the plan for traceability so
+    # reports / cost analysis / future churn predictors can correlate
+    # recurring revenue back to the catalogue entry.  Snapshot pattern:
+    # ``service`` + ``amount`` are copied from the item at create time
+    # and remain authoritative on the plan even if the pricebook item
+    # is edited later; the id is a pointer, not a live reference.
+    # Optional for backward compat — plans created before II (and the
+    # free-text fallback path on the modal) land without an id.
+    pricebook_item_id: Optional[str] = None
 
     @field_validator("run_schedule")
     @classmethod
