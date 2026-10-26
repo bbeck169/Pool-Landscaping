@@ -136,13 +136,31 @@ async def _run_bulk_sms(
     and record a ``marketing_deliveries`` row per (customer, 'sms')
     attempt. Updates the batch row's stats + status when done.
 
-    Deliberately isolated from the mass_messaging ``_run_broadcast``
-    orchestrator because KK is SMS-only, operator-authored (no
-    merge-tag render pass), and skips the email branch entirely.
+    Ticket NN · Feb-2026 — per-customer merge-tag resolution. The
+    SMS body passed in is the pre-strip template (either operator
+    free-text or the pricebook-template body loaded upstream); we
+    resolve ``{{CUSTOMER_FIRST_NAME}}``, ``{{COMPANY_NAME}}``,
+    ``{{CUSTOMER_PORTAL_LOGIN_LINK}}``, etc. per-recipient via the
+    canonical ``services.marketing.merge_tags.render_template`` +
+    ``render_context`` helpers so a token typed into the Mass Text
+    modal lands as the resolved value, not a literal brace string.
+    Fallback for unknown tokens is ``""`` (``missing="empty"``) to
+    match the mass_messaging + marketing_templates behaviour.
     """
     from services.sms.rc_adapter import send as _send_sms
     from services.comms_hardening.deny_list import (
         strip_admin_owned_recipients as _deny_strip,
+    )
+    from services.marketing.merge_tags import (
+        render_template as _render_template,
+        render_context as _render_context,
+    )
+
+    # Hydrate the tenant doc ONCE outside the per-customer loop so
+    # ``{{COMPANY_NAME}}`` + sibling tenant-scoped tags resolve
+    # without an extra round-trip per recipient.
+    tenant_doc = await db.tenants.find_one(
+        {"id": tenant_id}, {"_id": 0},
     )
 
     stats: Dict[str, int] = {
@@ -201,9 +219,27 @@ async def _run_bulk_sms(
             )
             continue
 
+        resolved_body = sms_body
         try:
+            # Ticket NN · Feb-2026 — resolve merge tags against this
+            # recipient's customer + the tenant doc hydrated at
+            # fanout start. ``render_template`` with
+            # ``missing="empty"`` matches the mass_messaging +
+            # marketing_templates parity (unknown tokens render
+            # as empty).  ``_render_context`` is the canonical
+            # shape every Phase 9 send path assembles.
+            per_ctx = _render_context(customer=c, tenant=tenant_doc or {})
+            resolved_body, _unresolved = _render_template(
+                sms_body, per_ctx, missing="empty",
+            )
+            if _unresolved:
+                logger.info(
+                    "[KK] bulk-sms unresolved tokens batch=%s cust=%s "
+                    "tokens=%s",
+                    batch_id, c.get("id"), _unresolved,
+                )
             res = await _send_sms(
-                to=phone, body=sms_body,
+                to=phone, body=resolved_body,
                 category="marketing",
                 tenant_id=tenant_id, customer_id=c.get("id"),
                 idempotency_key=f"kk:{batch_id}:{c.get('id')}:sms",
@@ -220,9 +256,13 @@ async def _run_bulk_sms(
             err = str(exc)
 
         stats[status] = stats.get(status, 0) + 1
+        # Audit the body we actually dispatched (post-merge-tag
+        # resolution) so a later audit can see what the recipient
+        # received, not the raw template.
         await _log_delivery(
             tenant_id=tenant_id, batch_id=batch_id, customer=c,
-            channel="sms", subject=None, body=sms_body,
+            channel="sms", subject=None,
+            body=resolved_body,
             status=status,
             provider=(res or {}).get("provider") or "ringcentral",
             provider_response_id=(res or {}).get("provider_response_id"),

@@ -5169,10 +5169,39 @@ async def customer_send_sms(cid: str, body: _SendSmsBody,
                 tenant["id"], cid,
             )
 
+    # Ticket NN · Feb-2026 — resolve merge tags BEFORE adapter
+    # dispatch.  Scope-locked (Q2 unlock) to the body of this
+    # ``customer_send_sms`` handler only (L5100-ish range in
+    # routers/customers.py).  Uses the canonical Phase 9D
+    # ``services.marketing.merge_tags.render_template`` +
+    # ``render_context`` helpers so any token typed into the
+    # customer-profile Send SMS modal (``{{CUSTOMER_FIRST_NAME}}``,
+    # ``{{COMPANY_NAME}}``, portal/invoice links, etc.) lands as
+    # the resolved value, not a literal brace string.  Unknown
+    # tokens fall back to empty (``missing="empty"``) matching
+    # the mass_messaging + marketing_templates parity.  The
+    # attachments suffix was appended BEFORE this call so it
+    # participates in the render (today the suffix carries no
+    # merge tags, but future suffix templates get free coverage).
+    from services.marketing.merge_tags import (
+        render_template as _nn_render,
+        render_context as _nn_ctx_builder,
+    )
+    _nn_ctx = _nn_ctx_builder(customer=doc, tenant=tenant or {})
+    rendered_sms_body, _nn_unresolved = _nn_render(
+        sms_body, _nn_ctx, missing="empty",
+    )
+    if _nn_unresolved:
+        logger.info(
+            "[customers/send-sms] NN unresolved tokens customer=%s "
+            "tenant=%s tokens=%s",
+            cid, tenant["id"], _nn_unresolved,
+        )
+
     from services.sms.rc_adapter import send as _sms_send
     res = await _sms_send(
         to=to_raw,
-        body=sms_body,
+        body=rendered_sms_body,
         category="transactional",
         tenant_id=tenant["id"],
         customer_id=cid,

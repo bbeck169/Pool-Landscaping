@@ -231,9 +231,44 @@ async def send_sms_from_lead(
     # Dispatch AFTER the row is persisted.  ``rc_adapter.send`` never
     # raises — a transport failure returns an envelope with
     # ``provider_status="failed"`` and an ``error`` string.
+    #
+    # Ticket NN · Feb-2026 — resolve merge tags before dispatch so
+    # ``{{CUSTOMER_FIRST_NAME}}`` / ``{{COMPANY_NAME}}`` / portal-
+    # link tokens an operator typed into the compose textarea land
+    # as the resolved values, not literal brace strings.  Leads
+    # don't have the full customer schema, so we adapt the lead doc
+    # to the customer shape the merge-tag catalog expects (name →
+    # first/last split, phone/email passthrough).  Unknown tokens
+    # fall back to empty (``missing="empty"``) matching every other
+    # Phase 9 send path.
+    from services.marketing.merge_tags import (
+        render_template as _render_template,
+        render_context as _render_context,
+    )
+    _lead_as_customer = {
+        "id": lead.get("id"),
+        "name": (lead.get("name") or "").strip(),
+        "first_name": lead.get("first_name"),
+        "last_name": lead.get("last_name"),
+        "email": lead.get("email"),
+        "phone": lead.get("phone"),
+    }
+    _nn_ctx = _render_context(
+        customer=_lead_as_customer, tenant=tenant or {},
+        lead=lead,
+    )
+    rendered_body, _unresolved = _render_template(
+        body.body or "", _nn_ctx, missing="empty",
+    )
+    if _unresolved:
+        logger.info(
+            "[lead-comms] NN unresolved tokens lead=%s tokens=%s",
+            lead_id, _unresolved,
+        )
+
     from services.sms.rc_adapter import send as _sms_send
     envelope = await _sms_send(
-        to=phone, body=body.body,
+        to=phone, body=rendered_body,
         category="transactional",
         tenant_id=tenant["id"],
         audience="customer",
