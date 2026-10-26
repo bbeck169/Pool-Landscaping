@@ -18,6 +18,7 @@ import { MergeDialog } from "@/components/customers/MergeDialog";
 import PortalOnboardingHealthTile from "@/components/customers/PortalOnboardingHealthTile";
 import BulkPortalInviteConfirm from "@/components/customers/BulkPortalInviteConfirm";
 import RequestCardOnFileModal from "@/pages/customers/RequestCardOnFileModal";
+import MassTextModal from "@/components/customers/MassTextModal";
 import { PhoneLink, AddressLink, CustomerLink } from "@/components/customer";
 import NavyFilterBar from "@/components/ui/NavyFilterBar";
 
@@ -1138,6 +1139,10 @@ export default function CustomersList() {
   const [confirmInactiveOpen, setConfirmInactiveOpen] = useState(false);
   // TD-customer-list-bulk-request-card-on-file · Feb-2026
   const [requestCardOpen, setRequestCardOpen] = useState(false);
+  // Ticket KK · Feb-2026 — Mass Text modal state. Opens from the
+  // shared bulk-action bar once ≥1 customer is selected. The modal
+  // owns composition + send; this page only wires the trigger.
+  const [massTextOpen, setMassTextOpen] = useState(false);
   const [bulkInactiveBusy, setBulkInactiveBusy] = useState(false);
 
   const bulk = async (action, extra = {}) => {
@@ -1208,21 +1213,14 @@ export default function CustomersList() {
     } finally { setBulkBusy(false); }
   };
 
-  const doBulkOwner = async (nextOwnerId) => {
-    try {
-      const res = await api.post("/customers/bulk-update", {
-        ids: Array.from(selected),
-        patch: { assigned_owner_id: nextOwnerId },
-      });
-      sonnerToast.success(`${res.updated_count || 0} customer${(res.updated_count || 0) === 1 ? "" : "s"} reassigned`);
-      setSelected(new Set());
-      // Feb-2026 · P40 — refresh counts alongside; assigned_owner
-      // change doesn't shift cohorts today but keeping the pattern
-      // consistent avoids a future regression.
-      load();
-      loadCounts();
-    } catch (e) { sonnerToast.error(e?.message || "Reassign failed"); }
-  };
+  // Ticket KK · Feb-2026 — ``doBulkOwner`` handler + the "Reassign
+  // owner" bulk action were REMOVED from the shared BulkActionBar
+  // per operator direction. The underlying generic
+  // ``POST /customers/bulk-update`` endpoint remains in place (it
+  // also serves tag patches), so this is a UI-level soft removal.
+  // Follow-up TD-customers-bulk-update-remove-assigned-owner-id-
+  // from-allowlist (P3) tracks tightening the backend allow-list
+  // once the UI removal is confirmed via no production callers.
 
   // Feb-2026 · Bulk-mark-inactive — optimistic UI + rollback on error.
   // The typed "INACTIVATE" gate is enforced on the modal itself; this
@@ -3483,17 +3481,25 @@ export default function CustomersList() {
       />
 
       {/* Phase 34 · Task LL Phase 2 UI wrap-up · Feb 2026 — shared
-          bulk-action bar (delete + reassign owner). The legacy
-          add/remove tag + waitlist toolbar above is retained until
-          the /customers/bulk endpoint is fully deprecated. */}
+          bulk-action bar.  Ticket KK · Feb-2026 — "Reassign owner"
+          action REMOVED from this bar (UI-level soft removal; the
+          underlying POST /customers/bulk-update endpoint stays).
+          "Mass Text" action ADDED (opens the KK compose modal and
+          fires POST /customers/bulk-sms).  The legacy add/remove
+          tag + waitlist toolbar above is retained until the
+          /customers/bulk endpoint is fully deprecated. */}
       <BulkActionBar
         selectedCount={selectAllMatching ? _matchingTotal : selected.size}
         onClear={() => { setSelected(new Set()); setSelectAllMatching(false); }}
         actions={[
-          ...(isAdmin ? [{
-            key: "owner", label: "Reassign owner",
-            dropdown: [{ value: "", label: "Unassigned" }],
-            onClick: (v) => doBulkOwner(v || null),
+          // Ticket KK · Feb-2026 — Mass Text. Admin-only (matches
+          // the backend RBAC on POST /customers/bulk-sms). Not
+          // available for ``selectAllMatching`` because the modal
+          // needs concrete customer_ids (the backend endpoint
+          // takes an explicit id list, not a filter).
+          ...(isAdmin && !selectAllMatching ? [{
+            key: "mass-text", label: "Mass Text",
+            onClick: () => setMassTextOpen(true),
           }] : []),
           // Feb 2026 · Customer Merge Phase 2 — surface the merge
           // flow from the same bulk-action bar. Gated to admin only
@@ -3537,6 +3543,17 @@ export default function CustomersList() {
         open={requestCardOpen}
         onClose={() => setRequestCardOpen(false)}
         customerIds={Array.from(selected)}
+        onSent={() => { setSelected(new Set()); setSelectAllMatching(false); }}
+      />
+      {/* Ticket KK · Feb-2026 — Mass Text compose modal. Owns the
+          free-text + template picker + segment counter + send-to-N
+          confirm; posts to POST /customers/bulk-sms with the
+          currently-selected customer_ids. Clears the selection on
+          success so the operator can't accidentally re-fire. */}
+      <MassTextModal
+        open={massTextOpen}
+        customerIds={Array.from(selected)}
+        onClose={() => setMassTextOpen(false)}
         onSent={() => { setSelected(new Set()); setSelectAllMatching(false); }}
       />
       {/* Feb-2026 · Unlimited bulk delete — surfaces the "Select all
