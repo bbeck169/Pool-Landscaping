@@ -328,3 +328,42 @@ describe("MonthCustomGrid · Ticket W (Option α)", () => {
     expect(nov15.getAttribute("data-in-month")).toBe("true");
   });
 });
+
+
+// ═════════════════════════════════════════════════════════════════
+// Ticket OO · Feb-2026 — ``TD-web-month-view-1000-row-cap`` fix.
+//
+// Mobile port M3c (commit 090faf17f) found that web's shared
+// ``/jobs`` fetch at CalendarSchedule.jsx:910 silently drops rows
+// past the BE default 1000-row cap on busy tenants.  OO adds an
+// explicit ``&limit=5000`` to the fetch URL (BE max per
+// routers/jobs.py:875 — ``Query(1000, ge=1, le=5000)``).
+//
+// Source-shape lock on the parent file so a future refactor can't
+// quietly drop the limit param without turning this test red.
+// ═════════════════════════════════════════════════════════════════
+import fs from "node:fs";
+import path from "node:path";
+
+describe("Ticket OO · Month-view fetch limit lock", () => {
+  const SRC = fs.readFileSync(
+    path.resolve(process.cwd(), "src/pages/schedule/CalendarSchedule.jsx"),
+    "utf-8",
+  );
+
+  it("CalendarSchedule's /jobs fetch URL includes explicit limit=5000", () => {
+    // Grep-lock on the fetch URL template so a refactor that
+    // dropped the limit (or lowered it below the BE max) would
+    // flip this red.
+    expect(SRC).toMatch(/\/jobs\?start=\$\{start\}&end=\$\{end\}&limit=5000/);
+  });
+
+  it("limit value matches the BE max (routers/jobs.py:875 ``le=5000``)", () => {
+    // Belt-and-suspenders — any value above 5000 would 422 at the
+    // server (pydantic ``le=5000``); any value below 5000 leaves
+    // headroom on busy tenants.  Pin to exactly 5000.
+    const match = SRC.match(/\/jobs\?start=\$\{start\}&end=\$\{end\}&limit=(\d+)/);
+    expect(match).toBeTruthy();
+    expect(match[1]).toBe("5000");
+  });
+});

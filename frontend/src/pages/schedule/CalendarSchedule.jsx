@@ -907,7 +907,17 @@ export default function CalendarSchedule() {
         : "";
       const [j, t, cr] = await Promise.all([
         api.get(
-          `/jobs?start=${start}&end=${end}${crewId ? `&crew_id=${encodeURIComponent(crewId)}` : ""}${_techScope}${_svcCatScope}`,
+          // Ticket OO · Feb-2026 — explicit ``&limit=5000`` (BE max
+          // cap on ``/jobs``, see routers/jobs.py:875).  Without it,
+          // the Month-view fetch silently drops rows past the BE
+          // default 1000-row cap on busy tenants (preview admin Oct
+          // grid = 1,501 rows per the M3c mobile-port receipt).
+          // Web uses a single shared fetch across Grid/Month/Agenda
+          // modes, so the one-line fix also defensively lifts the
+          // latent cap on Grid + Agenda — same exposure, less-
+          // visible symptom.  Mirrors the mobile M3c fix (commit
+          // ``090faf17f``) byte-for-byte.
+          `/jobs?start=${start}&end=${end}&limit=5000${crewId ? `&crew_id=${encodeURIComponent(crewId)}` : ""}${_techScope}${_svcCatScope}`,
           SCHEDULE_LOAD_TIMEOUT_MS,
         ),
         api.get("/technicians", SCHEDULE_LOAD_TIMEOUT_MS).catch(() => []),
