@@ -55,6 +55,17 @@ class _MockCollection:
 
 def _match(row, query):
     for key, val in query.items():
+        # TD-crew-expand-silent-drop-to-soft-deleted-users ·
+        # Feb-2026 — the live-user predicate added to
+        # ``_resolve_tenant_members`` injects top-level $and / $or
+        # clauses carrying $ne / $exists checks on the deleted_at /
+        # is_active / active fields.  These TD-86 fixture rows
+        # never set those fields so they're all "live" by default
+        # — treat the operators as pass-through so predicate
+        # semantics are covered by the sibling T test suite
+        # instead.
+        if key in ("$and", "$or"):
+            continue
         if isinstance(val, dict):
             if "$in" in val:
                 if row.get(key) not in val["$in"]:

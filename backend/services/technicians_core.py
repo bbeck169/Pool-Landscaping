@@ -75,6 +75,13 @@ async def fetch_tenant_technician_roster(
                         {"deleted_at": {"$exists": False}}]},
              {"$or": [{"active": {"$ne": False}},
                         {"active": {"$exists": False}}]},
+             # TD-crew-expand-silent-drop-to-soft-deleted-users
+             # · Feb-2026 — close the parallel is_active hole so a
+             # row deactivated via the modern admin flow doesn't
+             # slip into the crew-member picker alongside its sibling
+             # ``active`` flag.
+             {"$or": [{"is_active": {"$ne": False}},
+                        {"is_active": {"$exists": False}}]},
          ]},
         {"_id": 0, "id": 1, "email": 1, "first_name": 1,
          "last_name": 1, "name": 1, "phone": 1, "role": 1,

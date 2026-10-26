@@ -156,14 +156,23 @@ def crew(seeded, db):
     db.crews.delete_many({"id": cid})
 
 
-# ─── Core contract: full roster persists regardless of role/lifecycle ─────
-def test_patch_persists_full_roster_with_admin_super_admin_inactive_soft_deleted(
+# ─── Core contract: active roster persists; soft-deleted + inactive dropped ─
+#
+# TD-crew-expand-silent-drop-to-soft-deleted-users · Feb-2026 —
+# This test originally locked the Ticket G promise that every
+# lifecycle bucket persisted verbatim.  Ticket T reversed that
+# posture for the soft-deleted + inactive buckets (operator ask:
+# soft-deleted ghosts stuck in the roster blocked save with no
+# way to see them → infinite loop UX).  New contract:
+#   * field tech / admin / super-admin members PERSIST.
+#   * soft-deleted (``deleted_at`` set) + inactive (``is_active``
+#     / ``active`` False) members SILENTLY DROP on save.
+#   * Foreign-tenant members STILL 400 (unchanged security
+#     posture — see ``test_patch_returns_400_with_foreign_tenant
+#     _category``).
+def test_patch_persists_active_roster_drops_soft_deleted_and_inactive(
     seeded, crew, db,
 ):
-    """The exact Ticket-G user-visible contract.  Operator saves a
-    crew whose members span every lifecycle bucket the FE used to
-    silently drop; the BE must persist all of them with no gate.
-    """
     full_roster = [
         seeded["field_tech"],
         seeded["admin_member"],
@@ -179,11 +188,20 @@ def test_patch_persists_full_roster_with_admin_super_admin_inactive_soft_deleted
     )
     assert r.status_code == 200, r.text
     body = r.json()
-    assert set(body["tech_ids"]) == set(full_roster)
+    expected_live = {
+        seeded["field_tech"],
+        seeded["admin_member"],
+        seeded["super_admin_member"],
+    }
+    assert set(body["tech_ids"]) == expected_live
+    assert seeded["inactive_member"] not in body["tech_ids"]
+    assert seeded["soft_deleted_member"] not in body["tech_ids"]
     # DB-level receipt — regression lock
-    doc = db.crews.find_one({"id": crew}, {"_id": 0, "tech_ids": 1})
-    assert set(doc["tech_ids"]) == set(full_roster)
-    assert len(doc["tech_ids"]) == 5
+    doc = db.crews.find_one(
+        {"id": crew}, {"_id": 0, "tech_ids": 1},
+    )
+    assert set(doc["tech_ids"]) == expected_live
+    assert len(doc["tech_ids"]) == 3
 
 
 # ─── TD-crew-silently-drop-orphan-members-and-backfill ────────

@@ -551,6 +551,43 @@ async def _cascade_soft_delete_reassignments(
         )
     except Exception as e:
         logger.warning(f"delete_user override cancel failed: {e}")
+    # TD-crew-expand-silent-drop-to-soft-deleted-users · Feb-2026 —
+    # Close the user-delete-to-crew loop.  Without this cascade the
+    # deleted user stays referenced in ``crews.tech_ids`` forever;
+    # Ticket T's silent-drop + v2 backfill handle the symptom at
+    # save-time + one-shot cleanup, but every FUTURE delete would
+    # re-pollute the crew docs.  Pull the user out of every crew
+    # roster in-tenant and prune the sibling ``member_added_at``
+    # map in lockstep (TD-86 §7 contract).  Non-fatal — the save-
+    # path silent-drop and the v2 backfill are both safety nets.
+    try:
+        tenant_id_for_cascade = target.get("tenant_id")
+        if tenant_id_for_cascade:
+            res = await db.crews.update_many(
+                {"tenant_id": tenant_id_for_cascade,
+                 "tech_ids": uid},
+                {
+                    "$pull": {"tech_ids": uid},
+                    "$unset": {f"member_added_at.{uid}": ""},
+                    "$set": {
+                        "updated_at": now_iso(),
+                        "last_user_delete_cascade_at": now_iso(),
+                        "last_user_delete_cascade_user_id": uid,
+                    },
+                },
+            )
+            if int(getattr(res, "modified_count", 0) or 0):
+                logger.info(
+                    "[delete_user] cascaded to crews — "
+                    "removed user_id=%s from %s crew(s) in "
+                    "tenant=%s",
+                    uid, res.modified_count,
+                    tenant_id_for_cascade,
+                )
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            f"delete_user crew-cascade failed: {e}"
+        )
     return reassigned_jobs
 
 

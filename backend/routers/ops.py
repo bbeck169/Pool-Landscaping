@@ -103,33 +103,80 @@ async def _resolve_tenant_members(
     if not ids:
         return {"resolved": set(), "missing": [], "errors": []}
 
+    # TD-crew-expand-silent-drop-to-soft-deleted-users · Feb-2026 —
+    # Live-user predicate.  The pre-Ticket-T resolver looked up
+    # ``users`` + ``technicians`` by id + tenant_id ALONE, which
+    # treated soft-deleted + inactive rows as "resolved" and let
+    # them stay in the persisted ``tech_ids`` list.  The expanded
+    # predicate below mirrors the shared live-user shape used by
+    # ``services.technicians_core.fetch_tenant_technician_roster``
+    # for the FE picker + the Ticket P migration's role-aware
+    # cohort probe.  A row is "live" only when ``deleted_at`` is
+    # null/missing AND ``is_active != False`` AND ``active != False``.
+    _not_deleted = {"$or": [
+        {"deleted_at": None}, {"deleted_at": {"$exists": False}},
+    ]}
+    _active_user = {"$and": [
+        _not_deleted,
+        {"$or": [{"is_active": {"$ne": False}},
+                 {"is_active": None}]},
+        {"$or": [{"active": {"$ne": False}},
+                 {"active": None}]},
+    ]}
+    _active_tech = _not_deleted   # technicians collection has no
+                                                             # is_active / active flag; soft-delete only.
+
     resolved: set = set()
     async for u in db.users.find(
-        {"tenant_id": tenant_id, "id": {"$in": ids}},
+        {"tenant_id": tenant_id, "id": {"$in": ids},
+         **_active_user},
         {"_id": 0, "id": 1},
     ):
         resolved.add(u["id"])
     if len(resolved) < len(ids):
         async for t in db.technicians.find(
-            {"tenant_id": tenant_id, "id": {"$in": ids}},
+            {"tenant_id": tenant_id, "id": {"$in": ids},
+             **_active_tech},
             {"_id": 0, "id": 1},
-        ):
+    ):
             resolved.add(t["id"])
 
     missing = [x for x in ids if x not in resolved]
     if not missing:
         return {"resolved": resolved, "missing": [], "errors": []}
 
-    # Categorise each missing id — probe users + technicians across
-    # ALL tenants so we can tell foreign_tenant from orphan.
-    foreign_map: dict = {}
+    # Second-pass tenant-scoped probe — if the id DOES exist in this
+    # tenant but got filtered by the live-user predicate above, it's
+    # a soft-deleted / inactive member (silently-dropped in the save
+    # path, same reason tag in the error list).  Mutually-exclusive
+    # with foreign_tenant below (soft_deleted hits DON'T reach the
+    # foreign probe).
+    soft_deleted: set = set()
     async for u in db.users.find(
-        {"id": {"$in": missing}}, {"_id": 0, "id": 1, "tenant_id": 1},
+        {"tenant_id": tenant_id, "id": {"$in": missing}},
+        {"_id": 0, "id": 1},
+    ):
+        soft_deleted.add(u["id"])
+    async for t in db.technicians.find(
+        {"tenant_id": tenant_id, "id": {"$in": missing}},
+        {"_id": 0, "id": 1},
+    ):
+        soft_deleted.add(t["id"])
+
+    # Categorise each missing id — probe users + technicians across
+    # ALL tenants so we can tell foreign_tenant from orphan.  Skips
+    # ids already categorised as soft_deleted above.
+    foreign_map: dict = {}
+    _foreign_candidates = [x for x in missing if x not in soft_deleted]
+    async for u in db.users.find(
+        {"id": {"$in": _foreign_candidates}},
+        {"_id": 0, "id": 1, "tenant_id": 1},
     ):
         if u.get("id") and u.get("tenant_id") and u["tenant_id"] != tenant_id:
             foreign_map[u["id"]] = u["tenant_id"]
     async for t in db.technicians.find(
-        {"id": {"$in": [x for x in missing if x not in foreign_map]}},
+        {"id": {"$in": [x for x in _foreign_candidates
+                                   if x not in foreign_map]}},
         {"_id": 0, "id": 1, "tenant_id": 1},
     ):
         if t.get("id") and t.get("tenant_id") and t["tenant_id"] != tenant_id:
@@ -137,6 +184,12 @@ async def _resolve_tenant_members(
 
     errors: List[dict] = []
     for mid in missing:
+        if mid in soft_deleted:
+            errors.append({
+                "tech_id": mid,
+                "reason": "soft_deleted",
+            })
+            continue
         if mid in foreign_map:
             errors.append({
                 "tech_id": mid,
@@ -231,8 +284,9 @@ async def create_crew(body: CrewIn, user: dict = Depends(require_admin),
             e for e in probe["errors"]
             if e.get("reason") == "foreign_tenant"
         ]
-        orphan_errors = [
-            e for e in probe["errors"] if e.get("reason") == "orphan"
+        drop_errors = [
+            e for e in probe["errors"]
+            if e.get("reason") in ("orphan", "soft_deleted")
         ]
         if foreign_errors:
             raise HTTPException(
@@ -243,13 +297,14 @@ async def create_crew(body: CrewIn, user: dict = Depends(require_admin),
                     "errors": foreign_errors,
                 },
             )
-        if orphan_errors:
-            orphan_ids = [e["tech_id"] for e in orphan_errors]
-            normalised = [x for x in normalised if x not in orphan_ids]
+        if drop_errors:
+            drop_ids = [e["tech_id"] for e in drop_errors]
+            normalised = [x for x in normalised if x not in drop_ids]
             logger.info(
-                "[crews] silently dropped orphan tech_ids "
+                "[crews] silently dropped tech_ids "
                 "crew_id=<new> tenant_id=%s dropped=%s",
-                tenant["id"], orphan_ids,
+                tenant["id"],
+                [(e["tech_id"], e["reason"]) for e in drop_errors],
             )
     doc["tech_ids"] = normalised
     _now = now_iso()
@@ -317,9 +372,9 @@ async def update_crew(cid: str, body: dict, user: dict = Depends(require_admin),
                 e for e in probe["errors"]
                 if e.get("reason") == "foreign_tenant"
             ]
-            orphan_errors = [
+            drop_errors = [
                 e for e in probe["errors"]
-                if e.get("reason") == "orphan"
+                if e.get("reason") in ("orphan", "soft_deleted")
             ]
             if foreign_errors:
                 raise HTTPException(
@@ -330,15 +385,17 @@ async def update_crew(cid: str, body: dict, user: dict = Depends(require_admin),
                         "errors": foreign_errors,
                     },
                 )
-            if orphan_errors:
-                orphan_ids = [e["tech_id"] for e in orphan_errors]
+            if drop_errors:
+                drop_ids = [e["tech_id"] for e in drop_errors]
                 normalised = [
-                    x for x in normalised if x not in orphan_ids
+                    x for x in normalised if x not in drop_ids
                 ]
                 logger.info(
-                    "[crews] silently dropped orphan tech_ids "
+                    "[crews] silently dropped tech_ids "
                     "crew_id=%s tenant_id=%s dropped=%s",
-                    cid, tenant["id"], orphan_ids,
+                    cid, tenant["id"],
+                    [(e["tech_id"], e["reason"])
+                     for e in drop_errors],
                 )
         body["tech_ids"] = normalised
     body["updated_at"] = now_iso()
