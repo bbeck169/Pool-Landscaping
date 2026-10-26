@@ -458,8 +458,10 @@ export function AutoBilling() {
   const [newPlan, setNewPlan] = useState({ customer_id: "", service: "Monthly Pool Service", frequency: "monthly", amount: 150, next_run: "", run_schedule: "first_of_month" });
   // Phase 34 · Task II · Feb 2026 — bulk-select state for the
   // Autobilling admin surface. Same UX pattern as Invoices / Estimates /
-  // Payments / Leads. Locked-state (Stripe subs, imminent charges) is
-  // enforced server-side; the failed[] entries are shown in the toast.
+  // Payments / Leads. Stripe-subscription lock is enforced server-side;
+  // Ticket DD · Feb-2026 lifted the "imminent charge" lock — plans with
+  // next_run <24h now delete successfully.  The failed[] entries are
+  // shown in the toast (Stripe subs only now).
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [confirmDelOpen, setConfirmDelOpen] = useState(false);
   const [bulkBusy, setBulkBusy] = useState(false);
@@ -557,6 +559,27 @@ export function AutoBilling() {
       sonnerToast.error(e?.message || "Bulk delete failed");
     } finally { setBulkBusy(false); }
   };
+
+  // Ticket DD · Feb-2026 — client-side detector for imminent
+  // charges (<24h) in the current bulk-delete selection.  Only
+  // used to decide whether the confirmation modal shows a warning
+  // banner; the BE no longer blocks these deletes.
+  const imminentSelectedCount = useMemo(() => {
+    const now = new Date();
+    let n = 0;
+    for (const p of plans) {
+      if (!selectedIds.has(p.id)) continue;
+      if (!p.next_run) continue;
+      try {
+        const when = new Date(p.next_run);
+        if (!Number.isNaN(when.getTime())
+            && when.getTime() - now.getTime() < 24 * 60 * 60 * 1000) {
+          n += 1;
+        }
+      } catch { /* parse fail: not imminent */ }
+    }
+    return n;
+  }, [plans, selectedIds]);
 
   // Phase AB1 · Feb-2026 — Bulk cancel (soft; keeps the row, sets
   // active=false + cancelled_at + cancel_reason). Separate from
@@ -909,8 +932,8 @@ export function AutoBilling() {
                 </h2>
                 <p className="text-sm mt-1" style={{ color: colors.muted }}>
                   {selectedCount > 100
-                    ? "This is a large batch — please confirm. It can be restored from the archive. Stripe-subscription plans and imminent (within 24h) charges will show as \"locked\" in the result."
-                    : "This can be restored from the archive. Stripe-subscription plans and imminent (within 24h) charges will show as \"locked\" in the result."}
+                    ? "This is a large batch — please confirm. It can be restored from the archive. Stripe-subscription plans will show as \"locked\" in the result."
+                    : "This can be restored from the archive. Stripe-subscription plans will show as \"locked\" in the result."}
                 </p>
               </div>
               <button type="button" onClick={() => setConfirmDelOpen(false)} className="p-1"
@@ -918,6 +941,22 @@ export function AutoBilling() {
                 <XIcon size={18} />
               </button>
             </div>
+            {imminentSelectedCount > 0 ? (
+              <div
+                className="mt-2 mb-1 rounded-lg px-3 py-2 text-sm"
+                style={{
+                  backgroundColor: "#FEF3C7",
+                  border: "1px solid #FDE68A",
+                  color: "#78350F",
+                }}
+                data-testid="bulk-delete-imminent-warning"
+              >
+                <strong>⚠ Imminent charge:</strong> {imminentSelectedCount}{" "}
+                of the selected plan{imminentSelectedCount === 1 ? " has" : "s have"} a charge
+                scheduled within the next 24 hours. Deleting now will prevent
+                {imminentSelectedCount === 1 ? " it" : " them"} from running.
+              </div>
+            ) : null}
             <div className="mt-5 flex items-center justify-end gap-2">
               <button type="button" onClick={() => setConfirmDelOpen(false)}
                         className="px-4 py-2 rounded-xl text-sm font-semibold"
@@ -929,7 +968,7 @@ export function AutoBilling() {
                         className="px-4 py-2 rounded-xl text-sm font-bold text-white disabled:opacity-60"
                         style={{ backgroundColor: "#DC2626" }}
                         data-testid="bulk-delete-confirm-btn">
-                {bulkBusy ? "Deleting…" : `Delete ${selectedCount}`}
+                {bulkBusy ? "Deleting…" : "Confirm Delete"}
               </button>
             </div>
           </div>
