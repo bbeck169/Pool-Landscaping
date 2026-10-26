@@ -207,6 +207,14 @@ _ROUTES_WITHOUT_PII_PAYLOAD: Dict[Tuple[str, str], str] = {
     ("POST", "/api/customers/bulk-delete"):
         "Bulk soft-delete. Body is {ids: [...]} UUID list only. "
         "No PII ingress.",
+    ("POST", "/api/customers/bulk-request-card-setup-intent"):
+        "TD-starlette-lifespan-dead-startup-handlers · Ticket CC · "
+        "Feb-2026 — bulk admin trigger that fires an email + SMS "
+        "capture link to each selected customer. Body is "
+        "{customer_ids: [...]} UUID list only (handler enforces "
+        "cross-tenant 403 preflight). No PII ingress; customer "
+        "PII flows OUTBOUND to Stripe + the mail/SMS carriers, "
+        "not INBOUND.",
     ("POST", "/api/customers/bulk-update"):
         "Bulk-update field flip (muted/active/tags/etc.) on "
         "already-stored customers. Body is {ids, patch} where "

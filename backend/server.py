@@ -1948,13 +1948,25 @@ app.add_middleware(_PreviewPIIMiddleware)
 # dedup guard so a crash-loop restart storm doesn't double-run.
 # Production env: both the registry audit and the scrubber are
 # strict no-ops.
-@app.on_event("startup")
+#
+# TD-starlette-lifespan-dead-startup-handlers · Ticket CC · Feb-2026
+# The ``@app.on_event("startup")`` decorator has been removed — the
+# modern ``app.router.lifespan_context = lifespan`` (set at the
+# bottom of this file) means Starlette no longer invokes
+# ``@app.on_event`` handlers. The three preview-only guardrails
+# below (``_assert_pii_registry_coverage``, ``_preview_scrub``,
+# ``assert_no_orphan_credit_writes``) are now invoked from the
+# ``lifespan()`` body in the exact same order (see the P2 #CC
+# block in ``lifespan()``).  The Stripe mode-consistency check
+# was already migrated to ``lifespan()`` under TD-stripe-webhook-
+# 400-every-event (see line ~6619) so it is NOT re-emitted here
+# to avoid double-firing on every boot.
 async def _preview_isolation_boot_audit():
     # 2026-02 · P0 Stage 3 Commit F — hard-fail boot on preview if
     # the PII route registry audit returns RED. ``assert_registry_
     # coverage`` is a strict no-op on production (returns the
     # report, never raises) so this never crashes prod boot. On
-    # preview, RuntimeError propagates out of the startup callback
+    # preview, RuntimeError propagates out of the lifespan context
     # and uvicorn terminates — forcing the admin to either wire
     # the decorator or add the orphan to the exemption list with
     # a concrete justification BEFORE the server starts serving
@@ -1970,18 +1982,6 @@ async def _preview_isolation_boot_audit():
         _asyncio.create_task(_preview_scrub(db))
     except Exception as e:  # pragma: no cover
         logger.error(f"[preview_isolation] scrubber launch failed: {e}")
-
-    # P0c Stage 2 · Feb-2026 — Stripe mode/secret consistency check.
-    # Runs on every boot; logs ERROR for each inconsistency so an
-    # on-call operator sees misconfigured env the moment the pod
-    # starts. Does NOT raise — non-webhook Stripe flows still work
-    # with a wrong webhook secret, and silently failing boot would
-    # hide the problem.
-    try:
-        from services.payments.stripe_charge import check_stripe_mode_consistency
-        check_stripe_mode_consistency()
-    except Exception as e:  # pragma: no cover — defensive
-        logger.error(f"[stripe-boot-check] crashed: {e}")
 
     # P0b Stage 2 S2-1 · Feb-2026 — Credit-write-guard static scan.
     # Fails preview boot loud if any orphan writer sneaks past the
@@ -6606,16 +6606,36 @@ async def lifespan(app):  # noqa: ANN001 — FastAPI passes the app
         )
 
     # TD-stripe-webhook-400-every-event · Feb-2026 — Stripe mode /
-    # webhook-secret consistency check.  The identical call at line
-    # 1971 is dead code because ``app.router.lifespan_context``
-    # (set at the bottom of this file) replaces ``@app.on_event
-    # ("startup")`` handlers under Starlette's modern lifespan
-    # protocol — ``_preview_isolation_boot_audit`` never runs.
-    # Wiring it here so the operator-requested
-    # ``[stripe-webhook] secret loaded from <SOURCE>`` boot log
-    # (and the webhook-secret-missing ERROR when all slots are
-    # empty) actually reaches pod logs on every boot.  Swallows
-    # every exception so a misconfig can't black-hole bind.
+    # webhook-secret consistency check.  Formerly duplicated with
+    # the ``@app.on_event("startup")`` ``_preview_isolation_boot_
+    # audit`` handler at line ~1951; under Ticket CC that handler
+    # was converted to a plain async helper (decorator removed) and
+    # its Stripe line was dropped in favour of this one to prevent
+    # double-firing on boot.  Swallows every exception so a
+    # misconfig can't black-hole bind.
+    #
+    # TD-starlette-lifespan-dead-startup-handlers · Ticket CC ·
+    # Feb-2026 — invoke the three preview-only guardrails
+    # (``_assert_pii_registry_coverage``, ``_preview_scrub`` BG task
+    # spawn, ``assert_no_orphan_credit_writes``) FIRST so their
+    # original ordering vs the Stripe check is preserved from the
+    # dead ``@app.on_event("startup")`` handler.  Each guardrail
+    # self-gates on preview-vs-production — no outer env branch.
+    try:
+        await _preview_isolation_boot_audit()
+    except Exception:  # noqa: BLE001
+        # ``assert_no_orphan_credit_writes`` is the only guardrail
+        # that intentionally raises on preview; let that propagate
+        # so uvicorn terminates on red boot per the P0b design.
+        # Any OTHER exception (import errors, Mongo blips) stays
+        # non-blocking — logged inside the helper via logger.error.
+        if not _preview_iso_is_prod():
+            raise
+        logger.exception(
+            "[startup] phase=preview_isolation_boot_audit crashed — "
+            "non-preview env, continuing boot",
+        )
+
     try:
         from services.payments.stripe_charge import (
             check_stripe_mode_consistency as _stripe_boot_check,
