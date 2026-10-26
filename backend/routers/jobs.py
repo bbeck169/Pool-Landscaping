@@ -1996,6 +1996,144 @@ async def reopen_job(jid: str,
     return updated
 
 
+@router.post("/jobs/{jid}/mark-open")
+async def mark_job_open_from_missed(
+    jid: str,
+    request: Request,
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Ticket X · Feb-2026 — flip a ``missed`` job back to the
+    ``scheduled`` bucket ("Open" in the Schedule UI palette; see
+    ``frontend/src/lib/jobStatus.js:31`` — ``scheduled`` is the
+    canonical alias of ``open`` on the Schedule surface).
+
+    Precondition: current ``status == "missed"``.  Any other
+    status returns 409 ``invalid_status_transition`` so the UI
+    can roll back optimistic state cleanly.
+
+    Role gate — admin-equivalent only (``admin`` / ``super_admin``
+    / ``owner`` / ``manager``).  Matches the ``PUT /jobs/{jid}``
+    arbitrary-status write path's admin branch byte-for-byte so
+    operators who can change a status today keep the same reach.
+    Techs are NOT included — the ``reopen`` endpoint's narrower
+    tech access is tied to the service-report submission flow
+    which does not apply to missed-flipped-open.
+
+    Side effects:
+      * ``status`` → ``scheduled``
+      * ``reopened_from_missed_at`` → now
+      * ``missed_at`` cleared (so the auto-missed scheduler
+        doesn't re-flag the row on its next sweep based on a
+        stale timestamp — see
+        ``services/missed_job_scheduler.py``).
+      * Activity log entry (``type="mark_open_from_missed"``)
+        mirrors the ``reopen`` audit shape so the two actions
+        can be queried together on the activity feed.
+
+    Undo path (operator spec): the FE uses the existing
+    ``PUT /jobs/{jid}`` with ``{"status": "missed", "missed_at":
+    <original>}`` for the 5-second undo window.  No separate
+    ``mark-missed`` endpoint needed — the PUT path already
+    admin-gates arbitrary status writes.
+
+    Idempotency envelope preserved so an offline retry replays
+    the same response payload.
+    """
+    from utils_idempotency import replay_or_reserve, store_response
+    idem_body: Dict[str, Any] = {}
+    idem_key, cached = await replay_or_reserve(
+        request, tenant["id"],
+        "POST /jobs/{jid}/mark-open", idem_body,
+    )
+    if cached is not None:
+        return cached
+
+    job = await db.jobs.find_one(
+        {"id": jid, "tenant_id": tenant["id"]},
+        {"_id": 0, "photos.data": 0},
+    )
+    if not job:
+        raise HTTPException(404, "Job not found")
+
+    # Role gate — admin-equivalent only.  Mirrors the PUT
+    # ``update_job`` admin branch so the operator population that
+    # can change a status via PUT today also owns this
+    # endpoint.
+    role = (user.get("role") or "").lower()
+    ADMIN_ROLES = {"admin", "super_admin", "owner", "manager"}
+    if role not in ADMIN_ROLES:
+        raise HTTPException(
+            403,
+            {
+                "code": "mark_open_forbidden",
+                "detail": "Role not permitted",
+            },
+        )
+
+    # Precondition — must be currently ``missed``.  Any other
+    # status gets a 409 ``invalid_status_transition`` with the
+    # observed status surfaced so the FE can roll back optimistic
+    # state + show a precise error toast.
+    current_status = (job.get("status") or "").lower()
+    if current_status != "missed":
+        raise HTTPException(
+            409,
+            {
+                "code": "invalid_status_transition",
+                "detail": (
+                    f"Only ``missed`` jobs can be marked open; "
+                    f"job is currently ``{current_status or 'unset'}``."
+                ),
+                "current_status": current_status,
+            },
+        )
+
+    now = now_iso()
+    await db.jobs.update_one(
+        {"id": jid, "tenant_id": tenant["id"]},
+        {
+            "$set": {
+                "status": "scheduled",
+                "reopened_from_missed_at": now,
+            },
+            "$unset": {"missed_at": ""},
+        },
+    )
+
+    # Audit — same shape as the ``reopen`` endpoint so operator
+    # activity feeds can roll both actions together.
+    try:
+        await db.activity_logs.insert_one({
+            "id": new_id(),
+            "tenant_id": tenant["id"],
+            "job_id": jid,
+            "type": "mark_open_from_missed",
+            "actor_id": user.get("id"),
+            "actor_name": user.get("name", ""),
+            "actor_role": role,
+            "at": now,
+            "note": "Missed job marked open by admin",
+            "metadata": {
+                "before_status": "missed",
+                "after_status": "scheduled",
+            },
+        })
+    except Exception:
+        pass
+
+    updated = await db.jobs.find_one(
+        {"id": jid, "tenant_id": tenant["id"]},
+        {"_id": 0, "photos.data": 0},
+    )
+    if idem_key:
+        await store_response(
+            idem_key, "POST /jobs/{jid}/mark-open",
+            tenant["id"], updated, idem_body,
+        )
+    return updated
+
+
 async def _build_work_order_pdf(job: dict, tenant: dict) -> bytes:
     """Shared PDF builder so both work_order_pdf and email_work_order can produce
     the same output without one calling the other (avoiding tenant-plumbing pain)."""
