@@ -22,15 +22,18 @@ import {
   Text,
   View,
   Platform,
+  Pressable,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { font, fontSize, radius, spacing } from "@/src/theme";
 
 export type ToastVariant = "success" | "error" | "info";
+/** M3b · optional inline action (e.g. "Undo"). Additive — existing callers unchanged. */
+export type ToastAction = { label: string; onPress: () => void };
 
 type ToastContextValue = {
-  showToast: (message: string, variant?: ToastVariant, durationMs?: number) => void;
+  showToast: (message: string, variant?: ToastVariant, durationMs?: number, action?: ToastAction) => void;
 };
 
 const ToastContext = createContext<ToastContextValue>({
@@ -49,15 +52,17 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   const insets = useSafeAreaInsets();
   const [message, setMessage] = useState("");
   const [variant, setVariant] = useState<ToastVariant>("success");
+  const [action, setAction] = useState<ToastAction | null>(null);
   const opacity = useRef(new Animated.Value(0)).current;
   const translateY = useRef(new Animated.Value(-20)).current;
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const showToast = useCallback(
-    (msg: string, v: ToastVariant = "success", durationMs = 3000) => {
+    (msg: string, v: ToastVariant = "success", durationMs = 3000, act?: ToastAction) => {
       if (timerRef.current) clearTimeout(timerRef.current);
       setMessage(msg);
       setVariant(v);
+      setAction(act || null);
 
       // Reset + animate in
       opacity.setValue(0);
@@ -71,7 +76,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
         Animated.parallel([
           Animated.timing(opacity, { toValue: 0, duration: 300, useNativeDriver: true }),
           Animated.timing(translateY, { toValue: -20, duration: 300, useNativeDriver: true }),
-        ]).start(() => setMessage(""));
+        ]).start(() => { setMessage(""); setAction(null); });
       }, durationMs);
     },
     [opacity, translateY],
@@ -84,7 +89,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
       {children}
       {message ? (
         <Animated.View
-          pointerEvents="none"
+          pointerEvents={action ? "box-none" : "none"}
           style={[
             s.container,
             { top: insets.top + (Platform.OS === "ios" ? 8 : 16), opacity, transform: [{ translateY }] },
@@ -94,6 +99,22 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
           <View style={[s.toast, { backgroundColor: cfg.bg }]} testID="toast-message">
             <Ionicons name={cfg.icon as any} size={20} color={cfg.iconColor} />
             <Text style={s.text} testID="toast-text">{message}</Text>
+            {action ? (
+              <Pressable
+                onPress={() => {
+                  if (timerRef.current) clearTimeout(timerRef.current);
+                  const run = action.onPress;
+                  setMessage(""); setAction(null);
+                  run();
+                }}
+                hitSlop={8}
+                style={s.action}
+                accessibilityRole="button"
+                testID="toast-action"
+              >
+                <Text style={s.actionText}>{action.label}</Text>
+              </Pressable>
+            ) : null}
           </View>
         </Animated.View>
       ) : null}
@@ -130,4 +151,6 @@ const s = StyleSheet.create({
     color: "#fff",
     flex: 1,
   },
+  action: { minHeight: 32, paddingHorizontal: 10, justifyContent: "center", borderRadius: radius.sm, backgroundColor: "rgba(255,255,255,0.18)" },
+  actionText: { fontFamily: font.bold, fontSize: fontSize.sm, color: "#fff" },
 });
