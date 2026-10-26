@@ -61,6 +61,8 @@ import { serviceCategoryParam, canWriteThroughJobs } from "@/src/lib/scheduleSer
 import { useScheduleServiceCategory } from "@/src/hooks/useScheduleServiceCategory";
 import ServiceCategoryChips from "@/src/components/schedule/ServiceCategoryChips";
 import MarkOpenButton from "@/src/components/schedule/MarkOpenButton";
+import ScheduleMonthView from "@/src/components/schedule/ScheduleMonthView";
+import { filterMonthJobs } from "@/src/lib/monthGrid";
 import { useToast } from "@/src/components/ToastProvider";
 // Phase 23 · 2026-08-02 — Service / Repair progress ring tiles above the grid.
 import JobTrackerTiles from "./JobTrackerTiles";
@@ -137,7 +139,7 @@ type Job = {
   notes_truncated?: boolean;
 };
 
-type Mode = "grid" | "calendar";
+type Mode = "grid" | "calendar" | "month";
 const MODE_KEY = "aq-schedule-mode-v1";
 const MAP_VISIBLE_KEY = "schedule.mapVisible";
 const TECH_FILTER_KEY = "schedule.tech_filter";
@@ -329,7 +331,7 @@ function ScheduleCalendarInner() {
     (async () => {
       try {
         const saved = await storage.getItem<string>(MODE_KEY, "grid");
-        if (saved === "grid" || saved === "calendar") setMode(saved);
+        if (saved === "grid" || saved === "calendar" || saved === "month") setMode(saved);
       } finally { setModeLoaded(true); }
     })();
   }, []);
@@ -449,6 +451,14 @@ function ScheduleCalendarInner() {
 
   // K15 · per-request AbortController — abort stale loads on new ones.
   const loadAbortRef = useRef<AbortController | null>(null);
+
+  // M3c · Month view (web Ticket W) — same server scope as load()'s jobsUrl
+  // (crew / tech / category) + the same client filters as filteredJobs/visibleJobs.
+  const monthScopeQuery = `${!isTech && crewFilter ? `&crew_id=${crewFilter}` : ""}${isTech && resolvedTechId ? `&technician_id=${resolvedTechId}` : ""}${serviceCategoryParam(serviceCategory)}`;
+  const monthClientFilter = useCallback(
+    (arr: any[]) => filterMonthJobs(arr, { isTech, techFilter, resolvedTechId, showCancelled }),
+    [isTech, techFilter, resolvedTechId, showCancelled],
+  );
 
   const load = useCallback(async (force = false) => {
     // Phase P17 — OOM fix: narrower window (±14d instead of -14/+60d)
@@ -872,7 +882,7 @@ function ScheduleCalendarInner() {
 
       {/* Top-level Grid ↔ Calendar toggle. */}
       <View style={styles.modeSwitch} testID="schedule-mode-switch">
-        {(["calendar", "grid"] as const).map((m) => {
+        {(["calendar", "grid", "month"] as const).map((m) => {
           const active = mode === m;
           return (
             <Pressable
@@ -882,12 +892,12 @@ function ScheduleCalendarInner() {
               testID={`schedule-mode-${m}`}
             >
               <Ionicons
-                name={m === "grid" ? "list-outline" : "calendar-outline"}
+                name={m === "grid" ? "list-outline" : m === "month" ? "grid-outline" : "calendar-outline"}
                 size={14}
                 color={active ? "#fff" : colors.onSurfaceSecondary}
               />
               <Text style={[styles.modeBtnText, active && { color: "#fff" }]}>
-                {m === "grid" ? "Grid" : "Calendar"}
+                {m === "grid" ? "Grid" : m === "month" ? "Month" : "Calendar"}
               </Text>
             </Pressable>
           );
@@ -1043,7 +1053,7 @@ function ScheduleCalendarInner() {
           pendingEntityIds={pendingEntityIds}
           hydrationMeta={hydrationMeta}
         />
-      ) : (
+      ) : mode === "calendar" ? (
         <CalendarView
           onPatchJob={patchJobInPlace}
           weekDays={weekDays}
@@ -1058,6 +1068,15 @@ function ScheduleCalendarInner() {
           isAdmin={isAdmin}
           isTech={isTech}
           onNewJob={isStrictAdmin(user) ? () => router.push(`/job/new?scheduled_date=${focusISO}` as any) : undefined}
+        />
+      ) : (
+        <ScheduleMonthView
+          initialDate={focus}
+          scopeQuery={monthScopeQuery}
+          clientFilter={monthClientFilter}
+          userId={user?.id || ""}
+          onOpenJob={(id) => router.push(`/job/${id}/checklist` as any)}
+          onOpenDay={(d) => { setFocus(d); setModePersist("grid"); }}
         />
       )}
 
