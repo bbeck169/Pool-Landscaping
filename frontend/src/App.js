@@ -513,6 +513,10 @@ const AnalyticsPage = React.lazy(() => import(/* webpackChunkName: "p-analytics-
 import OnboardingPage from '@/pages/onboarding/OnboardingPage';
 const LeadRequestPage = React.lazy(() => import(/* webpackChunkName: "p-leads-leadrequestpage" */ "@/pages/leads/LeadRequestPage"));
 const LeadDetail = React.lazy(() => import(/* webpackChunkName: "p-leads-leaddetail" */ "@/pages/leads/LeadDetail"));
+// Ticket Z1 · Feb-2026 — new /leads/:id lightweight Lead Profile
+// page (customer-profile-shape). Phase 1 of 5 (Z2-Z5 add SMS /
+// Email send / Quote / Communication history / Auto-convert).
+const LeadProfile = React.lazy(() => import(/* webpackChunkName: "p-leads-leadprofile" */ "@/pages/leads/LeadProfile"));
 const PublicLeadIntake = React.lazy(() => import(/* webpackChunkName: "p-public-publicleadintake" */ "@/pages/public/PublicLeadIntake"));
 const PublicLeadRequestPage = React.lazy(() => import(/* webpackChunkName: "p-public-publicleadrequest" */ "@/pages/public/PublicLeadRequest"));
 const WidgetDemoPage = React.lazy(() => import(/* webpackChunkName: "p-widget-widgetdemopage" */ "@/pages/widget/WidgetDemoPage"));
@@ -1195,6 +1199,11 @@ export default function App() {
             {/* Phase 8 · Feb 2026 — Lead detail (admin + manager) */}
             <Route path="leads/:id" element={<AdminOnly><LeadDetail /></AdminOnly>} />
             <Route path="admin/leads/:id" element={<AdminOnly><LeadDetail /></AdminOnly>} />
+            {/* Ticket Z1 · Feb-2026 — public leads profile route.
+                Admin + manager gate is enforced server-side by
+                ``_require_leads_role`` on every /api/leads/* read
+                this page issues; no additional FE wrapper needed. */}
+            <Route path="leads/:id" element={<LeadProfile />} />
             <Route path="portal/preferences" element={<PortalPreferences />} />
             <Route path="marketing/reviews" element={<AdminOnly><Reviews /></AdminOnly>} />
             <Route path="marketing/sequences" element={<Navigate to="/marketing/automations" replace />} />

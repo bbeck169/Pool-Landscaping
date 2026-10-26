@@ -3,7 +3,7 @@
 // Table + drawer detail. Filters (source, status, date range). Convert
 // action calls existing POST /api/leads/{id}/convert.
 import React, { useEffect, useMemo, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { api } from "@/api";
 import { mustConfirm } from "@/components/ui/confirm-dialog";
@@ -105,6 +105,13 @@ export default function LeadsDashboardPage() {
   const [error, setError] = useState("");
   const [filters, setFilters] = useState({ source: "", status: "", search: "" });
   const [selected, setSelected] = useState(null);
+  // Ticket Z1 · Feb-2026 — row-click navigates to /leads/:id
+  // (new lightweight Lead Profile page). The LeadDetailDrawer
+  // side-panel remains in the code for programmatic
+  // ``setSelected`` paths that haven't been migrated this
+  // phase (e.g., bulk-action status-confirm dialogs that still
+  // reach into drawer internals); row-click no longer opens it.
+  const navigate = useNavigate();
   // Phase L3 · Feb-2026 — row-level compose modal.
   const [composeTarget, setComposeTarget] = useState(null);   // { lead, channel } | null
   // Phase 34 · Task BB · Feb 2026 — bulk-select state.
@@ -613,7 +620,7 @@ export default function LeadsDashboardPage() {
                  borderBottom: `1px solid ${colors.border}`,
                  backgroundColor: selectedIds.has(l.id) ? "#EFF6FF" : "transparent",
                }}
-               onClick={() => setSelected(l)}>
+               onClick={() => navigate(`/leads/${encodeURIComponent(l.id)}`)}>
             <div className="col-span-1" onClick={(e) => e.stopPropagation()}>
               <input
                 type="checkbox"
