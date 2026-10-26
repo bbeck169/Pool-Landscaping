@@ -60,6 +60,7 @@ import { isCompactScheduleHeader } from "@/src/lib/scheduleHeader";
 import { serviceCategoryParam, canWriteThroughJobs } from "@/src/lib/scheduleServiceCategory";
 import { useScheduleServiceCategory } from "@/src/hooks/useScheduleServiceCategory";
 import ServiceCategoryChips from "@/src/components/schedule/ServiceCategoryChips";
+import MarkOpenButton from "@/src/components/schedule/MarkOpenButton";
 import { useToast } from "@/src/components/ToastProvider";
 // Phase 23 · 2026-08-02 — Service / Repair progress ring tiles above the grid.
 import JobTrackerTiles from "./JobTrackerTiles";
@@ -164,6 +165,8 @@ const STATUS_PILL: Record<string, { bg: string; fg: string; label: string }> = {
   // visually distinct from a plain "Open" job on the same card.
   could_not_service: { bg: "#FDE68A", fg: "#78350F", label: "Could Not Service" },
   skipped:    { bg: "#E5E7EB", fg: "#374151", label: "Skipped" },
+  // M3b · web CalendarSchedule.jsx STATUS_COLORS parity.
+  missed:     { bg: "#FEE2E2", fg: "#B91C1C", label: "Missed" },
 };
 
 // Service-type → column card colour. Distinct hues for the Calendar view;
@@ -990,6 +993,7 @@ function ScheduleCalendarInner() {
 
       {mode === "grid" ? (
         <GridView
+          onPatchJob={patchJobInPlace}
           focus={focus} setFocus={setFocus}
           jobs={gridList} loading={loading}
           loadingTimedOut={loadingTimedOut}
@@ -1041,6 +1045,7 @@ function ScheduleCalendarInner() {
         />
       ) : (
         <CalendarView
+          onPatchJob={patchJobInPlace}
           weekDays={weekDays}
           weekTitle={weekTitle}
           jobsByDay={jobsByDay}
@@ -1204,7 +1209,7 @@ function GridView(props: any) {
     weatherWidget, onOpenEdit, onSelectAllInView, onClearSelection, role,
     gridSubMode, setGridSubMode, dayJobs, setReorderList,
     crews, crewFilter, crewMembers, onCrewSelect, isTech,
-    cachedJobIds, pendingEntityIds, hydrationMeta,
+    cachedJobIds, pendingEntityIds, hydrationMeta, onPatchJob,
   } = props;
   const focusISO = iso(focus);
   const isToday = focusISO === iso(new Date());
@@ -1557,6 +1562,7 @@ function GridView(props: any) {
                   isDragging={isActive}
                   cachedForOffline={cachedJobIds?.has(item.id)}
                   pendingSync={pendingEntityIds?.has(item.id)}
+                  onPatchJob={onPatchJob}
                 />
               </ScaleDecorator>
             );
@@ -1589,6 +1595,7 @@ function GridView(props: any) {
               role={role}
               cachedForOffline={cachedJobIds?.has(item.id)}
               pendingSync={pendingEntityIds?.has(item.id)}
+              onPatchJob={onPatchJob}
             />
           )}
         />
@@ -1604,7 +1611,7 @@ function GridView(props: any) {
   );
 }
 
-function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, first, last, hourlyData, isAdminForCard, onEdit, role, onDrag, isDragging, cachedForOffline, pendingSync }: any) {
+function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, first, last, hourlyData, isAdminForCard, onEdit, role, onDrag, isDragging, cachedForOffline, pendingSync, onPatchJob }: any) {
   const pill = STATUS_PILL[(job.status || "scheduled").toLowerCase()] || STATUS_PILL.scheduled;
   const svc = SERVICE_COLOR(job.service_type);
   // Feb-2026 · Schedule-UI · colored left border.
@@ -1783,6 +1790,8 @@ function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, fi
           <Text style={[gStyles.metaText, fg]}>{jobHours(job)}</Text>
           {/* Phase 30X · time-of-day removed. Schedule is per-day. */}
         </View>
+        {/* M3b · web Ticket X — MISSED cards only (component self-gates). */}
+        {onPatchJob ? <MarkOpenButton job={job} onPatch={onPatchJob} /> : null}
         {showOnMyWay ? (
           <OnMyWayButton
             jobId={job.id}
@@ -1868,7 +1877,7 @@ function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, fi
 /* ═══ Calendar view ══════════════════════════════════════════════════ */
 function CalendarView({
   weekDays, weekTitle, jobsByDay, showBH, onToggleBH, onPrev, onNext, onOpenJob,
-  weatherWidget, isAdmin, isTech, onNewJob,
+  weatherWidget, isAdmin, isTech, onNewJob, onPatchJob,
 }: any) {
   return (
     <View style={{ flexGrow: 1 }}>
@@ -1949,6 +1958,7 @@ function CalendarView({
                       {showBH ? (
                         <Text style={[cStyles.eventBH, { color: svc.fg }]}>{jobHours(j)}</Text>
                       ) : null}
+                      {onPatchJob ? <MarkOpenButton job={j} onPatch={onPatchJob} size="xs" /> : null}
                     </Pressable>
                   );
                   });
