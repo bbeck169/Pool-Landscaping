@@ -31,6 +31,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
+import AiRewriteButton from "@/components/ai/AiRewriteButton";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader,
@@ -449,12 +450,22 @@ export default function MassMessagingComposeDialog({ open, onOpenChange }) {
                     </div>
                   ) : null}
                   <div>
-                    <label
-                      className="text-[11px] font-semibold uppercase"
-                      style={{ color: colors.muted }}
-                    >
-                      Body — supports merge tags like {"{{customer.first_name}}"}
-                    </label>
+                    <div className="flex items-center justify-between">
+                      <label
+                        className="text-[11px] font-semibold uppercase"
+                        style={{ color: colors.muted }}
+                      >
+                        Body — supports merge tags like {"{{customer.first_name}}"}
+                      </label>
+                      {/* Ticket LL · Feb-2026 — AI rewrite button
+                          polishes the operator-authored broadcast
+                          body.  Body-only (subject preserved). */}
+                      <AiRewriteButton
+                        value={body}
+                        onReplace={setBody}
+                        dataTestid="mass-messaging-rewrite-btn"
+                      />
+                    </div>
                     <Textarea
                       rows={5}
                       value={body}

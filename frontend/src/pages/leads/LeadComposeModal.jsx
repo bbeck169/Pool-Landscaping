@@ -16,6 +16,7 @@ import React, { useState, useMemo } from "react";
 import { api } from "@/api";
 import { toast } from "sonner";
 import { X } from "lucide-react";
+import AiRewriteButton from "@/components/ai/AiRewriteButton";
 
 const SMS_HARD_CAP = 1600;
 const SMS_SINGLE_SEGMENT_WARN = 160;
@@ -140,9 +141,20 @@ export default function LeadComposeModal({
         )}
 
         <div className="mb-2">
-          <label className="text-xs font-medium text-slate-600">
-            {isSms ? "Message" : "Body"}
-          </label>
+          <div className="flex items-center justify-between">
+            <label className="text-xs font-medium text-slate-600">
+              {isSms ? "Message" : "Body"}
+            </label>
+            {/* Ticket LL · Feb-2026 — AI rewrite button polishes the
+                operator-authored body in a professional tone.  Body-
+                only (subject preserved per spec). */}
+            <AiRewriteButton
+              value={body}
+              onReplace={setBody}
+              disabled={busy}
+              dataTestid="lead-compose-rewrite-btn"
+            />
+          </div>
           <textarea
             value={body}
             onChange={(e) => setBody(e.target.value)}

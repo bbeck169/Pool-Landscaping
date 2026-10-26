@@ -23,6 +23,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Modal, Button } from "@/components/ui-kit";
 import { Sparkles } from "lucide-react";
+import AiRewriteButton from "@/components/ai/AiRewriteButton";
 import { colors } from "@/theme";
 import { api } from "@/api";
 import { toast as sonnerToast } from "sonner";
@@ -240,20 +241,17 @@ export default function MassTextModal({ open, customerIds, onClose, onSent }) {
               className="inline-flex items-center gap-1"
               data-testid="mass-text-rewrite-slot"
             >
-              <button
-                type="button"
-                disabled
-                className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-semibold opacity-50 cursor-not-allowed"
-                style={{
-                  backgroundColor: colors.surfaceSecondary,
-                  color: colors.muted,
-                  border: `1px solid ${colors.border}`,
-                }}
-                title="AI rewrite (coming soon · Ticket LL)"
-                data-testid="mass-text-rewrite-placeholder"
-              >
-                <Sparkles size={11} /> AI rewrite
-              </button>
+              {/* Ticket LL · Feb-2026 — reserved rewrite slot now
+                  carries the live <AiRewriteButton>.  Replaces the
+                  Ticket KK inert placeholder.  Visual size matches
+                  the placeholder's 11px chip so the swap is
+                  byte-identical. */}
+              <AiRewriteButton
+                value={message}
+                onReplace={setMessage}
+                disabled={busy}
+                dataTestid="mass-text-rewrite-btn"
+              />
             </div>
           </div>
           <textarea

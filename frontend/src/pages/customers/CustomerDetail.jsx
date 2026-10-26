@@ -355,6 +355,12 @@ import ResponsiveTabs from "@/components/ui/responsive-tabs";
 // import CustomerDocumentsTab from "@/components/customers/CustomerDocumentsTab";
 import CustomerInvoicesTab from "@/components/customers/CustomerInvoicesTab";
 import { List } from "react-window";
+// Ticket LL · Feb-2026 — AI rewrite button on the Send-SMS /
+// Send-Email dialog's MESSAGE field.  Q2 unlock scope: single-
+// import addition appended BELOW existing imports (no re-order),
+// single <AiRewriteButton> sibling render inside the Send
+// dialog's MESSAGE flex row (strictly L4170-4190 range).
+import AiRewriteButton from "@/components/ai/AiRewriteButton";
 
 
 // Phase P37 · Feb-2026 — fixed row height for the virtualized jobs
@@ -4171,11 +4177,26 @@ function SendComposeModal({ payload, customer, onClose, onSent, onError }) {
             <div className="text-xs font-semibold mb-1 flex items-center justify-between"
                   style={{ color: colors.muted }}>
               <span>MESSAGE</span>
-              {!isEmail ? (
-                <span data-testid="cd-send-char-count">
-                  {message.length} chars
-                </span>
-              ) : null}
+              <div className="inline-flex items-center gap-2">
+                {/* Ticket LL · Feb-2026 — AI rewrite button polishes
+                    the operator-authored MESSAGE in a professional
+                    tone.  Sibling to the existing cd-ai-draft-btn
+                    (which GENERATES a draft from recipient context);
+                    distinct UX: draft = compose from zero, rewrite
+                    = polish existing text.  Q2 unlock scope — this
+                    is the sole addition inside the Send dialog's
+                    compose block. */}
+                <AiRewriteButton
+                  value={message}
+                  onReplace={(next) => { setAiDraftStash(null); setMessage(next); }}
+                  dataTestid="cd-send-rewrite-btn"
+                />
+                {!isEmail ? (
+                  <span data-testid="cd-send-char-count">
+                    {message.length} chars
+                  </span>
+                ) : null}
+              </div>
             </div>
             <textarea
               className="w-full min-h-[220px] px-3 py-2 rounded-lg text-sm"

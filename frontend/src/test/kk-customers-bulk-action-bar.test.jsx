@@ -98,10 +98,12 @@ describe("Ticket KK · MassTextModal", () => {
     expect(screen.getByTestId("mass-text-modal")).toBeTruthy();
     expect(screen.getByTestId("mass-text-recipient-count").textContent)
       .toContain("Sending to 3 customers");
-    // LL inert rewrite placeholder slot — present + disabled.
-    const rewrite = screen.getByTestId("mass-text-rewrite-placeholder");
-    expect(rewrite).toBeTruthy();
-    expect(rewrite.disabled).toBe(true);
+    // Ticket KK reserved a rewrite slot (``mass-text-rewrite-slot``);
+    // Ticket LL swapped the inert placeholder for the live
+    // ``<AiRewriteButton>`` with testid ``mass-text-rewrite-btn``.
+    // The slot container remains for layout stability.
+    expect(screen.getByTestId("mass-text-rewrite-slot")).toBeTruthy();
+    expect(screen.getByTestId("mass-text-rewrite-btn")).toBeTruthy();
     // Segment counter — starts at 0 chars.
     expect(screen.getByTestId("mass-text-segments").textContent)
       .toMatch(/0 chars/);
@@ -283,13 +285,13 @@ describe("Ticket KK · green-gradient parity", () => {
     );
   });
 
-  it("has an inert LL AI-rewrite placeholder slot in the textarea toolbar", () => {
+  it("hosts the LL <AiRewriteButton> inside the rewrite slot (post Ticket LL swap)", () => {
     expect(MASS_TEXT_SRC).toMatch(/data-testid="mass-text-rewrite-slot"/);
-    expect(MASS_TEXT_SRC).toMatch(/data-testid="mass-text-rewrite-placeholder"/);
-    // Placeholder is DISABLED (inert) — Ticket LL will swap in the
-    // live AiRewriteButton without reshaping the toolbar.
-    expect(MASS_TEXT_SRC).toMatch(
-      /<button[\s\S]{0,500}?disabled[\s\S]{0,500}?data-testid="mass-text-rewrite-placeholder"/,
-    );
+    // Ticket LL replaced KK's inert placeholder with the live
+    // ``<AiRewriteButton>``.  The slot container remains for
+    // layout stability; the inert ``mass-text-rewrite-placeholder``
+    // testid is retired.
+    expect(MASS_TEXT_SRC).toMatch(/<AiRewriteButton[\s\S]{0,500}?dataTestid="mass-text-rewrite-btn"/);
+    expect(MASS_TEXT_SRC).not.toMatch(/mass-text-rewrite-placeholder/);
   });
 });

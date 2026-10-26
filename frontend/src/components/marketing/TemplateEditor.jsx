@@ -30,6 +30,7 @@ import TextStyle from "@tiptap/extension-text-style";
 import TextAlign from "@tiptap/extension-text-align";
 import { MergeTagPalette } from "./MergeTagPalette";
 import { MediaLibraryPicker } from "./MediaLibraryPicker";
+import AiRewriteButton from "@/components/ai/AiRewriteButton";
 
 const COLOR_SWATCHES = [
   "#111827", "#4B5563", "#6B7280", "#9CA3AF",
@@ -326,6 +327,17 @@ function SmsEditor({ value = "", onChange }) {
           <Plus className="w-3.5 h-3.5" />
           Tag
         </button>
+        {/* Ticket LL · Feb-2026 — AI rewrite button polishes the
+            SMS template body in a professional tone.  Only wired
+            into the SMS editor (plain textarea); the email editor
+            is a TipTap WYSIWYG whose HTML wrapping would be lost
+            on a plain-text rewrite.  Email WYSIWYG rewrite is
+            deferred as TD-ll-template-email-wysiwyg-rewrite. */}
+        <AiRewriteButton
+          value={value}
+          onReplace={(next) => onChange?.(next)}
+          dataTestid="template-editor-sms-rewrite-btn"
+        />
         <span className="ml-auto text-xs text-zinc-500"
               data-testid="sms-char-counter">
           {chars} chars / {segments} {segments === 1 ? "segment" : "segments"}
