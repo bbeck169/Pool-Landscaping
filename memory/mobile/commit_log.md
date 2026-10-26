@@ -2392,3 +2392,12 @@
 - **Held — commit 3 ("Quote sent" label)**: the M1 premise was wrong. The `/communications` aggregator maps `type ← channel` (`lead_communications.py:430`), so quote sends arrive as `type: "email"` and already show "Email", not the raw string. Logged TD-lead-comms-quote-sent-passthrough.
 - **Files modified**: mobile/app/leads/[id].tsx, mobile/src/lib/leadRequestedService.ts (new), mobile/src/components/leads/LeadRequestedServiceCard.tsx (new), mobile/src/components/leads/LeadNotesCard.tsx (new), mobile/__tests__/m2-lead-profile-requested-service.test.tsx (new), mobile/__tests__/m2-lead-notes-card.test.tsx (new)
 - **Web files referenced**: frontend/src/pages/leads/LeadProfile.jsx; backend routers/leads.py (raw-submission), routers/lead_communications.py, routers/quotes.py (read-only)
+
+## Iteration 184 — Mobile parity sweep M3a (Schedule Service Category filter, web Ticket Y)
+- **Commits**: `896ba876a` (filter) · this doc commit
+- **Date**: 2026-10-26
+- **Changes**: chips All/Pool/Landscaping/Both for all roles; one AsyncStorage-persisted state drives Grid + Calendar; `/jobs` gets `&service_category=<lowercase>` (AND with crew/tech); a category change forces `load(true)`; offline write-through skipped when crew OR a non-All category is active.
+- **Checks**: m3a 8/8; schedule suites = baseline (the 8 memo suites; ScheduleMap batch flake passes alone 8/8); tsc 629; eslint 0 errors. Live (admin 375): Pool → `/jobs?...&service_category=pool`, 268 jobs; All → no param, 826 jobs; fits at 320 with no overflow.
+- **Surfaced**: TD-mobile-schedule-crew-filter-no-refetch, TD-mobile-schedule-category-offline-fallback.
+- **Files modified**: mobile/app/(app)/schedule/calendar.tsx, mobile/src/lib/scheduleServiceCategory.ts (new), mobile/src/hooks/useScheduleServiceCategory.ts (new), mobile/src/components/schedule/ServiceCategoryChips.tsx (new), mobile/__tests__/m3a-schedule-service-category-filter.test.tsx (new)
+- **Web files referenced**: frontend/src/pages/schedule/CalendarSchedule.jsx; backend routers/jobs.py `service_category` Query (read-only)
