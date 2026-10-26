@@ -23,6 +23,7 @@ import { isAdminPlus, isStrictAdmin } from "@/src/components/RoleGate";
 import LeadComposeSheet, { type LeadComposeChannel } from "@/src/components/leads/LeadComposeSheet";
 import LeadLinkedQuotesPanel from "@/src/components/leads/LeadLinkedQuotesPanel";
 import LeadCommunicationTimeline from "@/src/components/leads/LeadCommunicationTimeline";
+import LeadRequestedServiceCard from "@/src/components/leads/LeadRequestedServiceCard";
 
 const STATUS_COLORS: Record<string, { bg: string; fg: string; label: string }> = {
   // Phase 34 · Task CC: 5 canonical snake_case statuses
@@ -254,9 +255,15 @@ export default function LeadDetailScreen() {
             <Text style={st.leadName} testID="lead-name">{lead.name}</Text>
             <StatusPill status={lead.status} />
           </View>
+          {(lead.service_address || lead.address) ? (
+            <Text style={st.addressSub} numberOfLines={2} testID="lead-address-sub">{lead.service_address || lead.address}</Text>
+          ) : null}
           <View style={st.sourceRow}>
             <Ionicons name="globe-outline" size={12} color={colors.muted} />
             <Text style={st.sourceText}>{sourceLabel}</Text>
+            {lead.created_at ? (
+              <Text style={st.createdText} testID="lead-created-at">· Created {new Date(lead.created_at).toLocaleDateString()}</Text>
+            ) : null}
           </View>
           {lead.service_interest && (
             <Text style={st.interestText}>Interest: {lead.service_interest}</Text>
@@ -277,6 +284,9 @@ export default function LeadDetailScreen() {
           </View>
           {lead.est_value ? <Text style={st.estValue}>Est. value: ${Number(lead.est_value).toLocaleString()}</Text> : null}
         </View>
+
+        {/* Web Z1 parity · verbatim form-submission text */}
+        <LeadRequestedServiceCard leadId={String(id)} submissionId={lead.meta?.submission_id} />
 
         {/* TD-96-mobile — outreach (web header SMS/Email); not status-gated like web */}
         {canCompose && (
@@ -429,6 +439,8 @@ const st = StyleSheet.create({
   pillText: { fontFamily: font.bold, fontSize: 11, letterSpacing: 0.3 },
   sourceRow: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 4 },
   sourceText: { fontFamily: font.medium, fontSize: 11, color: colors.muted, textTransform: "uppercase" },
+  createdText: { fontFamily: font.medium, fontSize: 11, color: colors.muted },
+  addressSub: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.onSurfaceSecondary, marginTop: 2 },
   interestText: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.onSurfaceSecondary, marginTop: 4 },
   contactSection: { marginTop: spacing.md, gap: 8 },
   contactRow: { flexDirection: "row", alignItems: "center", gap: 8 },
