@@ -564,7 +564,7 @@ function AppLayout() {
       <aside
         className={
           ["admin", "super_admin", "manager", "technician"].includes(effectiveRole || user.role)
-            ? "hidden md:flex md:flex-col md:w-[88px] md:shrink-0 md:sticky md:top-0 md:h-screen"
+            ? "hidden md:flex md:flex-col md:w-[70px] md:shrink-0 md:sticky md:top-0 md:h-screen"
             : "hidden"
         }
         style={{
@@ -607,7 +607,7 @@ function AppLayout() {
         <button
           type="button"
           onClick={onLogout}
-          className="mx-2 mt-1 mb-2 rounded-xl flex flex-col items-center justify-center gap-1 py-2.5 text-[9px] font-semibold border border-dashed transition-all duration-200 hover:brightness-110 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1"
+          className="mx-2 mt-1 mb-2 rounded-xl flex flex-col items-center justify-center gap-1 py-2 text-[9px] font-semibold border border-dashed transition-all duration-200 hover:brightness-110 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1"
           // NAV-restyle · Feb-2026 — blue hover glow on the rail-
           // Logout tile so it visually joins the pin/entry hover
           // family. Non-route surface → no ``aria-current`` gate.

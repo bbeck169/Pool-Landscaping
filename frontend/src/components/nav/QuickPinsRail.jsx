@@ -204,7 +204,7 @@ function SortableRailPin({ pin, editMode, onRequestRemove, onLongPressFire, onNa
         onClick={() => { if (editMode) onNavClickExit(); }}
         className={({ isActive }) =>
           [
-            "rounded-xl flex flex-col items-center justify-center gap-1 py-2.5",
+            "rounded-xl flex flex-col items-center justify-center gap-1 py-2",
             "text-[9px] font-semibold",
             "transition-all duration-200 ease-out will-change-transform",
             "focus:outline-none focus-visible:ring-2 focus-visible:ring-white/40",
@@ -237,7 +237,7 @@ function SortableRailPin({ pin, editMode, onRequestRemove, onLongPressFire, onNa
         aria-label={_displayLabel(pin.label)}
         title={_displayLabel(pin.label)}
       >
-        <Icon size={16} className="transition-colors duration-200" />
+        <Icon size={13} className="transition-colors duration-200" />
         <span className="leading-none text-center transition-colors duration-200">{_displayLabel(pin.label)}</span>
       </NavLink>
     </div>
@@ -395,7 +395,7 @@ export default function QuickPinsRail({ role }) {
           ref={doneBtnRef}
           type="button"
           onClick={exitEditMode}
-          className="mx-2 mt-1 rounded-xl flex flex-col items-center justify-center gap-1 py-2.5 text-[9px] font-semibold border transition-all duration-200 hover:brightness-110"
+          className="mx-2 mt-1 rounded-xl flex flex-col items-center justify-center gap-1 py-2 text-[9px] font-semibold border transition-all duration-200 hover:brightness-110"
           style={{
             color: colors.nav.fg,
             borderColor: colors.nav.border,
@@ -413,7 +413,7 @@ export default function QuickPinsRail({ role }) {
           type="button"
           onClick={() => setAddOpen(true)}
           disabled={atCap}
-          className="mx-2 mt-1 rounded-xl flex flex-col items-center justify-center gap-1 py-2.5 text-[9px] font-semibold border border-dashed transition-all duration-200 hover:brightness-110 disabled:opacity-40 disabled:cursor-not-allowed"
+          className="mx-2 mt-1 rounded-xl flex flex-col items-center justify-center gap-1 py-2 text-[9px] font-semibold border border-dashed transition-all duration-200 hover:brightness-110 disabled:opacity-40 disabled:cursor-not-allowed"
           style={{
             color: colors.nav.fg,
             borderColor: colors.nav.border,
