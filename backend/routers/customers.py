@@ -848,10 +848,16 @@ async def list_customer_duplicates(
       above the ceiling the fuzzy sweep is skipped (a WARN is
       logged server-side) and only the exact tiers run.
     """
+    from services.customers.duplicate_cache import cached_scan
     from services.customers.duplicate_detection import (
         detect_duplicates,
     )
-    groups = await detect_duplicates(db=db, tenant_id=tenant["id"])
+    # Shared + cached: the Customers page fires this on load, and the
+    # underlying all-pairs scan takes tens of seconds on large tenants.
+    groups = await cached_scan(
+        "customers.duplicates", tenant["id"],
+        lambda: detect_duplicates(db=db, tenant_id=tenant["id"]),
+    )
     customer_count = sum(len(g.customers) for g in groups)
     return {
         "groups": [
@@ -942,6 +948,8 @@ async def merge_customer_from(
             actor=user, confirm_name=opts.confirm_name,
             force=bool(opts.force),
         )
+        from services.customers.duplicate_cache import invalidate_tenant
+        invalidate_tenant(tenant["id"])
     except MergeError as exc:
         # Structured error payload — the ``24h block`` case
         # carries ``blocking_templates`` + ``override_available``

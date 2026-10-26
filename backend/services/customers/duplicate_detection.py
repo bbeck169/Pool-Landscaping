@@ -40,6 +40,7 @@ Design notes:
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
@@ -181,6 +182,19 @@ async def detect_duplicates(
     async for r in cursor:
         rows.append(r)
 
+    # The grouping below is CPU-bound (the fuzzy tier is O(N^2)).
+    # Run it on a worker thread so it cannot stall the event loop
+    # and every other request along with it.
+    return await asyncio.to_thread(
+        _detect_from_rows, rows, scope, tenant_id,
+    )
+
+
+def _detect_from_rows(
+    rows: List[Dict[str, Any]],
+    scope: set,
+    tenant_id: str,
+) -> List[DuplicateGroup]:
     # Build the fast-lookup structures in one pass.
     by_id: Dict[str, Dict[str, Any]] = {}
     canon_names: Dict[str, str] = {}      # cid -> canonical name

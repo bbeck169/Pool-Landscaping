@@ -215,7 +215,13 @@ async def merge_candidates_endpoint(
     from services.customer_merge.detection import (
         detect_duplicates_for_tenant,
     )
-    groups = await detect_duplicates_for_tenant(tenant["id"])
+    from services.customers.duplicate_cache import cached_scan
+    # Shared + cached: the Customers page fires this on load, and the
+    # underlying all-pairs scan takes tens of seconds on large tenants.
+    groups = await cached_scan(
+        "customers.merge_candidates", tenant["id"],
+        lambda: detect_duplicates_for_tenant(tenant["id"]),
+    )
     if confidence != "all":
         groups = [g for g in groups
                     if (g.get("confidence") or "").lower() == confidence]

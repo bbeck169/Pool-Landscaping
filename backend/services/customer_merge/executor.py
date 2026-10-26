@@ -328,6 +328,12 @@ async def merge_customers(
             related_records_rewired=rewired,
         )
 
+    if not dry_run:
+        # Cached duplicate scans are now stale (the merged rows must
+        # drop out of the Duplicates panel / merge queue).
+        from services.customers.duplicate_cache import invalidate_tenant
+        invalidate_tenant(tenant_id)
+
     return {
         "primary_id": primary_id,
         "secondary_ids": [s["id"] for s in secondaries],

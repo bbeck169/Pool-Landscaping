@@ -17,6 +17,7 @@ strategy so an admin never sees a stale duplicate group.
 """
 from __future__ import annotations
 
+import asyncio
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -254,6 +255,19 @@ async def detect_duplicates_for_tenant(
         if not rows:
             return []
 
+    # The matching below is CPU-bound (the fuzzy tier is an all-pairs
+    # Jaro-Winkler sweep).  Run it on a worker thread so it cannot
+    # stall the event loop and every other request along with it.
+    return await asyncio.to_thread(
+        _detect_groups, rows, exclude, min_score,
+    )
+
+
+def _detect_groups(
+    rows: List[Dict[str, Any]],
+    exclude: set,
+    min_score: float,
+) -> List[Dict[str, Any]]:
     groups: List[Dict[str, Any]] = []
 
     # 1. Exact email
