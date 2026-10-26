@@ -10,7 +10,8 @@ list of normalised row dicts.
 Scope
 -----
 - Supported inputs: ``.xlsx`` (openpyxl) and ``.csv`` (stdlib csv).
-- Row cap: 2000 rows per upload (operator Q4 decision).
+- Row cap: 5000 rows per upload (operator Ticket V Part 2 — raised
+  from the Ticket R 2000 baseline).
 - Target customer fields (admin-common subset only — out-of-scope
   fields like ``pool_gallons`` / ``is_vip`` stay post-creation
   operator-set):
@@ -72,9 +73,10 @@ from services.llm_provider import call_llm_with_fallback
 
 logger = logging.getLogger("imports.customer_excel_mapper")
 
-# Operator Q4 — upper bound. Enforced by the router BEFORE calling
-# into the mapper (so a 2001-row file never hits the LLM).
-MAX_ROWS = 2000
+# Operator Ticket V Part 2 — upper bound raised from 2000 to 5000.
+# Enforced by the router BEFORE calling into the mapper (so a
+# 5001-row file never hits the LLM).
+MAX_ROWS = 5000
 
 # Fields the AI is allowed to populate.  Order mirrors the order
 # they'll surface in the UI preview columns.  Downstream commit
@@ -345,7 +347,7 @@ async def map_rows(
     Serial (not parallel) so a tenant-BYO 429 doesn't fan out into
     N concurrent spend-cap breaches, and so the LLM dispatcher's
     30 s timeout stacks linearly instead of blowing the asyncio
-    event loop with N open coroutines on a 2000-row file.
+    event loop with N open coroutines on a 5000-row file.
 
     Returns ``(mapped_rows, provider_counts)``.  Caller stashes the
     result in the preview batch for operator review.

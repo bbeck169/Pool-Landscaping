@@ -24,7 +24,8 @@ AI-powered Excel/CSV customer importer — endpoints:
 Scope guards
 ------------
 - Admin / manager / super_admin / owner only.  Tech 403.
-- Row cap: 2000 per upload (operator Q4).
+- Row cap: 5000 per upload (operator Ticket V Part 2 — raised
+  from the Ticket R 2000 baseline).
 - Preview-batch TTL: 10 minutes (operator Q1).  Simple in-process
   dict with periodic sweep on upload.  Operator who walks away
   >10 minutes re-uploads (file re-parse + re-mapper round-trip).
@@ -33,7 +34,7 @@ Boundary rejects
 ----------------
 - Empty file → 400 ``empty_file``.
 - Corrupt / unparseable file → 400 ``unsupported_file_type``.
-- > 2000 rows → 400 ``row_limit_exceeded`` with ``max_rows: 2000``.
+- > 5000 rows → 400 ``row_limit_exceeded`` with ``max_rows: 5000``.
 - Cross-tenant commit (batch_id resolves to a different tenant)
   → 404 ``batch_not_found`` (NOT 403 — don't leak existence).
 - Expired batch → 404 ``batch_not_found``.
@@ -74,10 +75,13 @@ _PREVIEW_BATCHES: Dict[str, Dict[str, Any]] = {}
 _BATCH_TTL_SECONDS = 600   # 10 minutes
 
 
-# Upper bound on file size (bytes).  2000 rows × ~2kb per row ≈ 4 MB
-# worst-case for xlsx.  Pad to 8 MB so a slightly-oversized real
-# file isn't rejected before we even sniff the format.
-_MAX_UPLOAD_BYTES = 8 * 1024 * 1024
+# Upper bound on file size (bytes).  5000 rows × ~2kb per row ≈ 10 MB
+# worst-case for xlsx.  Pad to 20 MB so a slightly-oversized real
+# file isn't rejected before we even sniff the format.  Ticket V
+# Part 2 — raised from 8 MB in lockstep with the MAX_ROWS bump
+# from 2000 to 5000 so the row-count 400 fires first (not the
+# byte-size 413) on an oversized-row upload.
+_MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 
 _ALLOWED_ROLES = ("admin", "super_admin", "owner", "manager")
 

@@ -185,7 +185,7 @@ describe("ImportExcelCsvAIModal · upload", () => {
             async () => {
         _mockFetchOnceErr(400, {
             error: "row_limit_exceeded",
-            max_rows: 2000, found_rows: 2001,
+            max_rows: 5000, found_rows: 5001,
         });
         const toastSpy = vi.fn();
         render(
@@ -205,7 +205,7 @@ describe("ImportExcelCsvAIModal · upload", () => {
                 expect.objectContaining({
                     kind: "error",
                     message: expect.stringMatching(
-                        /2000 row limit.*2001 rows found/i,
+                        /5000 row limit.*5001 rows found/i,
                     ),
                 }),
             );

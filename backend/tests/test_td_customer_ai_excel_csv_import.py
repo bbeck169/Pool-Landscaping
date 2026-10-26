@@ -399,13 +399,14 @@ def test_upload_corrupted_file(admin_client):
 
 
 def test_upload_row_limit_exceeded(admin_client):
-    # Build a 2001-row CSV with trivial content so the backend
-    # rejects on the row-count gate BEFORE the LLM round-trip (gate
-    # runs after parse_file, before map_rows). Each row is small so
-    # the file stays well under the 8 MB upload cap.
+    # Ticket V Part 2 — row cap raised 2000 → 5000.  Build a
+    # 5001-row CSV with trivial content so the backend rejects on
+    # the row-count gate BEFORE the LLM round-trip (gate runs
+    # after parse_file, before map_rows). Each row is small so
+    # the file stays well under the 20 MB upload cap.
     rows = [
         {"Name": f"User{i}", "Email": f"u{i}@t.io"}
-        for i in range(2001)
+        for i in range(5001)
     ]
     csv = _build_csv(rows)
     resp = admin_client.post(
@@ -415,8 +416,47 @@ def test_upload_row_limit_exceeded(admin_client):
     assert resp.status_code == 400
     detail = resp.json()["detail"]
     assert detail["error"] == "row_limit_exceeded"
-    assert detail["max_rows"] == 2000
-    assert detail["found_rows"] == 2001
+    assert detail["max_rows"] == 5000
+    assert detail["found_rows"] == 5001
+
+
+def test_mapper_max_rows_constant_is_5000():
+    """Ticket V Part 2 — MAX_ROWS was raised from 2000 to 5000.
+    Unit-asserts the authoritative constant to lock the bump."""
+    from services.imports.customer_excel_mapper import MAX_ROWS
+    assert MAX_ROWS == 5000, (
+        f"MAX_ROWS should be 5000 post Ticket V Part 2 — got {MAX_ROWS}"
+    )
+
+
+def test_mapper_accepts_at_5000_boundary():
+    """Ticket V Part 2 — row-count gate accepts exactly MAX_ROWS
+    rows (not greater-than).  Parses a 5000-row CSV and verifies
+    the gate predicate ``len(parsed_rows) > MAX_ROWS`` is False at
+    the boundary.  Keeps the test in-process so no LLM round-trip
+    fires (which would be ~5000 serial calls at the mapper's
+    30 s per-row timeout).  Companion to
+    ``test_upload_row_limit_exceeded`` which proves the gate
+    rejects at 5001."""
+    from services.imports.customer_excel_mapper import (
+        MAX_ROWS, parse_file,
+    )
+    rows = [{"Name": f"User{i}"} for i in range(5000)]
+    csv = _build_csv(rows)
+    headers, parsed = parse_file(
+        filename="x.csv",
+        file_bytes=csv if isinstance(csv, bytes) else csv.encode(),
+    )
+    assert len(parsed) == 5000
+    assert len(parsed) <= MAX_ROWS, (
+        f"5000 rows must not exceed MAX_ROWS cap; got {MAX_ROWS}"
+    )
+    # Gate predicate — matches the exact shape in
+    # ``routers/customers_excel_import.py::import_excel_upload``.
+    assert not (len(parsed) > MAX_ROWS), (
+        "Row-count gate must accept exactly MAX_ROWS rows "
+        "(predicate is strict >, not >=)."
+    )
 
 
 def test_commit_unknown_batch_id(admin_client):
