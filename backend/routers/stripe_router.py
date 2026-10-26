@@ -660,8 +660,36 @@ async def post_webhook(request: Request, background_tasks: BackgroundTasks):
         # (we don't have a validated event yet).
         raise HTTPException(502, f"stripe.event.retrieve failed: {exc}")
     except ValueError as exc:
+        # TD-stripe-webhook-400-every-event · Feb-2026 — surface the
+        # exception context into pod logs (handler used to silently
+        # 400 with the message buried in HTTPException detail only,
+        # leaving the operator with no diagnostics on prod).  Routed
+        # through ``config.logger`` (pool_crm) — the module-level
+        # ``stripe_router`` logger is intercepted by uvicorn's log
+        # config before our basicConfig handler lands, so operator
+        # tails of ``backend.err.log`` never see those lines.
+        from config import logger as _wh_logger  # noqa: PLC0415
+        _, _wh_source = stripe_svc._select_webhook_secret_with_source()
+        _wh_logger.error(
+            "[stripe-webhook] construct_event FAILED exc=ValueError: %s "
+            "body_len=%s sig_header_present=%s sig_header_prefix=%s "
+            "secret_source=%s",
+            exc, len(payload), bool(sig),
+            (sig[:20] + "…") if sig else "<missing>",
+            _wh_source or "<none>",
+        )
         raise HTTPException(400, str(exc))
     except Exception as exc:  # includes stripe.error.SignatureVerificationError
+        from config import logger as _wh_logger  # noqa: PLC0415
+        _, _wh_source = stripe_svc._select_webhook_secret_with_source()
+        _wh_logger.error(
+            "[stripe-webhook] construct_event FAILED exc=%s: %s "
+            "body_len=%s sig_header_present=%s sig_header_prefix=%s "
+            "secret_source=%s",
+            type(exc).__name__, exc, len(payload), bool(sig),
+            (sig[:20] + "…") if sig else "<missing>",
+            _wh_source or "<none>",
+        )
         raise HTTPException(400, f"invalid signature: {exc}")
 
     # Dedup ledger — kept synchronous so a Stripe retry of the same

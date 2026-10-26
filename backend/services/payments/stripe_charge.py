@@ -35,7 +35,7 @@ import logging
 import os
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import stripe as _stripe_module
 
@@ -155,12 +155,60 @@ class _IdempotencyConflict(RuntimeError):
     """
 
 
-def _select_webhook_secret() -> str:
+def _select_webhook_secret_with_source() -> Tuple[str, Optional[str]]:
+    """Return ``(secret, source_env_var_name)`` for the webhook signing
+    secret active on this pod.
+
+    TD-stripe-webhook-400-every-event · Feb-2026 — Hybrid precedence
+    per operator spec:
+
+    * ``STRIPE_MODE=live`` (prod):
+        1. ``STRIPE_WEBHOOK_SECRET_LIVE``
+        2. ``STRIPE_WEBHOOK_SECRET``   (legacy bare)
+        3. ``STRIPE_WEBHOOK_SECRET_TEST``   (defensive last-resort)
+    * ``STRIPE_MODE=test`` (preview):
+        1. ``STRIPE_WEBHOOK_SECRET_TEST``
+        2. ``STRIPE_WEBHOOK_SECRET``   (legacy bare)
+        ``STRIPE_WEBHOOK_SECRET_LIVE`` is SKIPPED on test mode even if
+        set — Stripe signs test events with the TEST secret.  If the
+        env var IS populated the boot-time logger emits a dedicated
+        ``LIVE secret skipped (mode=test...)`` line so a future dev
+        doesn't wonder why it isn't being used.
+
+    Every candidate is ``.strip()``-ed before use so a trailing newline
+    pasted into Emergent Secrets UI can't silently brick signature
+    verification on prod.
+
+    ``source`` is ``None`` iff every candidate resolved empty — that
+    maps to the existing ``webhook_secret_missing`` boot error.
+    """
     mode = _mode()
-    env_key = "STRIPE_WEBHOOK_SECRET_LIVE" if mode == "live" else "STRIPE_WEBHOOK_SECRET_TEST"
-    return (os.environ.get(env_key) or "").strip() or (
-        os.environ.get("STRIPE_WEBHOOK_SECRET") or ""
-    ).strip()
+    if mode == "live":
+        candidates = (
+            "STRIPE_WEBHOOK_SECRET_LIVE",
+            "STRIPE_WEBHOOK_SECRET",
+            "STRIPE_WEBHOOK_SECRET_TEST",
+        )
+    else:
+        candidates = (
+            "STRIPE_WEBHOOK_SECRET_TEST",
+            "STRIPE_WEBHOOK_SECRET",
+        )
+    for env_var in candidates:
+        raw = (os.environ.get(env_var) or "").strip()
+        if raw:
+            return raw, env_var
+    return "", None
+
+
+def _select_webhook_secret() -> str:
+    """Back-compat shim.  Returns the active webhook secret without
+    surfacing the source env var — most call sites don't need it.
+    Kept so this file plus ``routers/stripe_router.py`` plus every
+    tenant-level webhook consumer stay unchanged.
+    """
+    secret, _ = _select_webhook_secret_with_source()
+    return secret
 
 
 def check_stripe_mode_consistency() -> Dict[str, Any]:
@@ -185,7 +233,8 @@ def check_stripe_mode_consistency() -> Dict[str, Any]:
     is_prod_env = env_hint == "production"
 
     api_key = _select_secret_key() or ""
-    wh_secret = _select_webhook_secret() or ""
+    wh_secret, wh_source = _select_webhook_secret_with_source()
+    wh_secret = wh_secret or ""
 
     # ── API key checks ────────────────────────────────────────────
     if not api_key:
@@ -282,10 +331,53 @@ def check_stripe_mode_consistency() -> Dict[str, Any]:
         "api_key_length": len(api_key),
         "webhook_secret_configured": bool(wh_secret),
         "webhook_secret_prefix": (wh_secret[:8] + "…") if wh_secret else None,
+        "webhook_secret_suffix": (wh_secret[-4:]) if wh_secret else None,
         "webhook_secret_length": len(wh_secret),
+        "webhook_secret_source": wh_source,
         "mode_match": mode_match,
         "issues": issues,
     }
+
+    # TD-stripe-webhook-400-every-event · Feb-2026 — explicit
+    # structured log of which env var sourced the webhook secret so
+    # the operator (and any future dev) can tell at a glance which
+    # of the three env slots the current pod is signed against.
+    # Logged BEFORE the OK/issues summary so it's always visible even
+    # when boot-check emits ERRORs for a mismatch below.
+    #
+    # Routed through ``config.logger`` (pool_crm) rather than the
+    # module-level ``stripe_charge`` logger because uvicorn's log-
+    # config intercepts non-pool_crm loggers before our boot-time
+    # ``logging.basicConfig`` handler is installed — pool_crm is
+    # the only logger whose INFO lines reliably reach supervisor
+    # stdout on this pod.
+    from config import logger as _boot_logger  # noqa: PLC0415
+    if wh_source:
+        _boot_logger.info(
+            "[stripe-webhook] secret loaded from %s "
+            "(prefix=%s… suffix=…%s length=%s)",
+            wh_source,
+            wh_secret[:7],
+            wh_secret[-4:],
+            len(wh_secret),
+        )
+    else:
+        _boot_logger.error(
+            "[stripe-webhook] NO secret resolved from "
+            "STRIPE_WEBHOOK_SECRET_%s / STRIPE_WEBHOOK_SECRET%s — "
+            "/api/payments/stripe/webhook will 400 every event",
+            mode.upper(),
+            "" if mode == "live"
+            else " (STRIPE_WEBHOOK_SECRET_LIVE deliberately skipped "
+                 "on test mode)",
+        )
+    if (mode == "test"
+            and (os.environ.get("STRIPE_WEBHOOK_SECRET_LIVE") or "").strip()):
+        _boot_logger.info(
+            "[stripe-webhook] LIVE secret skipped "
+            "(mode=test, env var present but not applicable — "
+            "Stripe signs test events with STRIPE_WEBHOOK_SECRET_TEST)",
+        )
 
     # Log ERROR for each issue so pod logs capture them loudly.
     for issue in issues:

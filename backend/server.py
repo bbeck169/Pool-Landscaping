@@ -6594,6 +6594,28 @@ async def lifespan(app):  # noqa: ANN001 — FastAPI passes the app
             "MTH-C schedulers NOT bound",
         )
 
+    # TD-stripe-webhook-400-every-event · Feb-2026 — Stripe mode /
+    # webhook-secret consistency check.  The identical call at line
+    # 1971 is dead code because ``app.router.lifespan_context``
+    # (set at the bottom of this file) replaces ``@app.on_event
+    # ("startup")`` handlers under Starlette's modern lifespan
+    # protocol — ``_preview_isolation_boot_audit`` never runs.
+    # Wiring it here so the operator-requested
+    # ``[stripe-webhook] secret loaded from <SOURCE>`` boot log
+    # (and the webhook-secret-missing ERROR when all slots are
+    # empty) actually reaches pod logs on every boot.  Swallows
+    # every exception so a misconfig can't black-hole bind.
+    try:
+        from services.payments.stripe_charge import (
+            check_stripe_mode_consistency as _stripe_boot_check,
+        )
+        _stripe_boot_check()
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "[startup] phase=stripe_boot_check crashed — "
+            "secret-source diagnostic log suppressed",
+        )
+
     try:
         yield
     finally:
