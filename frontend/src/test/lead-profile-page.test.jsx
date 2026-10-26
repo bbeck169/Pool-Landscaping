@@ -196,8 +196,9 @@ describe("LeadProfile · Ticket Z1", () => {
     ));
   });
 
-  it("Footer bar renders 3 DISABLED placeholders "
-     + "(Send / Create / Overview) with 'Coming in next phase' tooltip",
+  it("Footer bar renders Z3/Z4 DISABLED placeholders "
+     + "(Create / Overview) with 'Coming in next phase' tooltip; "
+     + "Z2 Send ▾ is now live (Ticket Z2 ship)",
      async () => {
     api.get.mockImplementation((url) =>
       url.includes("raw-submission")
@@ -207,7 +208,6 @@ describe("LeadProfile · Ticket Z1", () => {
     const footer = await screen.findByTestId("lead-profile-footer-bar");
     expect(footer).toBeInTheDocument();
     for (const t of [
-      "lead-profile-footer-send-btn",
       "lead-profile-footer-create-btn",
       "lead-profile-footer-overview-btn",
     ]) {
@@ -215,6 +215,12 @@ describe("LeadProfile · Ticket Z1", () => {
       expect(btn).toBeDisabled();
       expect(btn.getAttribute("title")).toBe("Coming in next phase");
     }
+    // Z2 ship: Send ▾ is now a live dropdown trigger, no longer
+    // disabled with the placeholder tooltip.
+    const sendBtn = screen.getByTestId("lead-profile-footer-send-btn");
+    expect(sendBtn).not.toBeDisabled();
+    expect(sendBtn.getAttribute("title"))
+      .toBe("Send SMS or Email to this lead");
   });
 
   it("Edit button is present (routes to /leads?edit=<id>)", async () => {

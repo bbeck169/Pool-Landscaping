@@ -3,10 +3,13 @@
  *
  * Phase 1 of 5 (Z1-Z5).  Scope-locked to: route + layout +
  * hydrated contact info + requested service + status/notes
- * migration from the pre-existing LeadDetailDrawer. SMS/Email
- * send, Quote create, Communication history, Auto-convert all
- * deferred to Z2-Z5 (footer bar renders DISABLED placeholders
- * with "Coming in next phase" tooltip to reserve the layout).
+ * migration from the pre-existing LeadDetailDrawer.
+ *
+ * Ticket Z2 · Feb-2026 — Send ▾ dropdown wired (SMS + Email)
+ * via the existing L3 `LeadComposeModal` component which POSTs
+ * to `POST /api/leads/{id}/send-sms` and `POST /api/leads/{id}/
+ * send-email` (both already shipped under Phase L3).  Z3 (quote
+ * create) and Z4 (comm history) placeholders remain disabled.
  *
  * Visual target: lightweight ``/customers/:id``-shaped profile
  * (NOT the LeadDetailDrawer side-panel + NOT the admin-gated
@@ -25,18 +28,22 @@
  * (``lead.meta.submission_id → form_submissions.values``).
  * Legacy pre-P17 leads with no linked submission render ``—``.
  */
-import React, { useEffect, useState, useCallback, useMemo } from "react";
+import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { toast } from "sonner";
 import {
   Phone, Mail, MapPin, ClipboardList, ChevronLeft, Trash2,
-  Edit3, UserPlus, Send, Plus, LayoutGrid,
+  Edit3, UserPlus, Send, Plus, LayoutGrid, MessageCircle,
 } from "lucide-react";
 
 import { api } from "@/api";
 import { useAuth } from "@/auth";
 import { colors } from "@/theme";
 import { mustConfirm } from "@/components/ui/confirm-dialog";
+import LeadComposeModal from "./LeadComposeModal";
+
+
+const _COMPOSE_ROLES = ["admin", "super_admin", "owner", "manager"];
 
 
 const STATUS_ORDER = [
@@ -147,6 +154,26 @@ export default function LeadProfile() {
   const [status, setStatus] = useState("new");
   const [saving, setSaving] = useState(false);
   const [converting, setConverting] = useState(false);
+  // Z2 · Feb-2026 — Send ▾ dropdown + LeadComposeModal mount state.
+  const [sendMenuOpen, setSendMenuOpen] = useState(false);
+  const [composeChannel, setComposeChannel] = useState(null); // "sms" | "email" | null
+  const sendMenuRef = useRef(null);
+
+  // Permission gate — mirrors routers/lead_communications._ALLOWED_ROLES.
+  const canCompose = _COMPOSE_ROLES.includes(user?.role);
+
+  // Click-outside closes the Send ▾ menu.  Rendered conditionally so
+  // the effect only subscribes while the menu is open.
+  useEffect(() => {
+    if (!sendMenuOpen) return undefined;
+    const onDocMouseDown = (e) => {
+      if (sendMenuRef.current && !sendMenuRef.current.contains(e.target)) {
+        setSendMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDocMouseDown);
+    return () => document.removeEventListener("mousedown", onDocMouseDown);
+  }, [sendMenuOpen]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -462,7 +489,7 @@ export default function LeadProfile() {
         </Link>
       </div>
 
-      {/* Footer bar — DISABLED placeholders for Z2+ phases */}
+      {/* Footer bar — Z2 Send ▾ wired; Z3/Z4 placeholders remain disabled */}
       <div
         className="rounded-xl p-3 flex items-center gap-2 flex-wrap"
         style={{
@@ -471,20 +498,69 @@ export default function LeadProfile() {
         }}
         data-testid="lead-profile-footer-bar"
       >
-        <button
-          type="button"
-          disabled
-          title="Coming in next phase"
-          className="inline-flex items-center gap-1 px-3 py-2 rounded text-sm font-semibold opacity-50 cursor-not-allowed"
-          style={{
-            backgroundColor: colors.surface, color: colors.onSurface,
-            border: `1px solid ${colors.border}`,
-          }}
-          data-testid="lead-profile-footer-send-btn"
-          data-phase-placeholder="z2"
-        >
-          <Send size={14} /> Send ▾
-        </button>
+        {/* Send ▾ dropdown (Z2) */}
+        <div className="relative" ref={sendMenuRef}>
+          <button
+            type="button"
+            onClick={() => canCompose && setSendMenuOpen((o) => !o)}
+            disabled={!canCompose}
+            title={canCompose ? "Send SMS or Email to this lead" : "Not allowed"}
+            aria-haspopup="menu"
+            aria-expanded={sendMenuOpen}
+            className="inline-flex items-center gap-1 px-3 py-2 rounded text-sm font-semibold transition hover:brightness-95 disabled:opacity-50 disabled:cursor-not-allowed"
+            style={{
+              backgroundColor: colors.surface, color: colors.onSurface,
+              border: `1px solid ${colors.border}`,
+            }}
+            data-testid="lead-profile-footer-send-btn"
+          >
+            <Send size={14} /> Send ▾
+          </button>
+          {sendMenuOpen && (
+            <div
+              role="menu"
+              className="absolute left-0 mt-1 min-w-[180px] rounded-md shadow-lg z-20 py-1"
+              style={{
+                backgroundColor: colors.surface,
+                border: `1px solid ${colors.border}`,
+              }}
+              data-testid="lead-profile-send-menu"
+            >
+              <button
+                type="button"
+                role="menuitem"
+                disabled={!lead.phone}
+                onClick={() => {
+                  if (!lead.phone) return;
+                  setSendMenuOpen(false);
+                  setComposeChannel("sms");
+                }}
+                title={lead.phone ? "Send SMS to this lead" : "No phone on file"}
+                className="w-full text-left inline-flex items-center gap-2 px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                style={{ color: colors.onSurface }}
+                data-testid="lead-profile-send-sms-item"
+              >
+                <MessageCircle size={14} /> Send SMS
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                disabled={!lead.email}
+                onClick={() => {
+                  if (!lead.email) return;
+                  setSendMenuOpen(false);
+                  setComposeChannel("email");
+                }}
+                title={lead.email ? "Send email to this lead" : "No email on file"}
+                className="w-full text-left inline-flex items-center gap-2 px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                style={{ color: colors.onSurface }}
+                data-testid="lead-profile-send-email-item"
+              >
+                <Mail size={14} /> Send Email
+              </button>
+            </div>
+          )}
+        </div>
         <button
           type="button"
           disabled
@@ -514,6 +590,15 @@ export default function LeadProfile() {
           <LayoutGrid size={14} /> Overview ▾
         </button>
       </div>
+
+      {composeChannel && (
+        <LeadComposeModal
+          lead={lead}
+          channel={composeChannel}
+          onClose={() => setComposeChannel(null)}
+          onSent={() => { setComposeChannel(null); load(); }}
+        />
+      )}
     </div>
   );
 }
