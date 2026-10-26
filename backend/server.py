@@ -763,6 +763,17 @@ app.include_router(_h1_imports.router)
 #   GET  /api/leads/{lead_id}/communications
 from routers import lead_communications as _l3_lead_comms  # noqa: E402
 api_router.include_router(_l3_lead_comms.router)
+
+# TD-customer-ai-excel-csv-import · Feb-2026 — AI-powered Excel /
+# CSV ingestion for the Customers importer.  Endpoints:
+#   POST /api/customers/import-excel/upload
+#   POST /api/customers/import-excel/commit
+# Registered on the bare ``app`` (not ``api_router``) because the
+# router already carries its own ``/api/customers`` prefix — the
+# ``api_router`` ``/api`` prefix would double it to
+# ``/api/api/customers/...``.  Same posture as ``_h1_imports``.
+from routers import customers_excel_import as _tdcai_excel_import  # noqa: E402
+app.include_router(_tdcai_excel_import.router)
 # K65 · Feb-2026 — super-admin perf-explain diagnostic endpoint.
 # Gated by ``FEATURE_PERF_EXPLAIN=1`` env flag; 404 when off so the
 # route is invisible on prod by default.

@@ -12,6 +12,7 @@ import RestoreCustomerButton from "@/components/customers/RestoreCustomerButton"
 import MuteControl from "@/components/customers/MuteControl";
 import CustomersPager from "@/components/customers/CustomersPager";
 import ImportCsvModalP41 from "@/pages/customers/ImportCsvModalP41";
+import ImportExcelCsvAIModal from "@/components/customers/ImportExcelCsvAIModal";
 import MergeCustomersModal from "@/components/customers/MergeCustomersModal";
 import { MergeDialog } from "@/components/customers/MergeDialog";
 import PortalOnboardingHealthTile from "@/components/customers/PortalOnboardingHealthTile";
@@ -357,6 +358,7 @@ export default function CustomersList() {
   // Feb-2026 · P41 — new CSV import (merge semantics). Sibling to the
   // legacy ``importOpen`` modal above.
   const [importCsvOpen, setImportCsvOpen] = useState(false);
+  const [importExcelAIOpen, setImportExcelAIOpen] = useState(false);
   const [toast, setToast] = useState(null);
   const [activationConfirm, setActivationConfirm] = useState(null); // {customer, nextActive}
   const [activationBusy, setActivationBusy] = useState(false);
@@ -610,7 +612,16 @@ export default function CustomersList() {
     }
   }, [isAdmin]);
 
-  useEffect(() => { loadCandidates(); }, [loadCandidates]);
+  // Ticket 291808 · the candidates scan is heavy on large tenants, so
+  // do not start it until the first page of customers has rendered
+  // (``rows`` is null while the list is loading).  Fires once; merges
+  // call ``loadCandidates()`` themselves.
+  const _candidatesInitRef = useRef(false);
+  useEffect(() => {
+    if (rows === null || _candidatesInitRef.current) return;
+    _candidatesInitRef.current = true;
+    setTimeout(() => { loadCandidates(); }, 1500);
+  }, [rows, loadCandidates]);
 
   // Sync tab → URL so route + query stay honest across refresh / share.
   useEffect(() => {
@@ -1582,11 +1593,16 @@ export default function CustomersList() {
   // when the tab's count badge is uninitialised and the user
   // is an admin/manager who's about to see the pill.
   useEffect(() => {
+    // Ticket 291808 · the badge-only fetch (tab not open) waits for the
+    // first page of customers and then a short delay, so the heavy
+    // duplicates scan never competes with the page the user is
+    // actually waiting on.  Opening the tab still fetches right away.
+    const listReady = rows !== null;
     const shouldFetch = tab === "duplicates"
-      || (duplicateGroupCount === null && isAdminOrManager);
+      || (duplicateGroupCount === null && isAdminOrManager && listReady);
     if (!shouldFetch || duplicatesLoading) return;
     let cancelled = false;
-    (async () => {
+    const run = async () => {
       setDuplicatesLoading(true);
       setDuplicatesError(null);
       try {
@@ -1607,11 +1623,14 @@ export default function CustomersList() {
           setDuplicateGroupCount(0);
         }
       } finally {
-        if (!cancelled) setDuplicatesLoading(false);
+        // Always clear the flag: a re-run of this effect mid-request
+        // would otherwise leave it stuck on and block every later fetch.
+        setDuplicatesLoading(false);
       }
-    })();
-    return () => { cancelled = true; };
-  }, [tab, duplicateGroupCount, isAdminOrManager]);
+    };
+    const timer = setTimeout(run, tab === "duplicates" ? 0 : 2500);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [tab, duplicateGroupCount, isAdminOrManager, rows !== null]);
 
   const TAB_DEFS = [
     { k: "active", label: "Active", count: counts.active, testid: "tab-active" },
@@ -1658,6 +1677,15 @@ export default function CustomersList() {
                 testid="import-csv-btn"
               >
                 <Upload size={16} /> Import CSV
+              </Button>
+            ) : null}
+            {isAdminOrManager ? (
+              <Button
+                variant="ghost"
+                onClick={() => setImportExcelAIOpen(true)}
+                testid="import-excel-csv-ai-btn"
+              >
+                <Upload size={16} /> Import Excel/CSV (AI)
               </Button>
             ) : null}
             <Button onClick={() => navigate("/customers/new")} testid="customers-new-button">
@@ -3364,6 +3392,12 @@ export default function CustomersList() {
       <ImportCsvModalP41
         open={importCsvOpen}
         onClose={() => setImportCsvOpen(false)}
+        onDone={() => { load(); loadCounts(); }}
+        setToast={setToast}
+      />
+      <ImportExcelCsvAIModal
+        open={importExcelAIOpen}
+        onClose={() => setImportExcelAIOpen(false)}
         onDone={() => { load(); loadCounts(); }}
         setToast={setToast}
       />
