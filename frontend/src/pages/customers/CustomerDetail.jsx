@@ -10,7 +10,7 @@ import {
 import { api } from "@/api";
 import { toast } from "sonner";
 import TemplatePickerPreview from "@/components/communications/TemplatePickerPreview";
-import { CustomerMeasurementsTab, filterCustomerTabs } from "@/components/customer/CustomerMeasurementsTab";
+import { filterCustomerTabs } from "@/components/customer/CustomerMeasurementsTab";
 import CustomerChemicalHistoryTab, { CHEMICAL_HISTORY_TAB_ROLES } from "@/components/customer/CustomerChemicalHistoryTab";
 import { useAuth } from "@/auth";
 import { colors, money, statusMeta } from '@/theme';
@@ -28,7 +28,9 @@ import CustomerTagPicker from "@/components/customers/CustomerTagPicker";
 import CustomerTagsCard from "@/components/customers/CustomerTagsCard";
 import DemoAccountToggle from "@/components/comms/DemoAccountToggle";
 import CustomerCommunicationsTimeline from "@/components/customers/CustomerCommunicationsTimeline";
-import CustomerTasksPanel from "@/components/customers/CustomerTasksPanel";
+// Ticket GG · Feb-2026 — soft-removed tab components. Imports
+// dropped; files remain on disk for one-line re-enable.
+// import CustomerTasksPanel from "@/components/customers/CustomerTasksPanel";
 // TD-79 · Feb-2026 — Overview-tab invoice list section.
 import CustomerInvoiceList from "@/components/customers/CustomerInvoiceList";
 import CustomerContactsPanel from "@/components/customers/CustomerContactsPanel";
@@ -336,10 +338,12 @@ import CardOnFileWarningBanner from "@/components/customers/CardOnFileWarningBan
 import CustomerDeleteModal from "@/components/customers/CustomerDeleteModal";
 // Phase M1 · Feb-2026 — Customer Merge Wizard (admin-only 3-step).
 import CustomerMergeWizard from "@/pages/customers/CustomerMergeWizard";
-import CustomerReviewsTab from "@/components/customers/CustomerReviewsTab";
+// Ticket GG · Feb-2026 — Reviews tab soft-removed; import dropped.
+// import CustomerReviewsTab from "@/components/customers/CustomerReviewsTab";
 import AdminCardCapturePanel from "@/components/customers/AdminCardCapturePanel";
 // Phase B4 · Feb-2026 — Stripe subscription CRUD panel.
-import SubscriptionsPanel from "./SubscriptionsPanel";
+// Ticket GG · Feb-2026 — Subscriptions tab soft-removed; import dropped.
+// import SubscriptionsPanel from "./SubscriptionsPanel";
 import ResponsiveTabs from "@/components/ui/responsive-tabs";
 // Feb-2026 · Customer detail — unified "Sent documents" tab.
 // Merges quotes + invoices + estimator estimates + legacy
@@ -347,7 +351,8 @@ import ResponsiveTabs from "@/components/ui/responsive-tabs";
 // list. Preserves the existing Quotes / Invoices tab placeholders
 // (they stay in the tab bar for backwards-compat) and adds a new
 // consolidated "Documents" tab as the primary surface.
-import CustomerDocumentsTab from "@/components/customers/CustomerDocumentsTab";
+// Ticket GG · Feb-2026 — Documents tab soft-removed; import dropped.
+// import CustomerDocumentsTab from "@/components/customers/CustomerDocumentsTab";
 import CustomerInvoicesTab from "@/components/customers/CustomerInvoicesTab";
 import { List } from "react-window";
 
@@ -859,26 +864,27 @@ function QuickActionTileGrid({ tabs, active, onPick, testidPrefix = "cd-quick-ac
 
 
 const TABS = [
-  { k: "overview", label: "Overview", icon: MapPin },
+  // Ticket GG · Feb-2026 — 7 nav entries soft-removed per operator:
+  // overview, documents, measurements, tasks, notes, subscriptions,
+  // reviews.  Overview's CONTENT was pulled out into an always-
+  // visible profile header above the tab strip (preserves TD-79 /
+  // Phase I5 / 48.1 / 9d regression locks); the other 6 content
+  // branches below are gone + their component imports dropped.
+  // Component files remain on disk (unimported) so a future
+  // re-enable is a one-line nav restore.
   { k: "properties", label: "Properties", icon: Home },
   { k: "jobs", label: "Jobs", icon: Briefcase },
-  { k: "measurements", label: "Measurements", icon: Ruler, roles: ["admin", "super_admin", "manager"] },
-  // Feb-2026 · C5 · Chemical History tab lives adjacent to Measurements
-  // since both are field-service record surfaces gated to admin +
-  // super_admin + manager. Techs record sprays from the mobile app;
-  // customers never see the tab.
+  // Feb-2026 · C5 · Chemical History tab lives adjacent to
+  // (removed) Measurements since both are field-service record
+  // surfaces gated to admin + super_admin + manager. Techs record
+  // sprays from the mobile app; customers never see the tab.
   { k: "chemical_history", label: "Chemical History", icon: FlaskConical, roles: CHEMICAL_HISTORY_TAB_ROLES },
-  { k: "documents", label: "Documents", icon: FileText },
   { k: "quotes", label: "Quotes", icon: FileText },
   { k: "invoices", label: "Invoices", icon: FileText },
   { k: "equipment", label: "Equipment", icon: Beaker },
   { k: "warranties", label: "Warranties", icon: ShieldCheck },
-  { k: "tasks", label: "Tasks", icon: ListChecks },
-  { k: "notes", label: "Notes", icon: StickyNote },
   { k: "credits", label: "Credits", icon: DollarSign },
   { k: "payments", label: "Payments", icon: DollarSign },
-  { k: "subscriptions", label: "Subscriptions", icon: DollarSign },
-  { k: "reviews", label: "Reviews", icon: Star },
   { k: "portal", label: "Portal Access", icon: KeyRound },
 ];
 
@@ -944,20 +950,24 @@ export default function CustomerDetail() {
   // the name (see the header render). Fetched alongside customer +
   // jobs so the address can appear in the first paint.
   const [properties, setProperties] = useState([]);
-  const [tab, _setTab] = useState("overview");
+  const [tab, _setTab] = useState("properties");
   // Phase J1 · Feb-2026 — URL round-trip on the tab dropdown so a
   // deep-link like ``/customers/:id?tab=jobs`` restores state on
   // mount and every selection updates the query string in place.
+  // Ticket GG · Feb-2026 — URL fallback: an unknown or soft-
+  // removed tab key (``overview``, ``documents``, etc.) silently
+  // falls back to the default ("properties").  No 404, no error.
   const [searchParams, setSearchParams] = useSearchParams();
   useEffect(() => {
     const q = searchParams.get("tab");
-    if (q && q !== tab) _setTab(q);
+    const _valid = TABS.some((t) => t.k === q);
+    if (_valid && q !== tab) _setTab(q);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const setTab = (next) => {
     _setTab(next);
     const params = new URLSearchParams(searchParams);
-    if (next && next !== "overview") params.set("tab", next);
+    if (next && next !== "properties") params.set("tab", next);
     else params.delete("tab");
     setSearchParams(params, { replace: true });
   };
@@ -1232,10 +1242,14 @@ export default function CustomerDetail() {
   const openSendModal = (payload) => setSendModal(payload);
 
   const openQuickTaskFromDropdown = () => {
-    setTab("tasks");
-    setTimeout(() => {
-      if (typeof taskQuickAddOpener === "function") taskQuickAddOpener();
-    }, 100);
+    // Ticket GG · Feb-2026 — the Tasks tab was soft-removed. The
+    // ``+ Create → Quick Task`` dropdown action is now a silent
+    // no-op per operator's silent-fallback rule; the opener was
+    // registered inside the Tasks tab's content block which no
+    // longer renders.  See ``TD-gg-customer-quicktask-dropdown-
+    // orphaned`` for the cleanup follow-up (either delete the
+    // dropdown entry entirely or wire a dedicated modal).
+    if (typeof taskQuickAddOpener === "function") taskQuickAddOpener();
   };
 
   if (!customer) {
@@ -2243,9 +2257,15 @@ export default function CustomerDetail() {
         style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
       >
         <div className="p-5">
-          {tab === "overview" ? (
-            <div className="space-y-4">
-              {/* Phase 48 · Feb-2026 — removed the compact company
+          {/* Ticket GG · Feb-2026 — Overview tab was soft-removed.
+              Its content (name heading, invoice list, payment tiles,
+              contacts panel, address, service notes) was pulled OUT
+              of the ``tab === "overview"`` conditional and is now
+              rendered unconditionally as the always-visible profile
+              header above the tab-content switch below.  Preserves
+              TD-79, Phase I5, Phase 48.1, Phase 9d regression locks. */}
+          <div className="space-y-4" data-testid="cd-profile-header">
+            {/* Phase 48 · Feb-2026 — removed the compact company
                   business card from the customer profile header per
                   user redesign. Component stays in-tree for other
                   surfaces (tech ToolsHub, marketing card slot). */}
@@ -2396,8 +2416,11 @@ export default function CustomerDetail() {
                 <NotesHistoryList
                   customerId={id}
                   compact
-                  onSeeAll={() => setTab("notes")}
                 />
+                {/* Ticket GG · Feb-2026 — the "See all" affordance
+                    linked to the now-removed Notes tab.  Prop
+                    dropped; NotesHistoryList falls back to its
+                    inline "no see-all" render. */}
               </div>
               {/* CP-2 · Feb-2026 — Recent Invoices + Recent Estimates
                    sections, appended at the end of the Overview
@@ -2405,7 +2428,6 @@ export default function CustomerDetail() {
                    Overview layout; just append''). */}
               <RecentDocsSection customerId={id} />
             </div>
-          ) : null}
 
           {tab === "jobs" ? (
             jobs.length === 0 ? (
@@ -2468,17 +2490,6 @@ export default function CustomerDetail() {
             )
           ) : null}
 
-          {tab === "measurements" ? (
-            // Feb-2026 · M2 · role-gated at TABS filter (visibleTabs)
-            // + defensive guard here so a stale deep-link like
-            // ``?tab=measurements`` on a technician session never
-            // renders the tab body even if the URL param bypassed
-            // the sidebar dropdown.
-            (["admin", "super_admin", "manager"].includes(authUser?.role)) ? (
-              <CustomerMeasurementsTab customer={customer} />
-            ) : null
-          ) : null}
-
           {tab === "chemical_history" ? (
             // Feb-2026 · C5 · same defensive shape as measurements —
             // filter gate + hard role check so a stale deep-link on a
@@ -2486,10 +2497,6 @@ export default function CustomerDetail() {
             (CHEMICAL_HISTORY_TAB_ROLES.includes(authUser?.role)) ? (
               <CustomerChemicalHistoryTab customer={customer} />
             ) : null
-          ) : null}
-
-          {tab === "documents" ? (
-            <CustomerDocumentsTab customerId={id} />
           ) : null}
 
           {tab === "quotes" ? (
@@ -2517,52 +2524,6 @@ export default function CustomerDetail() {
             />
           ) : null}
 
-          {tab === "tasks" ? (
-            <CustomerTasksPanel
-              customerId={id}
-              registerOpener={(fn) => setTaskQuickAddOpener(() => fn)}
-            />
-          ) : null}
-
-          {tab === "notes" ? (
-            <div
-              className="space-y-3"
-              data-testid="cd-notes-history-tab"
-            >
-              {/* Task N Round 2 · Phase N.5 §E halt option — preserve
-                  at-a-glance visibility of the persisted customer-level
-                  free-text ``customer.notes`` field.  Render as a
-                  read-only block above the SR history list; hidden when
-                  empty so the tab stays focused on visit notes.  The
-                  write path remains ``CustomerForm.jsx`` (Edit Customer
-                  page) → ``PUT /customers/{cid}`` — unchanged. */}
-              {customer.notes && customer.notes.trim() ? (
-                <div
-                  className="p-3 rounded-lg"
-                  data-testid="cd-notes-tab-customer-profile-note"
-                  style={{
-                    backgroundColor: colors.surface,
-                    border: `1px solid ${colors.border}`,
-                  }}
-                >
-                  <div
-                    className="text-xs font-semibold uppercase tracking-wide mb-1"
-                    style={{ color: colors.onSurfaceSecondary }}
-                  >
-                    Customer profile note
-                  </div>
-                  <div
-                    className="text-sm whitespace-pre-line"
-                    style={{ color: colors.onSurface }}
-                  >
-                    {customer.notes}
-                  </div>
-                </div>
-              ) : null}
-              <NotesHistoryList customerId={id} />
-            </div>
-          ) : null}
-
           {/* Phase I7 · Wave A · Feb-2026 — Communication Timeline
               tab. Merges SMS + email dispatch rows and portal-invite
               audit events into a single per-customer stream. */}
@@ -2574,17 +2535,6 @@ export default function CustomerDetail() {
 
           {tab === "payments" ? (
             <AdminCardCapturePanel customerId={id} onChange={load} />
-          ) : null}
-
-          {tab === "subscriptions" ? (
-            <SubscriptionsPanel
-              customerId={id}
-              canWrite={["owner", "admin", "super_admin"].includes(meRole)}
-            />
-          ) : null}
-
-          {tab === "reviews" ? (
-            <CustomerReviewsTab customerId={id} jobs={jobs} />
           ) : null}
 
           {tab === "portal" ? (
