@@ -1964,6 +1964,53 @@ async def send_quote_to_customer(
             f"quote.send_to_customer audit_logs insert failed: {e}",
         )
 
+    # ── Z3 · Feb-2026 — Lead timeline integration ─────────────
+    # When the recipient is a lead, also emit a ``lead_communications``
+    # row so the Z4 Overview ▾ timeline on ``/leads/:id`` surfaces the
+    # quote send alongside SMS + email rows.  Customer-recipient sends
+    # continue to surface on ``audit_logs`` only (existing behaviour).
+    # The row carries ``channel="email"`` (the Z4 aggregator maps
+    # ``type <- channel`` so it renders as an Email entry) plus a
+    # discriminator ``type="quote_sent"`` + ``quote_id`` xref so
+    # future aggregator refinement can promote these to their own
+    # badge/icon without a schema change.
+    if _pk["kind"] == "lead" and _pk["id"]:
+        try:
+            quote_number = (
+                doc.get("quote_number") or doc.get("number") or qid
+            )
+            quote_title = doc.get("title") or f"Quote #{quote_number}"
+            row_status = "sent" if email_sent else "failed"
+            await db.lead_communications.insert_one({
+                "id": new_id(),
+                "tenant_id": tenant["id"],
+                "lead_id": _pk["id"],
+                "direction": "outbound",
+                "channel": "email",
+                "type": "quote_sent",
+                "from_identity": (
+                    tenant.get("outbound_email_from")
+                    or tenant.get("support_email")
+                    or tenant.get("email") or ""
+                ),
+                "to_identity": recipient,
+                "subject": quote_title,
+                "body": f"Quote #{quote_number} sent to {recipient}",
+                "status": row_status,
+                "provider_message_id": None,
+                "provider_status_raw": None,
+                "error": None if email_sent else "transport_failed",
+                "created_at": at,
+                "updated_at": at,
+                "sent_by_user_id": user.get("id"),
+                "quote_id": qid,
+            })
+        except Exception as _e:  # noqa: BLE001
+            logger.warning(
+                f"[send-to-customer] lead_communications insert "
+                f"failed qid={qid}: {_e}",
+            )
+
     return {
         "quote_id": qid,
         "status": status_after,
