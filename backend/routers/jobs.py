@@ -867,6 +867,7 @@ async def list_jobs(
     technician_id: Optional[str] = Query(None),
     customer_id: Optional[str] = Query(None, description="Phase F3.5 · Feb-2026 — filter to a single customer's jobs; drops CustomerDetail's tenant-wide job fetch."),
     crew_id: Optional[str] = Query(None, description="Feb-2026 · Crew Phase A · filter by crew_id (admin-equivalent only; techs remain scoped to their own jobs by scope_jobs_query)"),
+    service_category: Optional[str] = Query(None, description="Ticket Y · Feb-2026 — filter to jobs whose owning customer has ``customer.service_category == <value>`` (exact match, case-insensitive on input, normalized to the lowercase enum {pool, landscaping, both}). Values outside the enum are silently ignored (treated as no filter). Composes AS AND with every other filter. Deep-link target from the Schedule page chip-group filter."),
     start: Optional[str] = Query(None, description="Phase 30: inclusive lower bound on scheduled_date (YYYY-MM-DD)"),
     end: Optional[str] = Query(None, description="Phase 30: inclusive upper bound on scheduled_date (YYYY-MM-DD)"),
     scheduled_date: Optional[str] = Query(None, description="Phase 51.0/52: exact date (YYYY-MM-DD) — matches bare date or ISO datetime prefix"),
@@ -887,6 +888,32 @@ async def list_jobs(
         if role_lc == "customer" and user.get("customer_id") != customer_id:
             raise HTTPException(403, "Not your customer")
         q["customer_id"] = customer_id
+    # Ticket Y · Feb-2026 — Service Category filter.  Resolves to
+    # the set of ``customer_id``s in the current tenant whose
+    # ``customer.service_category`` matches the normalized bucket,
+    # then AND-s into the jobs query via ``$in`` on ``customer_id``.
+    # Values outside the enum {pool, landscaping, both} are
+    # silently ignored so bookmarked legacy URLs don't 400.
+    # Composes with the ``customer_id`` single-row filter above
+    # via query-dict superposition (the explicit customer_id
+    # branch wins — a user asking for one specific customer's
+    # jobs doesn't get further-narrowed by service category).
+    _svc_cat = (service_category or "").strip().lower() \
+        if isinstance(service_category, str) else None
+    if _svc_cat in {"pool", "landscaping", "both"} \
+            and "customer_id" not in q:
+        matching_cust_ids = await db.customers.distinct(
+            "id", {
+                "tenant_id": tenant["id"],
+                "service_category": _svc_cat,
+            },
+        )
+        if not matching_cust_ids:
+            # Short-circuit — no customers in this bucket means
+            # no jobs qualify. Return the empty list without
+            # running the full jobs query.
+            return []
+        q["customer_id"] = {"$in": matching_cust_ids}
     # Feb-2026 · Schedule multi-select soft-delete — hide rows with
     # ``deleted_at`` set by default. Only a ``super_admin`` may pass
     # ``?include_deleted=true`` to view (and later undelete) previously-
