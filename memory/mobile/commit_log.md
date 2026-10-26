@@ -2401,3 +2401,12 @@
 - **Surfaced**: TD-mobile-schedule-crew-filter-no-refetch, TD-mobile-schedule-category-offline-fallback.
 - **Files modified**: mobile/app/(app)/schedule/calendar.tsx, mobile/src/lib/scheduleServiceCategory.ts (new), mobile/src/hooks/useScheduleServiceCategory.ts (new), mobile/src/components/schedule/ServiceCategoryChips.tsx (new), mobile/__tests__/m3a-schedule-service-category-filter.test.tsx (new)
 - **Web files referenced**: frontend/src/pages/schedule/CalendarSchedule.jsx; backend routers/jobs.py `service_category` Query (read-only)
+
+## Iteration 185 — Mobile parity sweep M3b (Mark as Open on MISSED, web Ticket X)
+- **Commits**: `f6671f6a4` (ToastProvider optional action, decision 4) · `885df6c16` (MarkOpenButton + missed pill + Grid/Calendar wiring) · this doc commit
+- **Date**: 2026-10-26
+- **Changes**: `showToast(msg, variant?, ms?, action?)` (additive; with an action the container is box-none). MarkOpenButton mirrors web MarkOpenAction: optimistic → POST /jobs/{id}/mark-open → reconcile → Undo toast (5 s, PUT {status:"missed", missed_at}); errors (409/403/404/network) roll back; a failed Undo refetches GET /jobs/{id}. STATUS_PILL gains missed (#FEE2E2/#B91C1C). Shown on Grid JobRow (both list paths) + an xs variant on Calendar week cards, via patchJobInPlace.
+- **Checks**: m3b toast 4/4 + mark-open 8/8; tsc 629 after each commit; eslint clean. Regression across 90 suites: every failure is pre-existing or a batch flake. Same results with the pre-M3b ToastProvider swapped in through a /tmp jest mapper, so no toast regression.
+- **Live** (admin 375): Grid Thu Oct 22 → 19 buttons / 19 missed; Calendar week → 226 buttons = the week's missed count. Not pressed live (shared preview data).
+- **Files modified**: mobile/src/components/ToastProvider.tsx, mobile/src/components/schedule/MarkOpenButton.tsx (new), mobile/app/(app)/schedule/calendar.tsx, mobile/__tests__/m3b-toast-action.test.tsx (new), mobile/__tests__/m3b-schedule-mark-open.test.tsx (new)
+- **Web files referenced**: frontend/src/components/schedule/MarkOpenAction.jsx, frontend/src/pages/schedule/CalendarSchedule.jsx (STATUS_COLORS); backend routers/jobs.py mark-open (read-only)
