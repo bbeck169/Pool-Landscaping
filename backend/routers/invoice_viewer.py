@@ -34,6 +34,10 @@ from fastapi.responses import Response
 from config import db, logger
 from utils import get_current_user, now_iso
 from routers.tenants import get_current_tenant
+# Ticket JJ · Feb-2026 — invoice viewer renders line-item
+# description; wrap it through the shared HTML→plain-text helper
+# before it reaches the PDF / portal viewer.
+from services.text.html_to_plain import html_to_plain
 
 router = APIRouter()
 
@@ -252,8 +256,15 @@ async def _build_viewer_payload(iid: str, tenant: dict, user: dict) -> Dict[str,
         unit = float(li.get("unit_price") or 0)
         pct = float(li.get("discount_pct") or li.get("percent") or 0)
         row_total = round(qty * unit * (1 - pct / 100.0), 2)
+        # Ticket JJ · Feb-2026 — strip HTML tags + decode entities
+        # on the invoice line-item ``description`` before it reaches
+        # the PDF renderer / portal viewer.  Legacy pricebook imports
+        # leaked ``<p>`` + ``<li>`` wrappers into the field; strip-
+        # on-render here keeps the surface clean even if the backfill
+        # (Commit 2) hasn't run yet in a given tenant.
+        raw_desc = li.get("description") or li.get("name") or ""
         line_items.append({
-            "description": li.get("description") or li.get("name") or "",
+            "description": html_to_plain(raw_desc),
             "cost_rate": unit,
             "qty_hr": qty,
             "percent": pct,

@@ -54,6 +54,8 @@ from pydantic import BaseModel
 
 from config import db, logger, JWT_SECRET, JWT_ALGO, APP_PUBLIC_URL
 from utils import get_current_user, now_iso, new_id
+# Ticket JJ · Feb-2026 — strip HTML off customer-facing line items.
+from services.text.html_to_plain import html_to_plain
 from routers.tenants import get_current_tenant
 # PORTAL-QUOTE-DECLINE-REQUIRE-REASON · Feb-2026 — canonical enum +
 # bounds for the customer-portal required decline reason.  See the
@@ -133,6 +135,14 @@ def _project_line_items_for_customer(items: List[dict]) -> List[dict]:
     for li in items:
         row = {k: v for k, v in li.items() if k not in _CUSTOMER_LINE_HIDDEN}
         # Ensure a display-safe subset — Description, Qty/Hr, Visits, line total.
+        # Ticket JJ · Feb-2026 — strip HTML off description / title /
+        # name so the customer-facing estimate viewer never surfaces
+        # ``<p>`` or ``<li>`` tags that leaked in from a pricebook
+        # import.  Leaves non-string values untouched (null, numeric
+        # totals etc).
+        for k in ("description", "title", "name", "item_name"):
+            if isinstance(row.get(k), str) and row[k]:
+                row[k] = html_to_plain(row[k])
         out.append(row)
     return out
 
