@@ -192,8 +192,8 @@ describe("LeadProfile · Ticket Z2 · Send ▾ dropdown", () => {
     );
   });
 
-  it("preserves Z3 (+ Create ▾) and Z4 (Overview ▾) placeholder "
-     + "buttons as disabled with phase-placeholder markers",
+  it("preserves Z3 (+ Create ▾) placeholder button as disabled "
+     + "with phase-placeholder marker; Z4 (Overview ▾) is now live",
      async () => {
     _mountAt(BASE_LEAD);
     const createBtn = await screen.findByTestId(
@@ -204,7 +204,8 @@ describe("LeadProfile · Ticket Z2 · Send ▾ dropdown", () => {
     );
     expect(createBtn).toBeDisabled();
     expect(createBtn).toHaveAttribute("data-phase-placeholder", "z3");
-    expect(overviewBtn).toBeDisabled();
-    expect(overviewBtn).toHaveAttribute("data-phase-placeholder", "z4");
+    // Z4 ship: Overview ▾ is no longer a disabled placeholder.
+    expect(overviewBtn).not.toBeDisabled();
+    expect(overviewBtn).not.toHaveAttribute("data-phase-placeholder");
   });
 });

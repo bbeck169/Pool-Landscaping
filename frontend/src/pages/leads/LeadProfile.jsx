@@ -9,7 +9,14 @@
  * via the existing L3 `LeadComposeModal` component which POSTs
  * to `POST /api/leads/{id}/send-sms` and `POST /api/leads/{id}/
  * send-email` (both already shipped under Phase L3).  Z3 (quote
- * create) and Z4 (comm history) placeholders remain disabled.
+ * create) placeholder remains disabled.
+ *
+ * Ticket Z4 · Feb-2026 — Overview ▾ toggles an inline
+ * Communication history panel backed by `GET /api/leads/{id}/
+ * communications` (also shipped under Phase L3).  Lazy-loaded on
+ * first open; items cached across re-opens; reveal-on-click per
+ * row; "Load more" cursor pagination.  Auto-refreshes after a
+ * compose-modal `onSent`.  Z3 placeholder remains disabled.
  *
  * Visual target: lightweight ``/customers/:id``-shaped profile
  * (NOT the LeadDetailDrawer side-panel + NOT the admin-gated
@@ -34,6 +41,7 @@ import { toast } from "sonner";
 import {
   Phone, Mail, MapPin, ClipboardList, ChevronLeft, Trash2,
   Edit3, UserPlus, Send, Plus, LayoutGrid, MessageCircle,
+  RefreshCw,
 } from "lucide-react";
 
 import { api } from "@/api";
@@ -159,6 +167,16 @@ export default function LeadProfile() {
   const [composeChannel, setComposeChannel] = useState(null); // "sms" | "email" | null
   const sendMenuRef = useRef(null);
 
+  // Z4 · Feb-2026 — Overview ▾ communication history panel.
+  // Lazy — fetches on first open; items cached across re-opens.
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [commItems, setCommItems] = useState([]);
+  const [commCursor, setCommCursor] = useState(null);
+  const [commHasMore, setCommHasMore] = useState(false);
+  const [commLoading, setCommLoading] = useState(false);
+  const [commError, setCommError] = useState(null);
+  const [commLoadedOnce, setCommLoadedOnce] = useState(false);
+
   // Permission gate — mirrors routers/lead_communications._ALLOWED_ROLES.
   const canCompose = _COMPOSE_ROLES.includes(user?.role);
 
@@ -174,6 +192,39 @@ export default function LeadProfile() {
     document.addEventListener("mousedown", onDocMouseDown);
     return () => document.removeEventListener("mousedown", onDocMouseDown);
   }, [sendMenuOpen]);
+
+  // Z4 — fetch /leads/{id}/communications.  Append when `cursor` is
+  // supplied; replace otherwise.  Fail-soft: surface a toast + an
+  // inline error line so operator sees why the panel is empty.
+  const loadCommunications = useCallback(async (opts = {}) => {
+    setCommLoading(true);
+    setCommError(null);
+    try {
+      const query = new URLSearchParams({ limit: "50" });
+      if (opts.cursor) query.set("cursor", opts.cursor);
+      const res = await api.get(
+        `/leads/${encodeURIComponent(id)}/communications?${query.toString()}`,
+      );
+      const items = res?.items || [];
+      setCommItems((prev) => (opts.cursor ? [...prev, ...items] : items));
+      setCommCursor(res?.next_cursor || null);
+      setCommHasMore(!!res?.has_more);
+      setCommLoadedOnce(true);
+    } catch (e) {
+      const msg = e?.message || "Failed to load communications";
+      setCommError(msg);
+      toast.error(msg);
+    } finally {
+      setCommLoading(false);
+    }
+  }, [id]);
+
+  // Lazy-load on first open — subsequent re-opens reuse cached items.
+  useEffect(() => {
+    if (historyOpen && !commLoadedOnce && !commLoading) {
+      loadCommunications();
+    }
+  }, [historyOpen, commLoadedOnce, commLoading, loadCommunications]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -489,7 +540,89 @@ export default function LeadProfile() {
         </Link>
       </div>
 
-      {/* Footer bar — Z2 Send ▾ wired; Z3/Z4 placeholders remain disabled */}
+      {/* Z4 · Feb-2026 — Communication history panel.
+          Toggled by the Overview ▾ button below.  Renders between
+          the action strip and the footer bar per spec. */}
+      {historyOpen && (
+        <div
+          id="lead-profile-history-panel"
+          className="rounded-xl p-4 mb-4"
+          style={{
+            backgroundColor: colors.surface,
+            border: `1px solid ${colors.border}`,
+          }}
+          data-testid="lead-profile-history-panel"
+        >
+          <div className="flex items-center justify-between mb-3">
+            <div
+              className="text-[11px] font-semibold uppercase tracking-wider"
+              style={{ color: colors.onSurfaceSecondary || "#52525B" }}
+            >
+              Communication history
+            </div>
+            <button
+              type="button"
+              onClick={() => loadCommunications()}
+              disabled={commLoading}
+              className="inline-flex items-center gap-1 text-xs transition hover:brightness-95 disabled:opacity-50"
+              style={{ color: colors.onSurfaceSecondary || "#52525B" }}
+              data-testid="lead-profile-history-refresh"
+              aria-label="Refresh communication history"
+            >
+              <RefreshCw size={12} /> Refresh
+            </button>
+          </div>
+          <div className="space-y-2">
+            {commLoading && commItems.length === 0 ? (
+              <div
+                className="text-sm"
+                style={{ color: colors.onSurfaceSecondary || "#52525B" }}
+                data-testid="lead-profile-history-loading"
+              >
+                Loading…
+              </div>
+            ) : commError && commItems.length === 0 ? (
+              <div
+                className="text-sm text-rose-700"
+                data-testid="lead-profile-history-error"
+              >
+                {commError}
+              </div>
+            ) : commItems.length === 0 ? (
+              <div
+                className="text-sm"
+                style={{ color: colors.onSurfaceSecondary || "#52525B" }}
+                data-testid="lead-profile-history-empty"
+              >
+                No communication history yet.
+              </div>
+            ) : (
+              commItems.map((it, i) => (
+                <_CommRow key={it.id || `${it.type}-${i}`} item={it} />
+              ))
+            )}
+          </div>
+          {commHasMore && (
+            <div className="mt-3 flex justify-center">
+              <button
+                type="button"
+                onClick={() => loadCommunications({ cursor: commCursor })}
+                disabled={commLoading}
+                className="px-3 py-1 rounded text-xs transition hover:brightness-95 disabled:opacity-50"
+                style={{
+                  backgroundColor: colors.surface, color: colors.onSurface,
+                  border: `1px solid ${colors.border}`,
+                }}
+                data-testid="lead-profile-history-load-more"
+              >
+                {commLoading ? "Loading…" : "Load more"}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Footer bar — Z2 Send ▾ wired + Z4 Overview ▾ wired; Z3 placeholder remains */}
       <div
         className="rounded-xl p-3 flex items-center gap-2 flex-wrap"
         style={{
@@ -577,15 +710,18 @@ export default function LeadProfile() {
         </button>
         <button
           type="button"
-          disabled
-          title="Coming in next phase"
-          className="inline-flex items-center gap-1 px-3 py-2 rounded text-sm font-semibold opacity-50 cursor-not-allowed"
+          onClick={() => setHistoryOpen((o) => !o)}
+          aria-expanded={historyOpen}
+          aria-controls="lead-profile-history-panel"
+          title={historyOpen
+            ? "Hide communication history"
+            : "Show communication history"}
+          className="inline-flex items-center gap-1 px-3 py-2 rounded text-sm font-semibold transition hover:brightness-95"
           style={{
             backgroundColor: colors.surface, color: colors.onSurface,
             border: `1px solid ${colors.border}`,
           }}
           data-testid="lead-profile-footer-overview-btn"
-          data-phase-placeholder="z4"
         >
           <LayoutGrid size={14} /> Overview ▾
         </button>
@@ -596,9 +732,96 @@ export default function LeadProfile() {
           lead={lead}
           channel={composeChannel}
           onClose={() => setComposeChannel(null)}
-          onSent={() => { setComposeChannel(null); load(); }}
+          onSent={() => {
+            setComposeChannel(null);
+            load();
+            // Keep the Z4 panel fresh if it was already opened.
+            if (commLoadedOnce) loadCommunications();
+          }}
         />
       )}
+    </div>
+  );
+}
+
+
+// ─── Z4 · Feb-2026 — Communication history row ─────────────────────
+// Mirrors ``LeadDetail.CommTimelineItem`` but adds reveal-on-click
+// per spec (``snippet truncated with reveal-on-click``).  TD-comm-
+// timeline-item-shared tracks consolidating the two copies.
+function _CommRow({ item }) {
+  const [expanded, setExpanded] = useState(false);
+  const type = item.type || "status_change";
+  const iconMeta = {
+    sms:            { bg: "#DCFCE7", fg: "#166534", label: "SMS" },
+    email:          { bg: "#DBEAFE", fg: "#1E3A8A", label: "Email" },
+    status_change:  { bg: "#F1F5F9", fg: "#475569", label: "Status change" },
+  }[type] || { bg: "#F1F5F9", fg: "#475569", label: type };
+  const when = item.created_at
+    ? new Date(item.created_at).toLocaleString() : "";
+  const isInbound = item.direction === "inbound";
+  const body = item.body || "";
+  const TRUNC = 400;
+  const needsTruncate = body.length > TRUNC;
+  const shown = (!expanded && needsTruncate) ? body.slice(0, TRUNC) + "…" : body;
+
+  return (
+    <div
+      className="border-l-2 pl-3 py-2"
+      style={{ borderColor: iconMeta.fg + "55" }}
+      data-testid={`lead-profile-history-row-${type}`}
+      data-row-id={item.id || ""}
+    >
+      <div className="flex items-center gap-2">
+        <span
+          className="inline-flex items-center text-[10px] font-semibold px-2 py-0.5 rounded-full uppercase"
+          style={{ background: iconMeta.bg, color: iconMeta.fg }}
+          data-testid="lead-profile-history-row-badge"
+        >
+          {iconMeta.label}
+          {isInbound ? " · inbound" : ""}
+        </span>
+        {item.status ? (
+          <span
+            className="text-[11px] text-slate-500"
+            data-testid="lead-profile-history-row-status"
+          >
+            {item.status}
+          </span>
+        ) : null}
+        <span className="text-xs text-slate-400 ml-auto">{when}</span>
+      </div>
+      {item.subject ? (
+        <div className="text-sm font-medium text-slate-800 mt-1">
+          {item.subject}
+        </div>
+      ) : null}
+      {body ? (
+        <div
+          className="text-sm text-slate-700 mt-1 whitespace-pre-wrap"
+          data-testid="lead-profile-history-row-body"
+        >
+          {shown}
+        </div>
+      ) : null}
+      {needsTruncate ? (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="mt-1 text-xs font-semibold underline text-indigo-600"
+          data-testid="lead-profile-history-row-toggle"
+        >
+          {expanded ? "Show less" : "Show more"}
+        </button>
+      ) : null}
+      {item.error ? (
+        <div
+          className="text-xs text-rose-700 mt-1"
+          data-testid="lead-profile-history-row-error"
+        >
+          Error: {item.error}
+        </div>
+      ) : null}
     </div>
   );
 }
