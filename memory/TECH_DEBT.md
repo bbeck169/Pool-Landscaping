@@ -2523,3 +2523,34 @@ Original approval-request note:
 - **TD-mobile-month-payload-size (P3 · Mobile · watch).** Mobile Month fetch for an admin with All selected = ~1.5k rows / ~2.3 MB on preview (October), about 1.8× the normal 21-day Grid window. It is a separate state, never written to the offline cache. If low-end devices struggle, switch to `fields=` slimming or week-chunked fetches.
 - **TD-mobile-category-owner-gap (P3 · Mobile · product).** BE `require_admin` admits `owner`; mobile `isStrictAdmin` and the Customer Profile's local `isAdmin` admit only admin/super_admin. Owners see read-only property category chips, matching how lead quotes behave. Widen both together if owners should edit.
 - **TD-mobile-month-more-pill-wrap (P4 · Mobile · cosmetic).** "+144 more" wraps to two lines in ~50 dp cells at 375 wide.
+
+## TD-nn2-sms-render-remaining-callsites · RESOLVED (audit outcome: no leaks in deferred paths) · Feb-2026 (PP)
+
+**Status:** CLOSED — no code changes required. Resolution record: `/app/memory/pp-nn2-td-resolution.md` (161 lines, committed `39e00bae7`).
+
+**One-line verdict:** NN deferred 7 SMS send paths on a `grep -c "render_template" == 0` heuristic (any SMS caller with zero renders → suspected gap). The Ticket PP pre-audit opened all 7 and classified each by whether its SMS body actually contains `{{...}}` merge tags today. **None do.** Six are server-authored (f-strings, i18n catalog, admin-supplied raw text, hand-rolled single-brace templating); one is a dev-smoke endpoint. There is nothing for `render_template` to render, so wiring it in would be a no-op and in one case (service_reports hand-rolled single-brace shape) would be a latent-risk change.
+
+**Per-path classification (full table in `pp-nn2-td-resolution.md`):**
+
+| # | Path | SMS body source | `{{...}}` tokens | Verdict |
+|---|---|---|---:|---|
+| 1 | `routers/service_reports.py::build_completion_sms_body` | single-brace `str.format(first_name=…)` OR i18n catalog | 0 | NO FIX (double-brace rewrite would break tenant DB schema; see follow-up TD below) |
+| 2 | `routers/widget_chat.py` | Python f-string (internal escalation alert) | 0 | NO FIX |
+| 3 | `routers/resend_webhooks.py::/dev/sms-smoke-test` | admin-supplied raw text | 0 | NO FIX |
+| 4 | `routers/referral_rewards.py` | Python f-string (server-authored reward confirmation) | 0 | NO FIX |
+| 5 | `routers/referrals.py` | Python f-string (server-authored invite) | 0 | NO FIX |
+| 6 | `routers/customers.py::send-service-records-link` | pricebook-template path (confirmed server-rendered upstream, SMS leg body is server-authored) | 0 | NO FIX |
+| 7 | `routers/*` (seventh deferred callsite — see resolution artifact) | server-authored | 0 | NO FIX |
+
+**Why not a defensive regression-lock pytest (Option 2 declined by operator):** All 7 paths are architecturally server-authored and would need to grow a new `{{...}}` tag before a leak could occur. A grep-lock would fire on perfectly legitimate future f-strings that happen to add a double-brace literal unrelated to merge tags. The resolution artifact itself serves as the audit record.
+
+**Why not a latent-risk patch on `service_reports.py` (Option 3 declined by operator):** `build_completion_sms_body` uses single-brace `str.format(first_name=X)` against a tenant-configurable template string stored in Mongo. Rewriting the callsite to `render_template` would require either (a) migrating all tenants' stored templates from single-brace to double-brace shape (destructive DB migration, blast radius spans every pool-service tenant), or (b) teaching `render_template` to accept both shapes (polymorphism that defeats the point of having one canonical resolver). Operator chose to park this as the P3 informational TD below.
+
+**Comparison with NN's 3 fixed paths:** NN wired `render_template` into 3 operator-facing paths (`mass_sms_send`, `send_customer_sms`, `send_lead_sms`) that DID contain `{{...}}` tags in their stored templates. The deferred 7 differ precisely in that their bodies are server-authored, not operator-authored. The deferral was correct in classification (don't touch what you don't understand) but turned out to be low-signal in outcome (no leaks were hiding).
+
+**Follow-ups parked:**
+
+### TD-pp-info-service-reports-sms-template-shape-mismatch (P3 · informational)
+
+Informational TD surfaced during the Ticket PP audit. `routers/service_reports.py::build_completion_sms_body` uses hand-rolled single-brace `str.format(first_name=…)` templating against a tenant-configurable Mongo-stored string, while the canonical merge-tag resolver (`services.marketing.merge_tags.render_template`) expects double-brace `{{first_name}}` shape. The two shapes are mutually incompatible, so converting the callsite is NOT a drop-in change. No active bug — tenants' stored templates are already single-brace and `str.format` resolves them correctly. Act only when a natural reason to touch `build_completion_sms_body` surfaces (e.g. adding a new merge token, or widening the i18n catalog). At that point: either (a) migrate the tenant-stored template strings from single-brace to double-brace in a dedicated migration + flip the callsite, or (b) teach the canonical resolver to accept both shapes. Prefer (a) for architectural cleanliness; prefer (b) if the migration blast radius is deemed too wide. Priority P3 (no active impact).
+
