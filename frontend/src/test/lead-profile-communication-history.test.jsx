@@ -284,8 +284,8 @@ describe("LeadProfile · Ticket Z4 · Overview ▾ history panel", () => {
       .toBeNull();
   });
 
-  it("preserves Z3 (+ Create ▾) placeholder as disabled; Z2 Send ▾ "
-     + "wiring remains intact",
+  it("Z3 + Create ▾ is now live (not a disabled placeholder); "
+     + "Z2 Send ▾ wiring remains intact",
      async () => {
     api.get.mockImplementation((url) => {
       if (url.includes("/raw-submission")) return Promise.resolve(null);
@@ -296,8 +296,8 @@ describe("LeadProfile · Ticket Z4 · Overview ▾ history panel", () => {
     const createBtn = await screen.findByTestId(
       "lead-profile-footer-create-btn",
     );
-    expect(createBtn).toBeDisabled();
-    expect(createBtn).toHaveAttribute("data-phase-placeholder", "z3");
+    expect(createBtn).not.toBeDisabled();
+    expect(createBtn).not.toHaveAttribute("data-phase-placeholder");
     // Z2 Send ▾ still a live trigger.
     const sendBtn = screen.getByTestId("lead-profile-footer-send-btn");
     expect(sendBtn).not.toBeDisabled();

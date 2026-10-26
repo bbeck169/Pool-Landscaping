@@ -196,9 +196,8 @@ describe("LeadProfile · Ticket Z1", () => {
     ));
   });
 
-  it("Footer bar renders Z3 DISABLED placeholder (+ Create ▾) "
-     + "with 'Coming in next phase' tooltip; Z2 Send ▾ + Z4 "
-     + "Overview ▾ are now live",
+  it("Footer bar renders Z2 Send ▾ + Z3 + Create ▾ + Z4 Overview ▾ "
+     + "all as live triggers (Z3 ship — no more disabled placeholders)",
      async () => {
     api.get.mockImplementation((url) =>
       url.includes("raw-submission")
@@ -207,18 +206,18 @@ describe("LeadProfile · Ticket Z1", () => {
     _renderAt();
     const footer = await screen.findByTestId("lead-profile-footer-bar");
     expect(footer).toBeInTheDocument();
-    // Z3 remains placeholder.
-    const createBtn = screen.getByTestId("lead-profile-footer-create-btn");
-    expect(createBtn).toBeDisabled();
-    expect(createBtn.getAttribute("title")).toBe("Coming in next phase");
-    // Z2 ship: Send ▾ is a live dropdown trigger.
+    // All three footer buttons are now live triggers.
     const sendBtn = screen.getByTestId("lead-profile-footer-send-btn");
+    const createBtn = screen.getByTestId("lead-profile-footer-create-btn");
+    const overviewBtn = screen.getByTestId("lead-profile-footer-overview-btn");
     expect(sendBtn).not.toBeDisabled();
+    expect(createBtn).not.toBeDisabled();
+    expect(overviewBtn).not.toBeDisabled();
     expect(sendBtn.getAttribute("title"))
       .toBe("Send SMS or Email to this lead");
-    // Z4 ship: Overview ▾ is a live toggle (not disabled).
-    const overviewBtn = screen.getByTestId("lead-profile-footer-overview-btn");
-    expect(overviewBtn).not.toBeDisabled();
+    // No `data-phase-placeholder` markers remain.
+    expect(createBtn).not.toHaveAttribute("data-phase-placeholder");
+    expect(overviewBtn).not.toHaveAttribute("data-phase-placeholder");
   });
 
   it("Edit button is present (routes to /leads?edit=<id>)", async () => {

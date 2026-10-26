@@ -192,8 +192,8 @@ describe("LeadProfile · Ticket Z2 · Send ▾ dropdown", () => {
     );
   });
 
-  it("preserves Z3 (+ Create ▾) placeholder button as disabled "
-     + "with phase-placeholder marker; Z4 (Overview ▾) is now live",
+  it("Z3 + Create ▾ is now a live trigger (no longer a disabled "
+     + "placeholder); Z2 Send ▾ wiring intact",
      async () => {
     _mountAt(BASE_LEAD);
     const createBtn = await screen.findByTestId(
@@ -202,9 +202,8 @@ describe("LeadProfile · Ticket Z2 · Send ▾ dropdown", () => {
     const overviewBtn = screen.getByTestId(
       "lead-profile-footer-overview-btn",
     );
-    expect(createBtn).toBeDisabled();
-    expect(createBtn).toHaveAttribute("data-phase-placeholder", "z3");
-    // Z4 ship: Overview ▾ is no longer a disabled placeholder.
+    expect(createBtn).not.toBeDisabled();
+    expect(createBtn).not.toHaveAttribute("data-phase-placeholder");
     expect(overviewBtn).not.toBeDisabled();
     expect(overviewBtn).not.toHaveAttribute("data-phase-placeholder");
   });

@@ -8,15 +8,22 @@
  * Ticket Z2 · Feb-2026 — Send ▾ dropdown wired (SMS + Email)
  * via the existing L3 `LeadComposeModal` component which POSTs
  * to `POST /api/leads/{id}/send-sms` and `POST /api/leads/{id}/
- * send-email` (both already shipped under Phase L3).  Z3 (quote
- * create) placeholder remains disabled.
+ * send-email` (both already shipped under Phase L3).
+ *
+ * Ticket Z3 · Feb-2026 — + Create ▾ dropdown wired to a "Create
+ * quote" option that nav's to the existing full quote builder at
+ * `/quotes/new?recipient_type=lead&recipient_id=<id>` (URL
+ * contract shipped under Phase 2 · Quote-to-Lead Recipient).
+ * Admin-only gate (matches `require_admin` on `POST /quotes`).
  *
  * Ticket Z4 · Feb-2026 — Overview ▾ toggles an inline
  * Communication history panel backed by `GET /api/leads/{id}/
  * communications` (also shipped under Phase L3).  Lazy-loaded on
  * first open; items cached across re-opens; reveal-on-click per
  * row; "Load more" cursor pagination.  Auto-refreshes after a
- * compose-modal `onSent`.  Z3 placeholder remains disabled.
+ * compose-modal `onSent`.  Also surfaces quote sends via the Z3
+ * BE emission of a lead_communications row with
+ * `type="quote_sent"`.
  *
  * Visual target: lightweight ``/customers/:id``-shaped profile
  * (NOT the LeadDetailDrawer side-panel + NOT the admin-gated
@@ -41,7 +48,7 @@ import { toast } from "sonner";
 import {
   Phone, Mail, MapPin, ClipboardList, ChevronLeft, Trash2,
   Edit3, UserPlus, Send, Plus, LayoutGrid, MessageCircle,
-  RefreshCw,
+  RefreshCw, FileText,
 } from "lucide-react";
 
 import { api } from "@/api";
@@ -52,6 +59,9 @@ import LeadComposeModal from "./LeadComposeModal";
 
 
 const _COMPOSE_ROLES = ["admin", "super_admin", "owner", "manager"];
+// Z3 · Feb-2026 — Create Quote is admin-only (matches BE
+// require_admin on POST /quotes).  Mirrors LeadDetail.jsx:690 gate.
+const _CREATE_QUOTE_ROLES = ["admin", "super_admin", "owner"];
 
 
 const STATUS_ORDER = [
@@ -167,6 +177,10 @@ export default function LeadProfile() {
   const [composeChannel, setComposeChannel] = useState(null); // "sms" | "email" | null
   const sendMenuRef = useRef(null);
 
+  // Z3 · Feb-2026 — + Create ▾ dropdown state.
+  const [createMenuOpen, setCreateMenuOpen] = useState(false);
+  const createMenuRef = useRef(null);
+
   // Z4 · Feb-2026 — Overview ▾ communication history panel.
   // Lazy — fetches on first open; items cached across re-opens.
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -179,6 +193,7 @@ export default function LeadProfile() {
 
   // Permission gate — mirrors routers/lead_communications._ALLOWED_ROLES.
   const canCompose = _COMPOSE_ROLES.includes(user?.role);
+  const canCreateQuote = _CREATE_QUOTE_ROLES.includes(user?.role);
 
   // Click-outside closes the Send ▾ menu.  Rendered conditionally so
   // the effect only subscribes while the menu is open.
@@ -192,6 +207,19 @@ export default function LeadProfile() {
     document.addEventListener("mousedown", onDocMouseDown);
     return () => document.removeEventListener("mousedown", onDocMouseDown);
   }, [sendMenuOpen]);
+
+  // Z3 — click-outside close for the + Create ▾ menu.
+  useEffect(() => {
+    if (!createMenuOpen) return undefined;
+    const onDocMouseDown = (e) => {
+      if (createMenuRef.current
+          && !createMenuRef.current.contains(e.target)) {
+        setCreateMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDocMouseDown);
+    return () => document.removeEventListener("mousedown", onDocMouseDown);
+  }, [createMenuOpen]);
 
   // Z4 — fetch /leads/{id}/communications.  Append when `cursor` is
   // supplied; replace otherwise.  Fail-soft: surface a toast + an
@@ -622,7 +650,7 @@ export default function LeadProfile() {
         </div>
       )}
 
-      {/* Footer bar — Z2 Send ▾ wired + Z4 Overview ▾ wired; Z3 placeholder remains */}
+      {/* Footer bar — Z2 Send ▾ + Z3 + Create ▾ + Z4 Overview ▾ all wired */}
       <div
         className="rounded-xl p-3 flex items-center gap-2 flex-wrap"
         style={{
@@ -694,20 +722,57 @@ export default function LeadProfile() {
             </div>
           )}
         </div>
-        <button
-          type="button"
-          disabled
-          title="Coming in next phase"
-          className="inline-flex items-center gap-1 px-3 py-2 rounded text-sm font-semibold opacity-50 cursor-not-allowed"
-          style={{
-            backgroundColor: colors.surface, color: colors.onSurface,
-            border: `1px solid ${colors.border}`,
-          }}
-          data-testid="lead-profile-footer-create-btn"
-          data-phase-placeholder="z3"
-        >
-          <Plus size={14} /> + Create ▾
-        </button>
+        {/* + Create ▾ dropdown (Z3) */}
+        <div className="relative" ref={createMenuRef}>
+          <button
+            type="button"
+            onClick={() => canCreateQuote && setCreateMenuOpen((o) => !o)}
+            disabled={!canCreateQuote}
+            title={canCreateQuote
+              ? "Create a quote or other document for this lead"
+              : "Admin role required"}
+            aria-haspopup="menu"
+            aria-expanded={createMenuOpen}
+            className="inline-flex items-center gap-1 px-3 py-2 rounded text-sm font-semibold transition hover:brightness-95 disabled:opacity-50 disabled:cursor-not-allowed"
+            style={{
+              backgroundColor: colors.surface, color: colors.onSurface,
+              border: `1px solid ${colors.border}`,
+            }}
+            data-testid="lead-profile-footer-create-btn"
+          >
+            <Plus size={14} /> + Create ▾
+          </button>
+          {createMenuOpen && (
+            <div
+              role="menu"
+              className="absolute left-0 mt-1 min-w-[180px] rounded-md shadow-lg z-20 py-1"
+              style={{
+                backgroundColor: colors.surface,
+                border: `1px solid ${colors.border}`,
+              }}
+              data-testid="lead-profile-create-menu"
+            >
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setCreateMenuOpen(false);
+                  const qs = new URLSearchParams({
+                    recipient_type: "lead",
+                    recipient_id: lead.id,
+                  }).toString();
+                  navigate(`/quotes/new?${qs}`);
+                }}
+                title="Open the quote builder pre-populated with this lead"
+                className="w-full text-left inline-flex items-center gap-2 px-3 py-2 text-sm hover:bg-slate-50"
+                style={{ color: colors.onSurface }}
+                data-testid="lead-profile-create-quote-item"
+              >
+                <FileText size={14} /> Create quote
+              </button>
+            </div>
+          )}
+        </div>
         <button
           type="button"
           onClick={() => setHistoryOpen((o) => !o)}
