@@ -6,6 +6,9 @@ import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 
 import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
+import { isStrictAdmin } from "@/src/components/RoleGate";
+import CombinedCategoryBadge from "@/src/components/customers/CombinedCategoryBadge";
+import PropertyCategorySelector from "@/src/components/customers/PropertyCategorySelector";
 import { writeCache, readCache } from "@/src/services/readCache";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { useToast } from "@/src/components/ToastProvider";
@@ -269,6 +272,23 @@ export default function CustomerDetail() {
 
   const isAdmin = user?.role === "admin" || user?.role === "super_admin";
   const isAdminOrTech = isAdmin || user?.role === "technician";
+  // M4 · web Ticket AA — per-property category. Admin-only writes (isStrictAdmin,
+  // same gate as app/leads/[id].tsx); optimistic, rollback on error; tapping the
+  // active chip clears (null). The combined badge recomputes from local state.
+  const canEditPropertyCategory = isStrictAdmin(user);
+  const patchPropertyCategory = async (pid: string, next: string) => {
+    const prevCat = properties.find((p: any) => p.id === pid)?.service_category || null;
+    const payloadCat = next === prevCat ? null : next;
+    setProperties((rs) => rs.map((r: any) => (r.id === pid ? { ...r, service_category: payloadCat } : r)));
+    try {
+      const updated: any = await api.patch(`/properties/${pid}`, { service_category: payloadCat });
+      setProperties((rs) => rs.map((r: any) => (r.id === pid ? { ...r, ...(updated || {}) } : r)));
+      showToast(payloadCat ? `Property category set to ${payloadCat}` : "Property category cleared");
+    } catch (e: any) {
+      setProperties((rs) => rs.map((r: any) => (r.id === pid ? { ...r, service_category: prevCat } : r)));
+      showToast(`Category update failed: ${e?.message || "Error"}`, "error");
+    }
+  };
   const isActive = c.is_active !== false;
 
   // Multi-contact · prefer primary entry from arrays, fall back to scalar.
@@ -458,6 +478,7 @@ export default function CustomerDetail() {
           onToggleActive={toggleActivation}
           primaryPhone={primaryPhone}
           primaryEmail={primaryEmail}
+          categorySlot={<CombinedCategoryBadge properties={properties} />}
           tagsSlot={
             <CustomerTagsSection
               customerId={id as string}
@@ -945,6 +966,11 @@ export default function CustomerDetail() {
                 {[p.address?.line1, p.address?.city, p.address?.state, p.address?.postal_code]
                   .filter(Boolean).join(", ")}
               </Text>
+              <PropertyCategorySelector
+                propertyId={p.id}
+                current={p.service_category}
+                onPick={canEditPropertyCategory ? (next) => patchPropertyCategory(p.id, next) : undefined}
+              />
               {(p.service_types || []).length ? (
                 <Text style={{ marginTop: 4, color: colors.onSurfaceSecondary, fontSize: fontSize.xs }}>
                   {(p.service_types || []).join(" · ")}

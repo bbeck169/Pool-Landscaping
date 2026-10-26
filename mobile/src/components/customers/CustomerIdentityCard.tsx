@@ -33,6 +33,8 @@ type Props = {
   primaryPhone?: string;
   primaryEmail?: string;
   tagsSlot?: React.ReactNode;
+  /** M4 · web Ticket AA — combined category badge under the name. */
+  categorySlot?: React.ReactNode;
 };
 
 function Row({ icon, children, testID }: { icon: any; children: React.ReactNode; testID?: string }) {
@@ -185,10 +187,11 @@ function ContactRows({ c, primaryPhone, primaryEmail }: Pick<Props, "c" | "prima
   );
 }
 
-export default function CustomerIdentityCard({ c, isActive, isAdmin, onToggleActive, primaryPhone, primaryEmail, tagsSlot }: Props) {
+export default function CustomerIdentityCard({ c, isActive, isAdmin, onToggleActive, primaryPhone, primaryEmail, tagsSlot, categorySlot }: Props) {
   return (
     <View style={s.card} testID="cd-identity-card">
       <Text style={s.name} numberOfLines={2} testID="customer-detail-inline-name">{c.name}</Text>
+      {categorySlot ? <View testID="cd-identity-category">{categorySlot}</View> : null}
       <SinceVipRow c={c} isAdmin={isAdmin} />
       <ActiveRow isActive={isActive} isAdmin={isAdmin} onToggleActive={onToggleActive} />
       <ContactRows c={c} primaryPhone={primaryPhone} primaryEmail={primaryEmail} />
