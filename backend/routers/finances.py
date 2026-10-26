@@ -1360,11 +1360,17 @@ async def patch_tenant_settings(
 # Soft-delete pattern matching Task BB. Locked states:
 #   * plans with a Stripe subscription id → reversal must run through the
 #     Stripe dashboard.
-#   * plans with a `next_run` inside the next 24h → cancel the imminent
-#     charge manually first so admins don't accidentally miss a
-#     scheduled billing.
 # Every bulk-delete row still writes an audit log entry so the archive
 # view can attribute the delete back to its actor.
+#
+# TD-autobilling-plan-delete-24h-lock-removal · Ticket DD · Feb-2026
+# The "charge scheduled within 24h" lock was lifted (operators asked
+# for the ability to delete plans right up to the scheduled fire
+# window; the daily batch at ``POST /billing-plans/run`` iterates
+# ``active=True AND next_run <= today`` so a soft-deleted plan
+# naturally drops out of the next run with no dangling-task risk).
+# The forensic breadcrumb lives on the audit log row:
+# ``was_imminent_charge: bool`` + ``snapshot_next_run: str|None``.
 # ═════════════════════════════════════════════════════════════════════════
 from pydantic import BaseModel as _AutobillingBulkBase
 
@@ -1384,19 +1390,30 @@ _AUTOBILLING_BULK_DELETE_CAP = 400
 def _plan_locked_reason(plan: dict) -> Optional[str]:
     if plan.get("stripe_subscription_id"):
         return "Linked Stripe Subscription must be cancelled via Stripe dashboard"
-    next_run = plan.get("next_run")
-    if next_run:
-        try:
-            # ``next_run`` is stored as an ISO date string in this codebase.
-            from datetime import datetime, timezone, timedelta
-            when = datetime.fromisoformat(str(next_run).replace("Z", "+00:00"))
-            if when.tzinfo is None:
-                when = when.replace(tzinfo=timezone.utc)
-            if when - datetime.now(timezone.utc) < timedelta(hours=24):
-                return "Charge scheduled within 24h — cancel manually first"
-        except Exception:                                       # noqa: BLE001
-            pass
+    # NOTE · Ticket DD · Feb-2026 — the "charge within 24h" lock was
+    # removed.  The imminent-charge state is still captured on the
+    # audit row via ``_plan_has_imminent_charge`` for forensic
+    # breadcrumbs; it just no longer blocks the delete.
     return None
+
+
+def _plan_has_imminent_charge(plan: dict) -> bool:
+    """Returns True when the plan's ``next_run`` is within 24h of
+    ``now()``.  Used to stamp ``was_imminent_charge`` on the audit
+    log so admins can trace mass-deletes that happened right before
+    a billing run.  Fail-safe: on any parse error, returns False
+    (missing / malformed dates can't be "imminent")."""
+    next_run = plan.get("next_run")
+    if not next_run:
+        return False
+    try:
+        from datetime import datetime, timezone, timedelta
+        when = datetime.fromisoformat(str(next_run).replace("Z", "+00:00"))
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        return when - datetime.now(timezone.utc) < timedelta(hours=24)
+    except Exception:  # noqa: BLE001
+        return False
 
 
 async def _perform_soft_delete_plan(pid: str, user: dict, tenant: dict) -> dict:
@@ -1412,6 +1429,7 @@ async def _perform_soft_delete_plan(pid: str, user: dict, tenant: dict) -> dict:
     lock_reason = _plan_locked_reason(plan)
     if lock_reason:
         raise HTTPException(409, lock_reason)
+    was_imminent = _plan_has_imminent_charge(plan)
     deleted_at = now_iso()
     await db.billing_plans.update_one(
         {"id": pid, "tenant_id": tenant["id"]},
@@ -1428,10 +1446,14 @@ async def _perform_soft_delete_plan(pid: str, user: dict, tenant: dict) -> dict:
             "action": "autobilling.soft_delete",
             "target_id": pid,
             "at": deleted_at,
+            # Ticket DD · Feb-2026 — forensic breadcrumbs.
+            "was_imminent_charge": was_imminent,
+            "snapshot_next_run": plan.get("next_run"),
         })
     except Exception as e:                                       # noqa: BLE001
         logger.warning(f"autobilling.soft_delete audit failed: {e}")
-    return {"ok": True, "id": pid, "deleted_at": deleted_at}
+    return {"ok": True, "id": pid, "deleted_at": deleted_at,
+             "was_imminent_charge": was_imminent}
 
 
 @router.post("/billing-plans/{pid}/soft-delete",
