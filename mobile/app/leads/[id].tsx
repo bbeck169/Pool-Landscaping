@@ -24,6 +24,7 @@ import LeadComposeSheet, { type LeadComposeChannel } from "@/src/components/lead
 import LeadLinkedQuotesPanel from "@/src/components/leads/LeadLinkedQuotesPanel";
 import LeadCommunicationTimeline from "@/src/components/leads/LeadCommunicationTimeline";
 import LeadRequestedServiceCard from "@/src/components/leads/LeadRequestedServiceCard";
+import LeadNotesCard from "@/src/components/leads/LeadNotesCard";
 
 const STATUS_COLORS: Record<string, { bg: string; fg: string; label: string }> = {
   // Phase 34 · Task CC: 5 canonical snake_case statuses
@@ -332,28 +333,8 @@ export default function LeadDetailScreen() {
         {/* TD-96-mobile — linked quotes (admin). Fetch gated on linked_quotes_count (TD-96-g2-mobile). */}
         {canQuote && <LeadLinkedQuotesPanel leadId={String(id)} refreshKey={lead} linkedQuotesCount={lead?.linked_quotes_count} />}
 
-        {/* Notes */}
-        <View style={st.card}>
-          <Text style={st.sectionLabel}>ADD NOTE</Text>
-          <AppTextInput
-            style={st.noteInput}
-            value={noteText}
-            onChangeText={setNoteText}
-            placeholder="Type a note…"
-            placeholderTextColor={colors.muted}
-            multiline
-            testID="lead-note-input"
-          />
-          <TouchableOpacity
-            style={[st.noteBtn, !noteText.trim() && { opacity: 0.4 }]}
-            onPress={addNote}
-            disabled={!noteText.trim() || busy}
-            testID="lead-note-submit"
-          >
-            <Ionicons name="send" size={14} color="#fff" />
-            <Text style={st.noteBtnText}>Add Note</Text>
-          </TouchableOpacity>
-        </View>
+        {/* Notes — append-only (POST /leads/{id}/note), customer-profile-style card */}
+        <LeadNotesCard leadNotes={lead.notes} timeline={lead.timeline} value={noteText} onChangeText={setNoteText} onSubmit={addNote} busy={busy} />
 
         {/* Timeline */}
         <View style={st.card}>
@@ -456,9 +437,6 @@ const st = StyleSheet.create({
   quoteBtnText: { fontFamily: font.semibold, fontSize: fontSize.base, color: "#fff" },
   quoteCount: { minWidth: 20, height: 20, paddingHorizontal: 6, borderRadius: 10, backgroundColor: "rgba(255,255,255,0.25)", alignItems: "center", justifyContent: "center" },
   quoteCountText: { fontFamily: font.semibold, fontSize: 11, color: "#fff" },
-  noteInput: { backgroundColor: "#F8FAFC", borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, padding: spacing.md, minHeight: 60, fontFamily: font.regular, fontSize: fontSize.base, color: colors.onSurface, textAlignVertical: "top" },
-  noteBtn: { flexDirection: "row", alignItems: "center", gap: 6, alignSelf: "flex-end", marginTop: spacing.sm, backgroundColor: colors.brand, paddingHorizontal: 14, paddingVertical: 8, borderRadius: radius.md },
-  noteBtnText: { fontFamily: font.semibold, fontSize: fontSize.sm, color: "#fff" },
   emptyText: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted },
   tlEntry: { flexDirection: "row", gap: 10, paddingVertical: 8, borderLeftWidth: 2, borderLeftColor: colors.border, paddingLeft: 12 },
   tlDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.brand, marginTop: 5, marginLeft: -17 },
