@@ -302,6 +302,14 @@ _ROUTES_WITHOUT_PII_PAYLOAD: Dict[Tuple[str, str], str] = {
     ("POST", "/api/customers/{cid}/send-sms"):
         "Outbound SMS send to stored customer's on-file phone. "
         "Same OUTBOUND-not-INBOUND rationale as leads/send-sms.",
+    ("POST", "/api/customers/bulk-sms"):
+        "Ticket KK · Outbound bulk SMS to a list of selected "
+        "customer_ids on the caller's tenant. Body carries "
+        "customer_ids (opaque) + message (admin-authored "
+        "OUTBOUND template body) + optional template_id. "
+        "Phones are read from the already-stored customer rows; "
+        "no customer PII ingress. Same OUTBOUND-not-INBOUND "
+        "rationale as /customers/{cid}/send-sms.",
     ("POST", "/api/customers/{cid}/send-service-records-link"):
         "Outbound service-records tokenised-link send. Body is "
         "{window_days?: int, channel?: email|sms}. No PII.",
