@@ -13,18 +13,24 @@
  * (dashboard, dunning, email, SMS, invoice PDF) remain DESCOPED
  * for this ticket per operator instruction.
  *
- * Fallback rule (operator-approved, 5-case):
+ * Fallback rule (operator-approved, Ticket FF revised order):
  *
- *   1. ``invoice.title`` is a non-empty trimmed string → return
- *      it verbatim.
- *   2. ``line_items[0].item_name`` is a non-empty trimmed string
+ *   1. ``line_items[0].item_name`` is a non-empty trimmed string
  *      → return it.  This is the canonical "Item" column source
  *      confirmed by both the admin invoice-detail renderer
  *      (``components/invoices/pdfPreviewTiles/LineItemsTile.jsx:68``
  *      reads ``li.item_name``) AND the operator screenshot.
- *   3. ``line_items[0].name`` is a non-empty trimmed string →
+ *   2. ``line_items[0].name`` is a non-empty trimmed string →
  *      return it.  Shorter-schema docs (6% of preview invoices
  *      with line items) use ``name`` instead of ``item_name``.
+ *   3. ``invoice.title`` is a non-empty trimmed string → return
+ *      it verbatim.  Ticket FF reorder (Feb-2026) pushed this
+ *      from case 1 to case 3 so first-line-item-name wins
+ *      retroactively, including on imported invoices whose stored
+ *      ``title`` is an ``Import #<N>`` artefact.  For invoices
+ *      with EMPTY line_items[0].item_name AND .name (the 96%
+ *      preview reality), behavior is unchanged — this case
+ *      returns ``invoice.title`` just like before.
  *   4. ``line_items[0].description`` is a non-empty trimmed
  *      string → return it TRUNCATED to 60 chars with a trailing
  *      ``"…"``.  This is the primary legacy path — 94% of
@@ -78,23 +84,25 @@ function _nonEmpty(raw) {
 export function getInvoiceDisplayTitle(invoice) {
   if (!invoice || typeof invoice !== "object") return "";
 
-  // 1. invoice.title set → verbatim.
-  const title = _nonEmpty(invoice.title);
-  if (title) return invoice.title;
-
   const items = Array.isArray(invoice.line_items) ? invoice.line_items : [];
   const first = (items.length > 0 && items[0] && typeof items[0] === "object")
     ? items[0] : null;
 
   if (first) {
-    // 2. line_items[0].item_name — canonical "Item" column.
+    // 1. line_items[0].item_name — canonical "Item" column.
     const itemName = _nonEmpty(first.item_name);
     if (itemName) return itemName;
 
-    // 3. line_items[0].name — shorter-schema fallback (6%).
+    // 2. line_items[0].name — shorter-schema fallback (6%).
     const name = _nonEmpty(first.name);
     if (name) return name;
+  }
 
+  // 3. invoice.title set → verbatim.
+  const title = _nonEmpty(invoice.title);
+  if (title) return invoice.title;
+
+  if (first) {
     // 4. line_items[0].description truncated — legacy path (94%).
     const desc = _nonEmpty(first.description);
     if (desc) return _truncate(desc);
