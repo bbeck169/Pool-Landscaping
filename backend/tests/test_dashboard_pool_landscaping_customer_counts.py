@@ -29,6 +29,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from services.dashboard_customer_category_counts import (  # noqa: E402
+    count_both_customers,
     count_landscaping_customers,
     count_pool_customers,
 )
@@ -269,3 +270,139 @@ def test_unset_or_unknown_category_excluded_from_both_tiles():
     assert asyncio.run(
         count_landscaping_customers(db=db, tenant_id="t-a"),
     ) == 0
+
+
+# ═════════════════════════════════════════════════════════════
+# Ticket U · Feb-2026 — count_both_customers tests
+#
+# Mirrors the Pool / Landscaping helper coverage but exact-match
+# (no union): only customers whose service_category is literally
+# ``both`` count on this tile.  Pool-only + landscaping-only must
+# NOT count.
+# ═════════════════════════════════════════════════════════════
+def test_both_tile_counts_only_exact_both_cohort():
+    """Pool-only and landscaping-only customers are EXCLUDED;
+    ``both`` customers are counted.  Mirrors the P2 #6 list
+    filter ``?service_category=both``.
+    """
+    docs = []
+    for i in range(5):
+        docs.append(_c(id=f"p{i}", service_category="pool"))
+    for i in range(3):
+        docs.append(_c(id=f"l{i}", service_category="landscaping"))
+    for i in range(2):
+        docs.append(_c(id=f"b{i}", service_category="both"))
+    db = _FakeDB(docs)
+    both = asyncio.run(count_both_customers(db=db, tenant_id="t-a"))
+    assert both == 2, (
+        f"expected 2 ``both`` (exact-match only, no pool/land "
+        f"bleed-in), got {both}"
+    )
+
+
+def test_both_tile_case_insensitive_match():
+    docs = [
+        _c(id="b1", service_category="BOTH"),
+        _c(id="b2", service_category="Both"),
+        _c(id="b3", service_category="both"),
+        # These must NOT bleed into the Both tile.
+        _c(id="p1", service_category="POOL"),
+        _c(id="l1", service_category="LANDSCAPING"),
+    ]
+    db = _FakeDB(docs)
+    both = asyncio.run(count_both_customers(db=db, tenant_id="t-a"))
+    assert both == 3
+
+
+def test_both_tile_excludes_inactive_and_soft_deleted():
+    docs = [
+        _c(id="b1", service_category="both"),  # counted
+        _c(id="b2", service_category="both", is_active=False),  # excluded
+        _c(id="b3", service_category="both",
+            deleted_at="2026-02-01T00:00:00Z"),  # excluded
+    ]
+    db = _FakeDB(docs)
+    both = asyncio.run(count_both_customers(db=db, tenant_id="t-a"))
+    assert both == 1
+
+
+def test_both_tile_tenant_isolation():
+    docs = [
+        _c(id="a1", tenant_id="t-a", service_category="both"),
+        _c(id="b1", tenant_id="t-b", service_category="both"),
+        _c(id="b2", tenant_id="t-b", service_category="both"),
+    ]
+    db = _FakeDB(docs)
+    assert asyncio.run(
+        count_both_customers(db=db, tenant_id="t-a"),
+    ) == 1
+    assert asyncio.run(
+        count_both_customers(db=db, tenant_id="t-b"),
+    ) == 2
+
+
+def test_both_tile_is_active_matches_true_missing_and_null():
+    docs = [
+        _c(id="t", service_category="both", is_active=True),
+        _c(id="n", service_category="both", is_active=None),
+        _c(id="m", service_category="both"),
+    ]
+    docs[2].pop("is_active", None)
+    db = _FakeDB(docs)
+    assert asyncio.run(
+        count_both_customers(db=db, tenant_id="t-a"),
+    ) == 3
+
+
+# ═════════════════════════════════════════════════════════════
+# Ticket U · Feb-2026 — Union consistency across the three tiles
+#
+# A ``both`` customer must land in ALL THREE helpers so the sum
+# of Pool + Landscaping tile overcounts the roster by exactly
+# the ``both`` cohort size (predictable to operators auditing
+# totals against the Customer-list filter).
+# ═════════════════════════════════════════════════════════════
+def test_both_customer_appears_in_all_three_tiles():
+    docs = [_c(id="b1", service_category="both")]
+    db = _FakeDB(docs)
+    pool = asyncio.run(count_pool_customers(db=db, tenant_id="t-a"))
+    land = asyncio.run(count_landscaping_customers(db=db, tenant_id="t-a"))
+    both = asyncio.run(count_both_customers(db=db, tenant_id="t-a"))
+    assert pool == 1
+    assert land == 1
+    assert both == 1
+    # Pool + Landscape overcount vs roster = ``both`` cohort size.
+    assert (pool + land) - both == 1
+
+
+def test_pool_landscape_both_tiles_match_list_filter_shape():
+    """Ticket U regression lock — tile totals must match the
+    Customer-list ``?service_category=X&is_active=true`` filter
+    cardinality on a seeded fixture.  The list filter is
+    emulated here by the same case-insensitive regex + active
+    gate the helpers emit (unified data source — the whole
+    point of the ticket).
+    """
+    docs = []
+    # 7 pool-only (one inactive, one soft-deleted — excluded).
+    for i in range(5):
+        docs.append(_c(id=f"p{i}", service_category="pool"))
+    docs.append(_c(id="p-inactive", service_category="pool", is_active=False))
+    docs.append(_c(id="p-deleted", service_category="pool",
+                     deleted_at="2026-02-01T00:00:00Z"))
+    # 4 landscaping-only.
+    for i in range(4):
+        docs.append(_c(id=f"l{i}", service_category="landscaping"))
+    # 3 both-services.
+    for i in range(3):
+        docs.append(_c(id=f"b{i}", service_category="both"))
+    db = _FakeDB(docs)
+    pool = asyncio.run(count_pool_customers(db=db, tenant_id="t-a"))
+    land = asyncio.run(count_landscaping_customers(db=db, tenant_id="t-a"))
+    both = asyncio.run(count_both_customers(db=db, tenant_id="t-a"))
+    # Pool tile = 5 pool + 3 both = 8 (inactive + deleted excluded).
+    assert pool == 8
+    # Landscaping tile = 4 landscaping + 3 both = 7.
+    assert land == 7
+    # Both tile = 3.
+    assert both == 3

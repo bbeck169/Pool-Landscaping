@@ -88,12 +88,18 @@ const _DASHBOARD_PAYLOAD = {
   total_customers: 150,
   active_customers_count: 100,
   inactive_customers_count: 50,
-  pool_customers_count: 42,
-  landscaping_customers_count: 17,
+  // Ticket U · Feb-2026 — Dashboard "Pool/Landscaping/Both Service
+  // Customers" tiles now consume these customer-count fields
+  // instead of the ``*_properties_count`` fields (which stay in
+  // the response for one deprecation window per BE comment).
+  pool_customers_count: 90,
+  landscaping_customers_count: 38,
+  both_customers_count: 11,
   active_accounts_count: 128,
-  pool_properties_count: 90,
-  landscaping_properties_count: 38,
-  both_properties_count: 11,
+  // Deprecated (kept in fixture to prove tiles ignore them).
+  pool_properties_count: 42,
+  landscaping_properties_count: 17,
+  both_properties_count: 5,
   total_technicians: 4,
   total_leads: 0, open_leads: 0,
   recent_jobs: [], revenue_series: [], revenue_by_service: [],
@@ -138,9 +144,19 @@ describe("Dashboard · Property-count tiles (P2 #6)", () => {
     );
     const both = await screen.findByTestId("kpi-both-properties");
     expect(active.textContent).toMatch(/128/);
+    // Ticket U · Feb-2026 — the Pool / Landscaping / Both Service
+    // Customers tiles now read the ``*_customers_count`` fields
+    // (90 / 38 / 11), NOT the deprecated ``*_properties_count``
+    // fields (42 / 17 / 5) which are kept in the fixture to prove
+    // the tiles ignore them.
     expect(pool.textContent).toMatch(/90/);
     expect(land.textContent).toMatch(/38/);
     expect(both.textContent).toMatch(/11/);
+    // Negative assertion — deprecated property counts MUST NOT
+    // appear in these tiles.
+    expect(pool.textContent).not.toMatch(/42/);
+    expect(land.textContent).not.toMatch(/17/);
+    expect(both.textContent).not.toMatch(/5/);
   });
 
   it("Active Accounts tile deep-links to /properties?is_active=true",
@@ -151,51 +167,67 @@ describe("Dashboard · Property-count tiles (P2 #6)", () => {
     expect(navigateMock).toHaveBeenCalledWith("/properties?is_active=true");
   });
 
-  it("Pool Properties tile (now labelled 'Pool Customers') deep-links with service_category=pool",
+  it("Pool Customers tile deep-links to /customers?service_category=pool&is_active=true",
      async () => {
+    // Ticket U · Feb-2026 — deep-link flipped from
+    // ``/properties?is_active=true&service_category=pool`` to
+    // ``/customers?service_category=pool&is_active=true`` so the
+    // tile count equals the Customer-list filter cardinality
+    // exactly (unified data source).
     await _renderDashboard();
     fireEvent.click(await screen.findByTestId("kpi-pool-properties"));
     expect(navigateMock).toHaveBeenCalledWith(
-      "/properties?is_active=true&service_category=pool",
+      "/customers?service_category=pool&is_active=true",
     );
   });
 
-  it("Landscaping Properties tile (now labelled 'Landscaping Customers') deep-links with service_category=landscaping",
+  it("Landscaping Customers tile deep-links to /customers?service_category=landscaping&is_active=true",
      async () => {
     await _renderDashboard();
     fireEvent.click(
       await screen.findByTestId("kpi-landscaping-properties"),
     );
     expect(navigateMock).toHaveBeenCalledWith(
-      "/properties?is_active=true&service_category=landscaping",
+      "/customers?service_category=landscaping&is_active=true",
     );
   });
 
-  it("Both Services Properties tile (now labelled 'Both Service Customers') deep-links with service_category=both",
+  it("Both Service Customers tile deep-links to /customers?service_category=both&is_active=true",
      async () => {
     await _renderDashboard();
     fireEvent.click(await screen.findByTestId("kpi-both-properties"));
     expect(navigateMock).toHaveBeenCalledWith(
-      "/properties?is_active=true&service_category=both",
+      "/customers?service_category=both&is_active=true",
     );
   });
 
   it("zero-count tiles still render (do not hide)", async () => {
     _applyPayload({
       active_accounts_count: 0,
-      pool_properties_count: 0,
-      landscaping_properties_count: 0,
-      both_properties_count: 0,
+      pool_customers_count: 0,
+      landscaping_customers_count: 0,
+      both_customers_count: 0,
+      // Keep deprecated fields non-zero to prove the tile hides
+      // on the Customers field (post Ticket U), not the Properties
+      // field.
+      pool_properties_count: 99,
+      landscaping_properties_count: 99,
+      both_properties_count: 99,
     });
     await _renderDashboard();
     expect(await screen.findByTestId("kpi-active-accounts"))
       .toBeInTheDocument();
-    expect(await screen.findByTestId("kpi-pool-properties"))
-      .toBeInTheDocument();
-    expect(await screen.findByTestId("kpi-landscaping-properties"))
-      .toBeInTheDocument();
-    expect(await screen.findByTestId("kpi-both-properties"))
-      .toBeInTheDocument();
+    const pool = await screen.findByTestId("kpi-pool-properties");
+    const land = await screen.findByTestId("kpi-landscaping-properties");
+    const both = await screen.findByTestId("kpi-both-properties");
+    expect(pool).toBeInTheDocument();
+    expect(land).toBeInTheDocument();
+    expect(both).toBeInTheDocument();
+    // Confirm the tiles read 0 from ``*_customers_count`` and NOT
+    // 99 from the deprecated ``*_properties_count`` fallbacks.
+    expect(pool.textContent).not.toMatch(/99/);
+    expect(land.textContent).not.toMatch(/99/);
+    expect(both.textContent).not.toMatch(/99/);
   });
 
   it("renders the renamed Customers labels on the property-count tiles (Pool/Landscaping/Both Service)",

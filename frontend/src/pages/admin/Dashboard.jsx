@@ -664,13 +664,26 @@ export default function AdminDashboard() {
                 These three tiles form Row 2 after the Feb-2026
                 reorder (see Active Accounts comment above). Deep-
                 links are preserved verbatim from the previous
-                Pool/Landscaping/Both Services Properties tiles. */}
+                Pool/Landscaping/Both Services Properties tiles.
+
+                Ticket U · Feb-2026 — DATA SOURCE REWIRED.
+                Labels say "Customers" but values were still coming
+                from the property-count fields (16/15/5), which
+                caused a 4× mismatch vs the Customer-list service-
+                category filter (63/37/55). Three tiles now consume
+                ``pool_customers_count`` / ``landscaping_customers_count`` /
+                ``both_customers_count`` from ``/api/dashboard`` and
+                deep-link into ``/customers?service_category=X&is_active=true``
+                so the tile count = list cardinality exactly. Tile
+                testids (``kpi-pool-properties`` etc.) kept intact —
+                they're referenced by locked DOM-order vitest and
+                mobile tests; a rename is a separate sweep. */}
             <KpiCard
               icon={Home}
               label="Pool Customers"
-              value={data.pool_properties_count}
+              value={data.pool_customers_count}
               onClick={() => navigate(
-                "/properties?is_active=true&service_category=pool",
+                "/customers?service_category=pool&is_active=true",
               )}
               testId="kpi-pool-properties"
               tone="sky"
@@ -678,9 +691,9 @@ export default function AdminDashboard() {
             <KpiCard
               icon={Home}
               label="Landscaping Customers"
-              value={data.landscaping_properties_count}
+              value={data.landscaping_customers_count}
               onClick={() => navigate(
-                "/properties?is_active=true&service_category=landscaping",
+                "/customers?service_category=landscaping&is_active=true",
               )}
               testId="kpi-landscaping-properties"
               tone="emerald"
@@ -688,9 +701,9 @@ export default function AdminDashboard() {
             <KpiCard
               icon={Home}
               label="Both Service Customers"
-              value={data.both_properties_count}
+              value={data.both_customers_count}
               onClick={() => navigate(
-                "/properties?is_active=true&service_category=both",
+                "/customers?service_category=both&is_active=true",
               )}
               testId="kpi-both-properties"
               tone="amber"

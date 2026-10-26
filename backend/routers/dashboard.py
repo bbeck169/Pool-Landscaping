@@ -148,11 +148,24 @@ async def dashboard(user: dict = Depends(get_current_user),
     from services.dashboard_customer_category_counts import (
         count_pool_customers,
         count_landscaping_customers,
+        count_both_customers,
     )
     pool_customers_count = await count_pool_customers(
         db=db, tenant_id=tenant["id"],
     )
     landscaping_customers_count = await count_landscaping_customers(
+        db=db, tenant_id=tenant["id"],
+    )
+    # Ticket U · Feb-2026 — "Both Service Customers" tile now
+    # reads this customer-level count instead of the property-
+    # level ``both_properties_count`` it previously rendered
+    # (data-source drift: the three Customers tiles were labelled
+    # "Customers" but still rendering property counts, causing
+    # Dashboard 16/15/5 vs Customer-list filter 63/37/55 mismatch).
+    # Exact-match (not union) — mirrors the list filter at
+    # ``routers/customers.py`` where ``?service_category=both``
+    # returns ONLY the ``both`` cohort.
+    both_customers_count = await count_both_customers(
         db=db, tenant_id=tenant["id"],
     )
 
@@ -373,7 +386,24 @@ async def dashboard(user: dict = Depends(get_current_user),
         # totals exactly.
         "pool_customers_count": pool_customers_count,
         "landscaping_customers_count": landscaping_customers_count,
+        # Ticket U · Feb-2026 — "Both Service Customers" tile.
+        # Mirrors the active-gate + case-insensitive regex used
+        # by the Pool / Landscaping fields above; exact-match on
+        # ``both`` (no union). Deep-linked list is
+        # ``/customers?service_category=both&is_active=true``.
+        "both_customers_count": both_customers_count,
         # ── Feb-2026 · P2 #6 property pivot — property-level counts ──
+        # Rendered as the Active Accounts tile.  The three
+        # ``*_properties_count`` fields BELOW are published for
+        # external automations / shape stability only — the admin
+        # Dashboard "Pool / Landscaping / Both Service Customers"
+        # tiles now consume the ``*_customers_count`` fields
+        # above (Ticket U · Feb-2026).
+        # DEPRECATED 2026-02, remove 2026-05-01 — ``pool_properties_count``,
+        # ``landscaping_properties_count``, ``both_properties_count``.
+        # No FE consumers remain inside this repo post Ticket U;
+        # fields stay in the response for one release window so
+        # external automations / mobile builds keep working.
         # Rendered as the Active Accounts + Pool / Landscaping /
         # Both-services property tiles BELOW the customer-count
         # tiles above.  "Active property" definition (ruling #3,

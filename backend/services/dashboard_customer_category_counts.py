@@ -85,3 +85,22 @@ async def count_landscaping_customers(*, db, tenant_id: str) -> int:
         "$options": "i",
     }
     return await db.customers.count_documents(q)
+
+
+async def count_both_customers(*, db, tenant_id: str) -> int:
+    """Active, non-deleted customers whose ``service_category`` is
+    EXACTLY ``both`` (case-insensitive match).
+
+    Ticket U · Feb-2026 — wired for the "Both Service Customers"
+    dashboard tile.  No union semantics on this one: a ``both``
+    customer counts here AND on both :func:`count_pool_customers`
+    and :func:`count_landscaping_customers`, mirroring the P2 #6
+    customer-list filter ``?service_category=both`` which also
+    returns ONLY the ``both`` cohort.
+    """
+    q = _active_customer_query(tenant_id)
+    q["service_category"] = {
+        "$regex": r"^both$",
+        "$options": "i",
+    }
+    return await db.customers.count_documents(q)
