@@ -2383,3 +2383,12 @@
 - **Checks**: contract suite 6/6; sync suites 45/45; header suites 13/13; tsc 629; eslint 0 errors. Live preview (tech Mike): title scrollWidth == clientWidth at 320 (170/170), 375 (141/141) and 414 (180/180); at 320 sync-route moves into the strip.
 - **Pre-existing failures (not caused by this work)**: 8 schedule suites (colour / tech-filter source checks, map pins, ExpoTaskManager, k32 theme). `schedule-sync-route.test.tsx` runs out of JS heap; it imports no changed file.
 - **Files modified**: mobile/src/services/routeHydrator.ts, mobile/src/services/sync/queue.ts, mobile/src/lib/scheduleHeader.ts (new), mobile/app/(app)/schedule/calendar.tsx, mobile/__tests__/td-mobile-sync-tech-not-linked-contract.test.ts (new), mobile/__tests__/td-mobile-header-layout-cleanup-widths.test.tsx (new), mobile/__tests__/td-mobile-header-layout-cleanup.test.tsx
+
+## Iteration 183 — Mobile parity sweep M2 (Lead Profile, web Z1)
+- **Commits**: `4abbe9003` (Requested Service card + created-at + address line) · `977f4d565` (customer-profile-style notes card, append-only kept) · M2 commit 3 HELD (see below) · this doc commit
+- **Date**: 2026-10-26
+- **Decisions applied**: notes stay append-only (`POST /note`; web's PUT overwrite not ported); inline buttons kept over web's ▾ menus; lead Edit deferred (TD-mobile-lead-edit-form); BB closed N/A (TD-mobile-ai-excel-csv-import-port).
+- **Checks**: lead suites 47/47 (4 td96 + 2 new); tsc 629 after each commit; eslint clean. Live (admin, lead 48ee1b80): requested service "widget submission raw test", address line, "Created 8/26/2026", notes card OK, no overflow or scroll regression.
+- **Held — commit 3 ("Quote sent" label)**: the M1 premise was wrong. The `/communications` aggregator maps `type ← channel` (`lead_communications.py:430`), so quote sends arrive as `type: "email"` and already show "Email", not the raw string. Logged TD-lead-comms-quote-sent-passthrough.
+- **Files modified**: mobile/app/leads/[id].tsx, mobile/src/lib/leadRequestedService.ts (new), mobile/src/components/leads/LeadRequestedServiceCard.tsx (new), mobile/src/components/leads/LeadNotesCard.tsx (new), mobile/__tests__/m2-lead-profile-requested-service.test.tsx (new), mobile/__tests__/m2-lead-notes-card.test.tsx (new)
+- **Web files referenced**: frontend/src/pages/leads/LeadProfile.jsx; backend routers/leads.py (raw-submission), routers/lead_communications.py, routers/quotes.py (read-only)
