@@ -1310,6 +1310,12 @@ api_router.include_router(_portal_seo_admin_router.router)
 # architecture rationale.
 from routers import ai_draft_reply as _ai_draft_reply_router  # noqa: E402
 api_router.include_router(_ai_draft_reply_router.router)
+# Ticket LL · Feb-2026 — AI Rewrite endpoint (operator-facing
+# compose-field polish). Sibling to ai_draft_reply with distinct UX:
+# draft-reply GENERATES from recipient context, rewrite POLISHES
+# an operator-authored draft in-place.
+from routers import ai_rewrite as _ai_rewrite_router  # noqa: E402
+api_router.include_router(_ai_rewrite_router.router)
 
 # Phase 9 · Feb-2026 — LLMs.txt Auto-Publish (Netlify / Vercel / CF Pages).
 from routers import llmstxt_publish as _llmstxt_pub_router  # noqa: E402
