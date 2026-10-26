@@ -173,3 +173,4 @@ yarl==1.24.2
 zipp==4.1.0
 freezegun==1.5.5
 rapidfuzz==3.14.6
+xlrd==2.0.1

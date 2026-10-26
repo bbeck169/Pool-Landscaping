@@ -8,7 +8,7 @@
  *
  * Flow
  * ----
- * 1. Operator picks an ``.xlsx`` or ``.csv`` file.
+ * 1. Operator picks an ``.xlsx``, ``.xls``, or ``.csv`` file.
  * 2. POST ``/api/customers/import-excel/upload`` → preview payload
  *    with per-row ``mapped_fields`` + ``suggested_action`` +
  *    ``match_candidates``.
@@ -56,7 +56,7 @@ async function _uploadFile(file) {
         } else if (detail?.error === "empty_file") {
             msg = "The uploaded file is empty.";
         } else if (detail?.error === "unsupported_file_type") {
-            msg = "Unsupported file type. Upload .xlsx or .csv.";
+            msg = "Unsupported file type. Upload .xlsx, .xls, or .csv.";
         } else if (detail?.error) {
             msg = String(detail.error);
         } else {
@@ -130,7 +130,7 @@ export default function ImportExcelCsvAIModal({
         if (!file) {
             setToast?.({
                 kind: "error",
-                message: "Pick an .xlsx or .csv file first.",
+                message: "Pick an .xlsx, .xls, or .csv file first.",
             });
             return;
         }
@@ -261,7 +261,7 @@ function UploadPrompt({ fileRef, busy, onUpload, onClose }) {
                 className="text-xs mb-4"
                 style={{ color: "#64748B" }}
             >
-                Upload a ``.xlsx`` or ``.csv`` file with any column
+                Upload a ``.xlsx``, ``.xls``, or ``.csv`` file with any column
                 layout.  Our AI will map your columns to the right
                 customer fields, flag duplicates, and let you review
                 every row before any customers are created or updated.
@@ -269,7 +269,7 @@ function UploadPrompt({ fileRef, busy, onUpload, onClose }) {
             <input
                 ref={fileRef}
                 type="file"
-                accept=".xlsx,.csv,text/csv"
+                accept=".xlsx,.xls,.csv,application/vnd.ms-excel,text/csv"
                 data-testid="import-excel-ai-file-input"
                 className="mb-4 block w-full text-sm"
             />

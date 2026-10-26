@@ -5,7 +5,7 @@ AI-powered Excel/CSV customer importer — endpoints:
 
   POST /api/customers/import-excel/upload
       multipart/form-data file field ``file``.
-      Parses xlsx/csv, maps each row via the LLM, probes dupes,
+      Parses xlsx/xls/csv, maps each row via the LLM, probes dupes,
       stashes preview in-memory under a ``batch_id``.
       Returns ``{batch_id, preview, stats, headers, ai_providers}``.
 

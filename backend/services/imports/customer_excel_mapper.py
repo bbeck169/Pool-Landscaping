@@ -9,7 +9,8 @@ list of normalised row dicts.
 
 Scope
 -----
-- Supported inputs: ``.xlsx`` (openpyxl) and ``.csv`` (stdlib csv).
+- Supported inputs: ``.xlsx`` (openpyxl), ``.xls`` (xlrd, legacy
+  Excel 97-2003 binary — Ticket BB Feb-2026), and ``.csv`` (stdlib csv).
 - Row cap: 5000 rows per upload (operator Ticket V Part 2 — raised
   from the Ticket R 2000 baseline).
 - Target customer fields (admin-common subset only — out-of-scope
@@ -161,6 +162,8 @@ def parse_file(
     lower = (filename or "").lower()
     if lower.endswith(".xlsx"):
         return _parse_xlsx(file_bytes)
+    if lower.endswith(".xls"):
+        return _parse_xls(file_bytes)
     if lower.endswith(".csv"):
         return _parse_csv(file_bytes)
     # Try CSV first as a fallback for text/plain uploads with no
@@ -216,6 +219,61 @@ def _parse_xlsx(file_bytes: bytes) -> Tuple[List[str], List[ParsedRow]]:
             cells[header] = str(v).strip()
         if cells:
             parsed.append(ParsedRow(row_num=idx, raw_cells=cells))
+    return headers, parsed
+
+
+def _parse_xls(file_bytes: bytes) -> Tuple[List[str], List[ParsedRow]]:
+    """Ticket BB · Feb-2026 — legacy Excel 97-2003 (.xls) parser.
+
+    Routes the upload through ``xlrd==2.0.1`` which is read-only
+    and .xls-only (xlrd dropped .xlsx support in 2.0+ which is
+    why pandas no longer bundles it).  Mirrors ``_parse_xlsx``'s
+    header + blank-row + trailing-empty-column handling.
+    """
+    try:
+        import xlrd  # noqa: PLC0415
+    except Exception as exc:  # pragma: no cover
+        raise ValueError(f"xlrd_import_failed: {exc}") from exc
+    try:
+        wb = xlrd.open_workbook(file_contents=file_bytes)
+    except Exception as exc:
+        raise ValueError(f"xls_parse_failed: {str(exc)[:200]}") from exc
+    if wb.nsheets == 0:
+        raise ValueError("xls_empty")
+    ws = wb.sheet_by_index(0)
+    if ws.nrows == 0:
+        raise ValueError("xls_empty")
+    header_row = ws.row_values(0)
+    headers = [
+        str(h).strip() if not _is_blank(h) else f"col_{i + 1}"
+        for i, h in enumerate(header_row)
+    ]
+    while headers and headers[-1].startswith("col_"):
+        headers.pop()
+    if not headers:
+        raise ValueError("xls_no_headers")
+    parsed: List[ParsedRow] = []
+    for r_idx in range(1, ws.nrows):
+        raw = ws.row_values(r_idx)
+        if all(_is_blank(v) for v in raw):
+            continue
+        cells: Dict[str, str] = {}
+        for h_idx, header in enumerate(headers):
+            if h_idx >= len(raw):
+                continue
+            v = raw[h_idx]
+            if _is_blank(v):
+                continue
+            # xlrd returns floats for all numeric cells including
+            # integers.  Normalise "1234.0" → "1234" so a CSV- or
+            # xlsx-authored row with the same integer value lands
+            # identically through the mapper.
+            if isinstance(v, float) and v.is_integer():
+                cells[header] = str(int(v))
+            else:
+                cells[header] = str(v).strip()
+        if cells:
+            parsed.append(ParsedRow(row_num=r_idx + 1, raw_cells=cells))
     return headers, parsed
 
 

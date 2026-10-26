@@ -94,6 +94,69 @@ describe("ImportExcelCsvAIModal · mount gating", () => {
 // §2 — Upload flow
 // ═══════════════════════════════════════════════════════════════════
 describe("ImportExcelCsvAIModal · upload", () => {
+    // Ticket BB · Feb-2026 — ``.xls`` is now in the whitelist
+    // alongside ``.xlsx`` + ``.csv``.
+    it("accept attribute includes .xls / .xlsx / .csv + their MIMEs",
+       () => {
+        render(<ImportExcelCsvAIModal open={true} setToast={() => {}} />);
+        const input = screen.getByTestId("import-excel-ai-file-input");
+        const accept = input.getAttribute("accept") || "";
+        expect(accept).toMatch(/\.xlsx/);
+        expect(accept).toMatch(/\.xls(?!x)/);  // .xls literal, not inside .xlsx
+        expect(accept).toMatch(/\.csv/);
+        expect(accept).toMatch(/application\/vnd\.ms-excel/);
+        expect(accept).toMatch(/text\/csv/);
+    });
+
+    it("user-facing copy mentions .xls as an accepted type", () => {
+        render(<ImportExcelCsvAIModal open={true} setToast={() => {}} />);
+        // Help copy (dropzone paragraph).
+        expect(document.body.textContent).toMatch(/\.xls/i);
+    });
+
+    it("accepts an .xls file and reaches preview (no 'pick a file' " +
+       "toast)", async () => {
+        _mockFetchOnceOk({
+            batch_id: "batch-xls",
+            preview: [{
+                row_num: 2,
+                raw_cells: { Name: "Alice" },
+                mapped_fields: { name: "Alice" },
+                match_status: "no_match",
+                match_candidates: [],
+                suggested_action: "create",
+            }],
+            stats: {
+                rows_total: 1, rows_create: 1,
+                rows_attach: 0, rows_skip: 0, rows_errored: 0,
+            },
+            headers: ["Name"],
+            ai_providers: { emergent: 1 },
+        });
+        const toastSpy = vi.fn();
+        render(<ImportExcelCsvAIModal
+                     open={true}
+                     setToast={toastSpy} />);
+        const file = new File(["\x00"], "legacy.xls",
+                                 { type: "application/vnd.ms-excel" });
+        const input = screen.getByTestId("import-excel-ai-file-input");
+        Object.defineProperty(input, "files", { value: [file] });
+        fireEvent.change(input);
+        fireEvent.click(
+            screen.getByTestId("import-excel-ai-upload-submit"),
+        );
+        await waitFor(() => {
+            expect(
+                screen.getByTestId("import-excel-ai-preview-table"),
+            ).toBeInTheDocument();
+        });
+        // No "pick a file" error toast on an .xls selection.
+        expect(toastSpy).not.toHaveBeenCalledWith(expect.objectContaining({
+            kind: "error",
+            message: expect.stringMatching(/pick an .*file/i),
+        }));
+    });
+
     it("blocks upload when no file selected (toast error)", () => {
         const toastSpy = vi.fn();
         render(
