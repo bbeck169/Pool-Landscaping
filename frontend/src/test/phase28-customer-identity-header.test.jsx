@@ -172,14 +172,16 @@ describe("Phase 28 · regression locks — Phase 20 / 22 / 27 contracts preserve
       expect(idx, `Phase-20 testid out of order: ${id}`).toBeGreaterThan(cursor);
       cursor = idx;
     }
-    // The ``CustomerActionDropdowns`` component tag + the
-    // ``ResponsiveTabs`` component tag still live inside the
-    // cd-tabs-row block.
+    // The ``ResponsiveTabs`` component tag still lives inside the
+    // cd-tabs-row block.  Ticket HH · Feb-2026 —
+    // ``<CustomerActionDropdowns>`` was lifted OUT of the
+    // cd-tabs-row and into the identity header
+    // (``cd-identity-header-actions`` slot above the H1 name).
     const tabsRowIdx = SRC.indexOf('data-testid="cd-tabs-row"');
     const tabsRowEnd = SRC.indexOf(
       "{/* Feb-2026 · Tabs — the standalone", tabsRowIdx);
     const tabsRowSlice = SRC.slice(tabsRowIdx, tabsRowEnd);
-    expect(tabsRowSlice).toContain("<CustomerActionDropdowns");
+    expect(tabsRowSlice).not.toContain("<CustomerActionDropdowns");
     expect(tabsRowSlice).toContain("<ResponsiveTabs");
   });
 

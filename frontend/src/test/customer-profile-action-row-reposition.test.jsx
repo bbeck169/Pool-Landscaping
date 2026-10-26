@@ -97,21 +97,34 @@ describe("Phase 20 · action row is full-width and dedicated to actions", () => 
     expect(actionBlock).not.toContain("<CustomerActionDropdowns");
   });
 
-  it("cd-tabs-row hosts both the Send/Create wrapper AND the Overview dropdown", () => {
+  it("cd-tabs-row hosts the Overview dropdown ONLY; Send/Create/Portal moved to identity header (Ticket HH)", () => {
     // Phase 28 · Feb-2026 — ``{/* Header card */}`` was moved
     // ABOVE cd-tabs-row.  Use the next sibling sentinel —
     // ``{/* Feb-2026 · Tabs — the standalone`` — to bound the
-    // tabs-row block.  The ``<CustomerActionDropdowns`` + the
-    // ``cd-tabs-dropdown-shell`` must still live inside this
-    // bounded region.
+    // tabs-row block.
+    //
+    // Ticket HH · Feb-2026 — ``<CustomerActionDropdowns>`` was
+    // relocated from the tabs-row into the identity header
+    // (``cd-identity-header-actions`` slot above the H1 name).
+    // The tabs-row now carries ONLY the Overview tabs dropdown.
     const tabsRowIdx = SRC.indexOf('data-testid="cd-tabs-row"');
     const nextSiblingIdx = SRC.indexOf(
       "{/* Feb-2026 · Tabs — the standalone", tabsRowIdx);
     expect(tabsRowIdx).toBeGreaterThan(-1);
     expect(nextSiblingIdx).toBeGreaterThan(tabsRowIdx);
     const tabsBlock = SRC.slice(tabsRowIdx, nextSiblingIdx);
-    expect(tabsBlock).toContain("<CustomerActionDropdowns");
+    expect(tabsBlock).not.toContain("<CustomerActionDropdowns");
     expect(tabsBlock).toContain('data-testid="cd-tabs-dropdown-shell"');
+    // Positive HH lock — the dropdowns live inside the identity
+    // header slice now, between the pill row and the H1.
+    const idHeaderIdx = SRC.indexOf('data-testid="cd-identity-header"');
+    const h1Idx = SRC.indexOf(
+      'data-testid="customer-detail-inline-h1"', idHeaderIdx);
+    expect(idHeaderIdx).toBeGreaterThan(-1);
+    expect(h1Idx).toBeGreaterThan(idHeaderIdx);
+    const idSlice = SRC.slice(idHeaderIdx, h1Idx);
+    expect(idSlice).toContain('data-testid="cd-identity-header-actions"');
+    expect(idSlice).toContain("<CustomerActionDropdowns");
   });
 
   it("action row has NO flex-1 spacer — left-aligned buttons by natural flex order", () => {

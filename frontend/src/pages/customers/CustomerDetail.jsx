@@ -1554,6 +1554,28 @@ export default function CustomerDetail() {
                 onError={(msg) => setToast({ tone: "error", message: msg })}
               />
             </div>
+            {/* Ticket HH · Feb-2026 — Send / + Create / Portal Access
+                dropdowns relocated from the cd-tabs-row (below the
+                Edit/Merge/Delete command strip) into the identity
+                card, between the pill row above and the H1 name
+                heading below.  Pure DOM-order move: same component,
+                same props, same handlers, same testids, same styling
+                (``navy`` prop preserved).  See
+                ``TD-gg-customer-quicktask-dropdown-orphaned`` for the
+                still-outstanding Quick Task opener-registration
+                debt — unrelated to this move. */}
+            <div
+              className="mt-3"
+              data-testid="cd-identity-header-actions"
+            >
+              <CustomerActionDropdowns
+                customer={customer}
+                onSend={openSendModal}
+                onQuickTask={openQuickTaskFromDropdown}
+                onSendServiceRecordsLink={() => setSrLinkOpen(true)}
+                navy
+              />
+            </div>
             {/* Feb-2026 · Customer name relocated INTO the identity
                 card (was rendered at page-chrome level via
                 PageHeader).  Sits directly above the address line
@@ -2064,14 +2086,14 @@ export default function CustomerDetail() {
               className="flex flex-row flex-nowrap items-center gap-2 overflow-x-auto"
               data-testid="cd-tabs-row"
             >
-              {/* Left group — Send / Create / Overview. */}
-              <CustomerActionDropdowns
-                customer={customer}
-                onSend={openSendModal}
-                onQuickTask={openQuickTaskFromDropdown}
-                onSendServiceRecordsLink={() => setSrLinkOpen(true)}
-                navy
-              />
+              {/* Ticket HH · Feb-2026 — the Send / + Create /
+                  Portal Access dropdowns were relocated to the
+                  identity card (above the H1 name heading).  The
+                  tabs-row now carries ONLY the Overview tab
+                  dropdown; the left-group slot stays as an empty
+                  spacer-free flex container so ResponsiveTabs sits
+                  at its historical gap offset without a visual
+                  jump. */}
               <div
                 style={{ minWidth: 220 }}
                 data-testid="cd-tabs-dropdown-shell"
