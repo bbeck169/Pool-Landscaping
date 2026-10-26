@@ -455,7 +455,14 @@ export function AutoBilling() {
   const [toast, setToast] = useState("");
   const [showNew, setShowNew] = useState(false);
   const [customers, setCustomers] = useState([]);
-  const [newPlan, setNewPlan] = useState({ customer_id: "", service: "Monthly Pool Service", frequency: "monthly", amount: 150, next_run: "", run_schedule: "first_of_month" });
+  // Ticket II · Feb-2026 — Auto-Billing New Plan modal picks the
+  // Service via a searchable pricebook combobox.  State is lifted
+  // to the AutoBilling component so the fetch piggybacks on the
+  // existing ``showNew`` toggle (one network call per open).
+  const [pricebookItems, setPricebookItems] = useState([]);
+  const [pricebookQ, setPricebookQ] = useState("");
+  const [pricebookOpen, setPricebookOpen] = useState(false);
+  const [newPlan, setNewPlan] = useState({ customer_id: "", service: "Monthly Pool Service", frequency: "monthly", amount: 150, next_run: "", run_schedule: "first_of_month", pricebook_item_id: null });
   // Phase 34 · Task II · Feb 2026 — bulk-select state for the
   // Autobilling admin surface. Same UX pattern as Invoices / Estimates /
   // Payments / Leads. Stripe-subscription lock is enforced server-side;
@@ -477,6 +484,15 @@ export function AutoBilling() {
   useEffect(() => {
     if (!showNew) return;
     api.get("/customers?is_active=true").then((r) => setCustomers(Array.isArray(r) ? r : [])).catch(() => {});
+    // Ticket II · Feb-2026 — load the pricebook catalogue alongside
+    // the customer list so the combobox below has data on first
+    // render.  Shared /pricebook-items endpoint (used by the Jobs
+    // LineItemsEditor); the admin role is already enforced by the
+    // AutoBilling page gate so no extra check needed here.
+    api.get("/pricebook-items?active=true").then((r) => {
+      const items = (r && Array.isArray(r.items)) ? r.items : [];
+      setPricebookItems(items);
+    }).catch(() => setPricebookItems([]));
   }, [showNew]);
 
   const nextRun = useMemo(() => {
@@ -518,7 +534,9 @@ export function AutoBilling() {
     try {
       await api.post("/billing-plans", newPlan);
       setShowNew(false);
-      setNewPlan({ customer_id: "", service: "Monthly Pool Service", frequency: "monthly", amount: 150, next_run: "", run_schedule: "first_of_month" });
+      setNewPlan({ customer_id: "", service: "Monthly Pool Service", frequency: "monthly", amount: 150, next_run: "", run_schedule: "first_of_month", pricebook_item_id: null });
+      setPricebookQ("");
+      setPricebookOpen(false);
       setToast("Plan created");
       load();
     } catch (e) { setToast(e.message); }
@@ -814,6 +832,81 @@ export function AutoBilling() {
               testid="new-plan-customer"
               placeholder="Select customer…"
             />
+            {/* Ticket II · Feb-2026 — Pricebook combobox replaces the
+                pre-II free-text Service input.  Operator searches the
+                catalogue; selection auto-fills ``service`` (name) +
+                ``amount`` (unit_price) + ``pricebook_item_id``.  The
+                Service input below stays mounted + editable so the
+                operator can override the label free-text if needed;
+                the Amount input (unchanged below) is likewise still
+                editable per operator spec. */}
+            <div className="relative" data-testid="new-plan-pricebook-wrap">
+              <input
+                value={pricebookQ}
+                onFocus={() => setPricebookOpen(true)}
+                onChange={(e) => { setPricebookQ(e.target.value); setPricebookOpen(true); }}
+                className="w-full px-3 py-2 rounded-lg text-sm"
+                style={{ backgroundColor: colors.surfaceSecondary, border: `1px solid ${colors.border}`, color: colors.onSurface }}
+                placeholder={newPlan.pricebook_item_id ? "Change pricebook item…" : "Search pricebook…"}
+                data-testid="new-plan-pricebook-search"
+              />
+              {newPlan.pricebook_item_id ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNewPlan({ ...newPlan, pricebook_item_id: null });
+                    setPricebookQ("");
+                    setPricebookOpen(false);
+                  }}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-xs px-2 py-0.5 rounded"
+                  style={{ backgroundColor: colors.surfaceSecondary, color: colors.muted, border: `1px solid ${colors.border}` }}
+                  data-testid="new-plan-pricebook-clear"
+                  aria-label="Clear pricebook selection"
+                >
+                  Clear
+                </button>
+              ) : null}
+              {pricebookOpen && pricebookItems.length > 0 ? (
+                <div
+                  className="absolute left-0 right-0 mt-1 max-h-56 overflow-y-auto rounded-lg z-10"
+                  style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
+                  data-testid="new-plan-pricebook-dropdown"
+                >
+                  {pricebookItems
+                    .filter((it) => {
+                      const q = pricebookQ.trim().toLowerCase();
+                      if (!q) return true;
+                      const hay = `${it.name || ""} ${it.category || ""}`.toLowerCase();
+                      return hay.includes(q);
+                    })
+                    .slice(0, 50)
+                    .map((it) => (
+                      <button
+                        type="button"
+                        key={it.id}
+                        onClick={() => {
+                          setNewPlan({
+                            ...newPlan,
+                            service: it.name || "",
+                            amount: Number(it.unit_price) || 0,
+                            pricebook_item_id: it.id,
+                          });
+                          setPricebookQ(it.name || "");
+                          setPricebookOpen(false);
+                        }}
+                        className="block w-full text-left px-3 py-2 text-sm hover:brightness-110"
+                        style={{ backgroundColor: colors.surface, color: colors.onSurface, borderBottom: `1px solid ${colors.divider}` }}
+                        data-testid={`new-plan-pricebook-opt-${it.id}`}
+                      >
+                        <div className="font-semibold">{it.name || "—"}</div>
+                        <div className="text-xs" style={{ color: colors.muted }}>
+                          {it.category || "—"} · ${Number(it.unit_price || 0).toFixed(2)}
+                        </div>
+                      </button>
+                    ))}
+                </div>
+              ) : null}
+            </div>
             <input value={newPlan.service}
                    onChange={(e) => setNewPlan({ ...newPlan, service: e.target.value })}
                    className="w-full px-3 py-2 rounded-lg text-sm"
