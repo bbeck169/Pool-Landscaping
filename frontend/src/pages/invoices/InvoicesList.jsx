@@ -26,7 +26,18 @@ import { formatRelativeFromIso } from "@/lib/relativeTime";
 // `Import #<N>`; portal / customer tile uses the sibling
 // `resolvePortalInvoiceTitle` which falls back to neutral
 // `"Invoice"`).
-import { resolveImportedInvoiceTitleFromLineItem } from "@/lib/portalInvoiceTitle";
+// Ticket FF · Feb-2026 — surface 2 (main admin cross-customer
+// Invoices list) light-touch update.  Title source migrates from
+// the TD-94 ``resolveImportedInvoiceTitleFromLineItem`` resolver
+// (which only rewrote the ``Import #<n>`` title pattern) to the
+// shared ``getInvoiceDisplayTitle`` which, post-FF case-reorder
+// (Commit A), prefers ``line_items[0].item_name`` / ``.name``
+// retroactively on ALL invoices — not just imported ones.  The
+// ``Import #<n>`` traceability intent documented by TD-94 §4 is
+// explicitly reversed per Ticket FF operator spec (retroactive on
+// all invoices including imports).
+import { getInvoiceDisplayTitle } from "@/utils/invoiceTitle";
+import { getInvoiceStatusTone } from "@/utils/invoiceStatusTone";
 // QUOTES-SUMMARY · Feb-2026 — shared summary card extracted from
 // this page's former inline helper into ``components/SummaryTile.jsx``
 // so QuotesList (and future admin surfaces) can render matching
@@ -1032,7 +1043,7 @@ export default function InvoicesList() {
                 </th>
                 <_SortableTh label="Invoice #" col="invoice_number" sort={sort} setSort={setSort} />
                 <_SortableTh label="Invoice"   col="title"          sort={sort} setSort={setSort} />
-                <_SortableTh label="Customer"  col="customer_name"  sort={sort} setSort={setSort} className="hidden md:table-cell" />
+                <_SortableTh label="Customer"  col="customer_name"  sort={sort} setSort={setSort} />
                 <_SortableTh label="Due"       col="due_date"       sort={sort} setSort={setSort} className="hidden lg:table-cell" />
                 <_SortableTh label="Amount"    col="total"          sort={sort} setSort={setSort} align="right" />
                 {/* Phase K47 · Feb-2026 — "Viewed" indicator column
@@ -1067,8 +1078,8 @@ export default function InvoicesList() {
                     />
                   </td>
                   <td className="px-3 py-3 font-mono text-xs" style={{ color: colors.onSurface }} data-testid={`invoice-number-${r.id}`} onClick={() => navigate(`/invoices/${r.id}`)}>{r.invoice_number || "—"}</td>
-                  <td className="px-3 py-3 font-semibold" style={{ color: colors.onSurface }} onClick={() => navigate(`/invoices/${r.id}`)} data-testid={`invoice-row-title-${r.id}`}>{resolveImportedInvoiceTitleFromLineItem(r)}</td>
-                  <td className="px-3 py-3 hidden md:table-cell" style={{ color: colors.onSurfaceSecondary }} onClick={() => navigate(`/invoices/${r.id}`)} data-testid={`invoice-row-customer-${r.id}`}><CustomerLink customerId={r.customer_id} name={formatCustomerName(r)} /></td>
+                  <td className="px-3 py-3 font-semibold" style={{ color: colors.onSurface }} onClick={() => navigate(`/invoices/${r.id}`)} data-testid={`invoice-row-title-${r.id}`}>{getInvoiceDisplayTitle(r) || "—"}</td>
+                  <td className="px-3 py-3" style={{ color: colors.onSurfaceSecondary }} onClick={() => navigate(`/invoices/${r.id}`)} data-testid={`invoice-row-customer-${r.id}`}><CustomerLink customerId={r.customer_id} name={formatCustomerName(r)} /></td>
                   <td className="px-3 py-3 hidden lg:table-cell" style={{ color: colors.onSurfaceSecondary }} onClick={() => navigate(`/invoices/${r.id}`)}>{r.due_date || "—"}</td>
                   <td className="px-3 py-3 text-right font-semibold" style={{ color: colors.onSurface }} onClick={() => navigate(`/invoices/${r.id}`)}>{money(r.total)}</td>
                   {/* Phase K47 · Feb-2026 — Viewed indicator.
@@ -1103,10 +1114,15 @@ export default function InvoicesList() {
                       : <span className="text-xs" style={{ color: colors.muted }}>—</span>}
                   </td>
                   <td className="px-3 py-3 text-right" onClick={() => navigate(`/invoices/${r.id}`)}>
-                    <Chip
-                      label={r.payment_status || "unpaid"}
-                      tone={r.payment_status === "paid" ? "success" : r.payment_status === "partial" ? "warning" : "danger"}
-                    />
+                    {(() => {
+                      // Ticket FF · Feb-2026 — status badge color
+                      // migrated to the shared ``getInvoiceStatusTone``
+                      // mapper so this surface tracks the admin
+                      // tab + portal uniformly.  Draft → red,
+                      // paid → green, unpaid → red, else neutral.
+                      const { tone, label } = getInvoiceStatusTone(r);
+                      return <Chip label={label} tone={tone} />;
+                    })()}
                   </td>
                 </tr>
               ))}
