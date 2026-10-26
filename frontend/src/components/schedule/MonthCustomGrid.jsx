@@ -34,26 +34,31 @@ import {
 } from "date-fns";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { colors } from "@/theme";
+// Ticket X · Feb-2026 — MISSED → OPEN inline action on each
+// Schedule surface's card. ``MarkOpenAction`` is self-contained
+// (owns its own API call + optimistic patch + toast + undo).
+// MonthCustomGrid only has to pass through ``job`` + ``onPatch``.
+import MarkOpenAction from "@/components/schedule/MarkOpenAction";
 
 
 const WEEKDAY_HEADERS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const CARD_PREVIEW_LIMIT = 3;
 
 
-function MonthCard({ event, statusColors, onSelectEvent, testId }) {
+function MonthCard({ event, statusColors, onSelectEvent, testId,
+                     onPatchJob }) {
   const job = (event && event.resource && event.resource.job) || {};
   const status = (job.status || "scheduled").toLowerCase();
   const borderColor = statusColors[status] || "#64748B";
   const customerName = job.customer_name || "";
   const jobName = job.service_type || event?.title || "Job";
   return (
-    <button
-      type="button"
-      onClick={() => onSelectEvent && onSelectEvent(event)}
+    <div
       data-testid={testId}
       data-status={status}
       data-status-color={borderColor}
-      className="w-full text-left rounded px-1.5 py-1 text-[11px] leading-tight transition hover:brightness-95"
+      onClick={() => onSelectEvent && onSelectEvent(event)}
+      className="w-full rounded px-1.5 py-1 text-[11px] leading-tight transition hover:brightness-95 cursor-pointer"
       style={{
         borderLeft: `3px solid ${borderColor}`,
         backgroundColor: colors.surface,
@@ -77,13 +82,30 @@ function MonthCard({ event, statusColors, onSelectEvent, testId }) {
       >
         {customerName || "—"}
       </div>
-    </button>
+      {/* Ticket X · Feb-2026 — MISSED-only inline action. The
+          component self-returns null for non-missed jobs so the
+          non-missed card chrome is byte-identical to the pre-
+          Ticket-X cards (zero visual churn on the common path).
+          MarkOpenAction stops propagation on its own click so a
+          Mark-open click never also fires the parent-card
+          ``onSelectEvent`` (regression-locked in the vitest). */}
+      {status === "missed" && onPatchJob ? (
+        <div className="mt-1">
+          <MarkOpenAction
+            job={job}
+            onPatch={onPatchJob}
+            size="xs"
+            testIdSuffix={`month-${job.id}`}
+          />
+        </div>
+      ) : null}
+    </div>
   );
 }
 
 
 function MoreVisitsPopover({
-  events, dayKey, statusColors, onSelectEvent, onClose,
+  events, dayKey, statusColors, onSelectEvent, onClose, onPatchJob,
 }) {
   return (
     <div
@@ -121,6 +143,7 @@ function MoreVisitsPopover({
             if (onSelectEvent) onSelectEvent(e);
             onClose();
           }}
+          onPatchJob={onPatchJob}
           testId={`month-popover-card-${dayKey}-${i}`}
         />
       ))}
@@ -131,7 +154,7 @@ function MoreVisitsPopover({
 
 export default function MonthCustomGrid({
   date, events, onNavigate, onSelectEvent, onViewChange,
-  statusColors,
+  statusColors, onPatchJob,
 }) {
   const [popoverDay, setPopoverDay] = useState(null);
 
@@ -332,6 +355,7 @@ export default function MonthCustomGrid({
                         event={ev}
                         statusColors={statusColors}
                         onSelectEvent={onSelectEvent}
+                        onPatchJob={onPatchJob}
                         testId={`month-card-${dayKey}-${i}`}
                       />
                     ))}
@@ -363,6 +387,7 @@ export default function MonthCustomGrid({
                       dayKey={dayKey}
                       statusColors={statusColors}
                       onSelectEvent={onSelectEvent}
+                      onPatchJob={onPatchJob}
                       onClose={() => setPopoverDay(null)}
                     />
                   ) : null}

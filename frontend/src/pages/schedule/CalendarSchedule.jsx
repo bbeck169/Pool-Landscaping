@@ -98,6 +98,11 @@ import ScheduleRefreshButton from "@/components/schedule/ScheduleRefreshButton";
 // within ``mode="calendar" && view="month"``. See the component
 // module docstring for scope + drag-less rationale.
 import MonthCustomGrid from "@/components/schedule/MonthCustomGrid";
+// Ticket X · Feb-2026 — MISSED → OPEN inline action, rendered on
+// every Schedule surface (GridPanel route-planner rows,
+// MonthCustomGrid cells, RBC Agenda rows). Self-contained — holds
+// its own API call + optimistic patch + sonner toast with Undo.
+import MarkOpenAction from "@/components/schedule/MarkOpenAction";
 import { CustomerLink, AddressLink } from "@/components/customer";
 // Feb-2026 · numbered-order reorder — the ScheduleDayDnDPanel import
 // was removed as part of the DnD → numbered-input pivot.  The number
@@ -2214,6 +2219,7 @@ export default function CalendarSchedule() {
             onSelectEvent={onSelectEvent}
             onViewChange={(v) => { setView(v); setParam("view", v); }}
             statusColors={STATUS_COLORS}
+            onPatchJob={patchJobInPlace}
           />
         ) : (
         <DnDCalendar
@@ -2236,6 +2242,33 @@ export default function CalendarSchedule() {
           draggableAccessor={isDraggable}
           resizable={false}
           popup
+          components={{
+            // Ticket X · Feb-2026 — custom Agenda event row so a
+            // MarkOpenAction renders next to the title on MISSED
+            // rows. MarkOpenAction self-returns null for non-missed
+            // events, so non-missed rows render visually unchanged
+            // from the pre-Ticket-X Agenda layout.
+            agenda: {
+              event: ({ event }) => {
+                const job = (event && event.resource
+                             && event.resource.job) || {};
+                return (
+                  <span
+                    className="inline-flex items-center gap-2"
+                    data-testid={`agenda-event-${event?.id || "x"}`}
+                  >
+                    <span>{event?.title || "Job"}</span>
+                    <MarkOpenAction
+                      job={job}
+                      onPatch={patchJobInPlace}
+                      size="xs"
+                      testIdSuffix={`agenda-${job?.id || event?.id}`}
+                    />
+                  </span>
+                );
+              },
+            },
+          }}
           formats={{
             timeGutterFormat: () => "",
             eventTimeRangeFormat: () => "",
@@ -2273,6 +2306,7 @@ export default function CalendarSchedule() {
           onSelectAllInView={selectAllInView}
           onBulkNavigateRoute={doBulkNavigateRoute}
           canMultiSelectAssign={canMultiSelectAssign}
+          onPatchJob={patchJobInPlace}
           onOpenBulkAssign={(techId) => {
             setAssignPickedTechId(techId);
             setAssignConfirmOpen(true);
@@ -2586,6 +2620,12 @@ export function GridPanel({
   canClickCustomerName = false,
   // Feb-2026 · Phase 1 — Could-Not-Service modal opener.
   onOpenCouldNotService,
+  // Ticket X · Feb-2026 — in-place job patcher wiring for the
+  // MarkOpenAction (MISSED → OPEN). GridPanel is also mounted
+  // directly from Vitest with no parent patcher — the component
+  // is a no-op when ``onPatchJob`` is undefined so tests stay
+  // green without ``MarkOpenAction`` plumbing.
+  onPatchJob,
   // Feb-2026 · numbered-order reorder — the day's ordering
   // controller (drives inline inputs) + bulk-modal opener + the id
   // set that is actually reorderable (non-terminal only).
@@ -3262,6 +3302,18 @@ export function GridPanel({
                           Component self-disables when neither
                           ``service_address`` nor ``address`` resolve. */}
                       <NavigateMapsButton job={j} />
+                      {/* Ticket X · Feb-2026 — MISSED-only inline
+                          action. Self-returns null for non-missed
+                          jobs so the common action strip renders
+                          byte-identical to the pre-Ticket-X layout. */}
+                      {onPatchJob ? (
+                        <MarkOpenAction
+                          job={j}
+                          onPatch={onPatchJob}
+                          size="sm"
+                          testIdSuffix={`grid-${j.id}`}
+                        />
+                      ) : null}
                     </div>
                   )}
                 </div>
