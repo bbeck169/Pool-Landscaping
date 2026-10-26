@@ -75,6 +75,18 @@ function _nonEmpty(raw) {
 }
 
 
+// Feb-2026 · Ticket FF revised order — operator wants first line
+// item name to take priority over invoice.title; this helper's case
+// ordering (and the ``retroactive`` promise) rewired in the Ticket
+// FF reorder.
+// Ticket JJ · Feb-2026 — every string returned by this helper is
+// passed through ``stripHtmlToPlainText`` so legacy pricebook
+// imports that leaked ``<p>`` / ``<li>`` into line-item fields
+// never surface tags on any invoice-list surface (admin tab,
+// portal, main admin list, overview recent-invoices).  The helper
+// is pure + idempotent on already-clean input.
+import stripHtmlToPlainText from "@/utils/stripHtmlToPlainText";
+
 /**
  * Return a user-facing title string for the given invoice.
  *
@@ -91,21 +103,21 @@ export function getInvoiceDisplayTitle(invoice) {
   if (first) {
     // 1. line_items[0].item_name — canonical "Item" column.
     const itemName = _nonEmpty(first.item_name);
-    if (itemName) return itemName;
+    if (itemName) return stripHtmlToPlainText(itemName);
 
     // 2. line_items[0].name — shorter-schema fallback (6%).
     const name = _nonEmpty(first.name);
-    if (name) return name;
+    if (name) return stripHtmlToPlainText(name);
   }
 
   // 3. invoice.title set → verbatim.
   const title = _nonEmpty(invoice.title);
-  if (title) return invoice.title;
+  if (title) return stripHtmlToPlainText(invoice.title);
 
   if (first) {
     // 4. line_items[0].description truncated — legacy path (94%).
     const desc = _nonEmpty(first.description);
-    if (desc) return _truncate(desc);
+    if (desc) return _truncate(stripHtmlToPlainText(desc));
   }
 
   // 5. Terminal — blank.
