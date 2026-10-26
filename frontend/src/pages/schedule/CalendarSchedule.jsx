@@ -94,6 +94,10 @@ import { useNumberedOrder, NumberOrderInput, ReorderBanner, ReorderErrorBanner, 
 // Feb-2026 · Batch #4 · Item 3 (continuation) — shared refresh
 // button used by every schedule surface (month/agenda/grid + Today).
 import ScheduleRefreshButton from "@/components/schedule/ScheduleRefreshButton";
+// Ticket W · Feb-2026 — custom Month grid replaces RBC month view
+// within ``mode="calendar" && view="month"``. See the component
+// module docstring for scope + drag-less rationale.
+import MonthCustomGrid from "@/components/schedule/MonthCustomGrid";
 import { CustomerLink, AddressLink } from "@/components/customer";
 // Feb-2026 · numbered-order reorder — the ScheduleDayDnDPanel import
 // was removed as part of the DnD → numbered-input pivot.  The number
@@ -2193,6 +2197,25 @@ export default function CalendarSchedule() {
             Scrollable when many techs. Only rendered when at least
             one active tech has a color (explicit or hashed fallback). */}
         <TechColorLegend techs={techs} techColorMap={techColorMap} crews={crews} />
+        {/* Ticket W · Feb-2026 — custom Month grid for
+            ``view="month"`` (operator Option α). RBC Agenda remains
+            the implementation for ``view="agenda"``.  mode="grid"
+            (route-planner, below) and the drag-and-drop RBC Agenda
+            posture are both untouched.  The custom grid is DRAG-
+            LESS by design (regression-locked by vitest). */}
+        {view === "month" ? (
+          <MonthCustomGrid
+            date={date}
+            events={events}
+            onNavigate={(d) => {
+              setDate(d);
+              setParam("date", format(d, "yyyy-MM-dd"));
+            }}
+            onSelectEvent={onSelectEvent}
+            onViewChange={(v) => { setView(v); setParam("view", v); }}
+            statusColors={STATUS_COLORS}
+          />
+        ) : (
         <DnDCalendar
           localizer={localizer}
           events={events}
@@ -2220,6 +2243,7 @@ export default function CalendarSchedule() {
             agendaTimeRangeFormat: () => "",
           }}
         />
+        )}
       </div>
       ) : (
         <GridPanel
