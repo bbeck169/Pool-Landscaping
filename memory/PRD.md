@@ -114,6 +114,13 @@ Mobile parity for the web Templates Library (backend `/api/templates/*` + web un
   flushed in 7.0 s, "Saved HH:MM:SS", server title = offline edit → finalize 200 → PDF 200. Smoke instance deleted.
   Note: the dismissible finalize-blocked banner stays visible after sync until closed or Finalize is tapped again (cosmetic, left as is).
   No external repo cloned.
+- **Re-verified 2026-10-27 at cc8858980 (no code changes):** no Templates Library web/BE/mobile commits since
+  b9e4d8f18 (the only `*templat*` hits are email/comms templates). Jest 45/45. API: defs admin 23 / mike 8 /
+  landscaper 8; mike create → PATCH 200 → `?mine=true` 200 → finalize 200 → PATCH 409 → `/pdf` 200 `application/pdf`
+  `%PDF-` → duplicate draft → delete 200/200. Expo-web as mike (430pt): Library 8 Fill cards → open draft →
+  `set_offline` → title edit → "Offline — will sync", `template_drafts:*` + `template_drafts_pending_sync:*` written,
+  Finalize blocked ("You have unsynced changes…") → reconnect → queue flushed in 7.0 s, "Saved HH:MM:SS", server
+  title = "E2E offline edit" → finalize 200 → PDF 200. Smoke instance deleted. No external repo cloned.
 
 
 ## 6. Marco Wake-Word — Phase 8M (Mobile arm-on-click) · shipped 2026-10-09
