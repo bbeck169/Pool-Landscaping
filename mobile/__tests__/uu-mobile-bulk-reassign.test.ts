@@ -16,15 +16,16 @@ const fnBody = (name: string) => {
 
 it("C1 · bulk-reassign sends new_tech_id (BE contract), never the legacy tech_id key", () => {
   const body = fnBody("bulkReassign");
-  expect(body).toContain('api.post("/jobs/bulk-reassign"');
-  expect(body).toMatch(/new_tech_id: reassignTechId/);
+  expect(body).toContain('api.post("/jobs/bulk-reassign", bulkReassignPayload([...checked], pick));');
   expect(body).not.toMatch(/[{,]\s*tech_id:/);
   expect(SRC).not.toMatch(/bulk-reassign",\s*\{[^}]*\btech_id:/);
+  const { bulkReassignPayload } = require("@/src/lib/bulkReassign");
+  expect(bulkReassignPayload(["j1"], { kind: "tech", id: "t1" })).toEqual({ job_ids: ["j1"], new_tech_id: "t1" });
 });
 
 it("C1 · unchanged around it: job_ids from the selection, success Alert, selection cleared, forced reload", () => {
   const body = fnBody("bulkReassign");
-  expect(body).toContain("job_ids: [...checked]");
+  expect(body).toContain("bulkReassignPayload([...checked], pick)");
   expect(body).toContain('Alert.alert("Reassigned"');
   expect(body).toContain("setChecked(new Set());");
   expect(body).toContain("await load(true);");

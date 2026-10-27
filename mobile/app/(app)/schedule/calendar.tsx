@@ -62,7 +62,8 @@ import { useScheduleServiceCategory } from "@/src/hooks/useScheduleServiceCatego
 import ServiceCategoryChips from "@/src/components/schedule/ServiceCategoryChips";
 import MarkOpenButton from "@/src/components/schedule/MarkOpenButton";
 import ScheduleMonthView from "@/src/components/schedule/ScheduleMonthView";
-import { reassignableTechs } from "@/src/lib/bulkReassign";
+import { reassignableTechs, bulkReassignPayload, type ReassignPick } from "@/src/lib/bulkReassign";
+import ReassignPickerList from "@/src/components/schedule/ReassignPickerList";
 import { filterMonthJobs } from "@/src/lib/monthGrid";
 import { useToast } from "@/src/components/ToastProvider";
 // Phase 23 · 2026-08-02 — Service / Repair progress ring tiles above the grid.
@@ -243,6 +244,7 @@ function ScheduleCalendarInner() {
   const [reassignOpen, setReassignOpen] = useState(false);
   const [techs, setTechs] = useState<{ id: string; name: string }[]>([]);
   const [reassignTechId, setReassignTechId] = useState("");
+  const [reassignCrewId, setReassignCrewId] = useState(""); // UU-mobile
   const [hourlyData, setHourlyData] = useState<HourlyEntry[]>([]);
   // K36 · loading watchdog — flips true when the initial load has
   // been in-flight for > LOADING_WATCHDOG_MS without producing an
@@ -672,14 +674,18 @@ function ScheduleCalendarInner() {
   };
 
   const bulkReassign = async () => {
-    if (!checked.size || !reassignTechId) {
+    if (!checked.size || (!reassignTechId && !reassignCrewId)) {
       Alert.alert("Select a tech", "Choose a technician to reassign the jobs.");
       return;
     }
     setBusy(true);
     try {
-      await api.post("/jobs/bulk-reassign", { job_ids: [...checked], new_tech_id: reassignTechId });
-      const techName = techs.find((t) => t.id === reassignTechId)?.name || "tech";
+      // UU-mobile · crew pick → new_crew_id, tech pick → new_tech_id (mutually exclusive).
+      const pick: ReassignPick = reassignCrewId ? { kind: "crew", id: reassignCrewId } : { kind: "tech", id: reassignTechId };
+      await api.post("/jobs/bulk-reassign", bulkReassignPayload([...checked], pick));
+      const techName = pick.kind === "crew"
+        ? (crews.find((c: any) => c.id === reassignCrewId)?.name || "crew")
+        : (techs.find((t) => t.id === reassignTechId)?.name || "tech");
       Alert.alert("Reassigned", `${checked.size} job${checked.size === 1 ? "" : "s"} assigned to ${techName}.`);
       setChecked(new Set());
       setReassignOpen(false);
@@ -1111,34 +1117,15 @@ function ScheduleCalendarInner() {
               Select a technician:
             </Text>
             <ScrollView style={{ maxHeight: 300 }}>
-              {techs.map((t) => (
-                <Pressable
-                  key={t.id}
-                  onPress={() => setReassignTechId(t.id)}
-                  style={{
-                    flexDirection: "row", alignItems: "center", gap: 10,
-                    paddingVertical: 10, paddingHorizontal: 12, borderRadius: radius.md,
-                    backgroundColor: reassignTechId === t.id ? colors.brandTertiary : "transparent",
-                    marginBottom: 4,
-                  }}
-                  testID={`reassign-tech-${t.id}`}
-                >
-                  <View style={{
-                    width: 20, height: 20, borderRadius: 10,
-                    borderWidth: 2, borderColor: reassignTechId === t.id ? colors.brand : colors.border,
-                    backgroundColor: reassignTechId === t.id ? colors.brand : "transparent",
-                    alignItems: "center", justifyContent: "center",
-                  }}>
-                    {reassignTechId === t.id ? <Ionicons name="checkmark" size={12} color="#fff" /> : null}
-                  </View>
-                  <Text style={{ fontFamily: font.semibold, fontSize: fontSize.base, color: colors.onSurface }}>{t.name}</Text>
-                </Pressable>
-              ))}
-              {techs.length === 0 ? (
-                <Text style={{ fontFamily: font.regular, fontSize: fontSize.base, color: colors.muted, textAlign: "center", paddingVertical: 20 }}>
-                  No technicians available
-                </Text>
-              ) : null}
+              {/* UU-mobile · crews + techs (web AssignTechDropdown parity); picks are mutually exclusive. */}
+              <ReassignPickerList
+                crews={crews}
+                techs={techs}
+                pickedTechId={reassignTechId}
+                pickedCrewId={reassignCrewId}
+                onPickTech={(id) => { setReassignTechId(id); setReassignCrewId(""); }}
+                onPickCrew={(id) => { setReassignCrewId(id); setReassignTechId(""); }}
+              />
             </ScrollView>
             <View style={{ flexDirection: "row", gap: 12, justifyContent: "flex-end", marginTop: spacing.lg }}>
               <Pressable
@@ -1150,11 +1137,11 @@ function ScheduleCalendarInner() {
               </Pressable>
               <Pressable
                 onPress={bulkReassign}
-                disabled={!reassignTechId || busy}
+                disabled={!(reassignTechId || reassignCrewId) || busy}
                 style={{
                   paddingHorizontal: 16, paddingVertical: 10, borderRadius: radius.md,
-                  backgroundColor: reassignTechId ? colors.brand : colors.border,
-                  opacity: (!reassignTechId || busy) ? 0.5 : 1,
+                  backgroundColor: (reassignTechId || reassignCrewId) ? colors.brand : colors.border,
+                  opacity: (!(reassignTechId || reassignCrewId) || busy) ? 0.5 : 1,
                 }}
                 testID="reassign-confirm"
               >

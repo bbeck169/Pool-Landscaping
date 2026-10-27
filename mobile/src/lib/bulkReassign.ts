@@ -11,3 +11,14 @@ export function reassignableTechs(res: any): any[] {
   const rows = Array.isArray(res) ? res : Array.isArray(res?.technicians) ? res.technicians : [];
   return rows.filter((u: any) => u?.id && u?.name && REASSIGN_TECH_ROLES.has(String(u.role || "").toLowerCase()));
 }
+
+/** UU · picked entry → BE payload. Exactly one of new_tech_id / new_crew_id (mutually exclusive). */
+export type ReassignPick = { kind: "tech" | "crew"; id: string };
+export function bulkReassignPayload(jobIds: string[], pick: ReassignPick) {
+  return pick.kind === "crew"
+    ? { job_ids: jobIds, new_crew_id: pick.id }
+    : { job_ids: jobIds, new_tech_id: pick.id };
+}
+
+/** Web parity: `(t.role || "").replace("_", " ")` (first underscore only). */
+export const reassignRoleLabel = (role?: string | null) => String(role || "").replace("_", " ");
