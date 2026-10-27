@@ -68,10 +68,18 @@ export default function MassMessagingComposeDialog({ open, onOpenChange }) {
   // Feb-2026 · Item 2 — audience-status segmented control. Resets to
   // "active" on each fresh dialog open (per PRD: safer default).
   const [audienceStatus, setAudienceStatus] = useState("active");
-  // P2 #7 · Feb-2026 — Card-on-file + Portal-login filters. Tri-state
-  // ``null | true`` only (no negation this ticket). ``null`` = no
-  // restriction. Reset to ``null`` on each fresh dialog open to match
-  // the audience-status "safer default" invariant.
+  // P2 #7 · Feb-2026 — Card-on-file + Portal-login filters.
+  // YY · Feb-2026 — ``hasCardOnFile`` now carries a tri-state
+  // ``null | true | false`` (``false`` = "no card on file" cohort,
+  // shipped as the mutex-pair "No card on file" checkbox below).
+  // Mutex is implicit: both checkboxes bind to the SAME state
+  // slice, so ticking one overrides the other's `checked`
+  // derivation. ``hasPortalLogin`` stays binary (``null | true``
+  // only — negation deferred; the YY mutex-pair pattern on
+  // card-on-file is the template for extending it later). All
+  // three checkboxes reset to the null-sentinel on each fresh
+  // dialog open to match the audience-status "safer default"
+  // invariant.
   const [hasCardOnFile, setHasCardOnFile] = useState(null);
   const [hasPortalLogin, setHasPortalLogin] = useState(null);
   useEffect(() => {
@@ -334,9 +342,15 @@ export default function MassMessagingComposeDialog({ open, onOpenChange }) {
                 />
               </div>
               {/* P2 #7 · Feb-2026 — Card-on-file + Portal-login checkbox
-                  pair. Binary semantics (tri-state null|true only —
-                  negation deferred as P3). Both default off; the
-                  state resets to null on each fresh dialog open. */}
+                  pair. YY · Feb-2026 — Card-on-file now ships a
+                  mutex-pair "No card on file" checkbox next to the
+                  positive one; both bind to the SAME ``hasCardOnFile``
+                  state so ticking one implicitly unticks the other
+                  (tri-state null | true | false). Portal-login stays
+                  binary (null | true only — negation deferred; the YY
+                  mutex-pair pattern below is the template for
+                  extending it later). All three checkboxes default
+                  off; state resets to null on each fresh dialog open. */}
               <div className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-2">
                 <label
                   className="flex items-center gap-2 cursor-pointer text-sm"
@@ -348,6 +362,17 @@ export default function MassMessagingComposeDialog({ open, onOpenChange }) {
                     data-testid="mass-messaging-filter-card-on-file"
                   />
                   <span>Has card on file</span>
+                </label>
+                <label
+                  className="flex items-center gap-2 cursor-pointer text-sm"
+                  data-testid="mass-messaging-filter-no-card-on-file-label"
+                >
+                  <Checkbox
+                    checked={hasCardOnFile === false}
+                    onCheckedChange={(v) => setHasCardOnFile(v ? false : null)}
+                    data-testid="mass-messaging-filter-no-card-on-file"
+                  />
+                  <span>No card on file</span>
                 </label>
                 <label
                   className="flex items-center gap-2 cursor-pointer text-sm"

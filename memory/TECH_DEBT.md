@@ -3004,3 +3004,30 @@ Three atomic commits (option A), all in `mobile/app/(app)/schedule/calendar.tsx`
 - **Scope boundary (non-negotiables confirmed):** BE commit touches `backend/routers/mass_messaging.py` + new pytest + `memory/TECH_DEBT.md` only; the sibling `has_portal_login` strict validator intentionally preserved; `/app/mobile/` UNTOUCHED; no new deps; no new indexes.
 - **FE commit:** pending (see `## TD-yy-mass-messaging-no-card-on-file-filter · FE commit` block below once shipped).
 
+
+## TD-yy-mass-messaging-no-card-on-file-filter · RESOLVED · Feb-2026 (YY · FE commit)
+- **FE wire-up (`frontend/src/components/mass-messaging/MassMessagingComposeDialog.jsx`, 2 anchors, one atomic commit):**
+  - **State-decl comment (L71-84, previously L71-74):** rewrote the inline comment to reflect YY opt-in on `hasCardOnFile` (tri-state `null | true | false`) and the implicit-mutex design where both Card-on-file checkboxes bind to the SAME state slice. `hasPortalLogin` strictness preserved + YY opt-in flagged as extension template. State types unchanged (both still `useState(null)`); reset-on-open at L80 unchanged.
+  - **Checkbox cluster (L336-382, previously L336-363):** inserted a second checkbox labelled `No card on file` BETWEEN the existing `Has card on file` and the sibling `Has active portal login` labels. New testids: `mass-messaging-filter-no-card-on-file` (checkbox) + `mass-messaging-filter-no-card-on-file-label` (wrapping label). Positive-branch testid `mass-messaging-filter-card-on-file` preserved byte-for-byte (P2 #7 vitest regression lock stays green).
+- **Implicit mutex (no explicit handler needed).** Both Card-on-file checkboxes bind to `hasCardOnFile` with mirrored toggle semantics:
+  - `Has card`: `checked={hasCardOnFile === true}` · `onCheckedChange(v) => setHasCardOnFile(v ? true : null)`.
+  - `No card`: `checked={hasCardOnFile === false}` · `onCheckedChange(v) => setHasCardOnFile(v ? false : null)`.
+  Ticking either one with its own setter overwrites the SAME state slice, which flips the OTHER checkbox's `checked` derivation to false. State machine (verified in vitest Cases 4-6): `null` ⇄ `true` ⇄ `false` ⇄ `null`; no code path reaches an "ambiguous both-checked" state because they can't BOTH be `true === hasCardOnFile` simultaneously. Minimal diff — zero new handler functions, zero new `useEffect` branches.
+- **Payload shape unchanged (field names identical).** Preview POST at L153 and Send POST at L210 still emit `has_card_on_file: hasCardOnFile`; the field now carries the YY `false` sentinel alongside the P2 #7 `null` / `true` values. BE commit `8be6f2b30` accepts all three.
+- **Vitest coverage** (`frontend/src/test/mass-messaging-no-card-on-file.test.jsx`, 9 cases):
+  - Case 1 · initial-state null-sentinel lock (both checkboxes unchecked, payload `has_card_on_file: null`).
+  - Case 2 · positive-branch regression lock (tick "Has card" → `true`, "No card" stays unchecked, payload `true`).
+  - Case 3 · YY fix (tick "No card" from clean → state `false`, "Has card" stays unchecked, payload `false`).
+  - Case 4 · mutex invariant · tick "Has card" while "No card" is checked → flips to `true`, "No card" auto-unticks.
+  - Case 5 · mutex invariant · tick "No card" while "Has card" is checked → flips to `false`, "Has card" auto-unticks.
+  - Case 6 · untick the active one → state returns to `null` (both unchecked).
+  - Case 7 · send-payload BUG G non-regression extended to YY · `has_card_on_file: false` round-trips through `/mass-messaging/send`; portal-login still ships `null` sentinel (strict-sibling lock).
+  - Case 8 · reset-on-open · tick "No card" + close + reopen → both unchecked, payload `null`.
+  - Case 9 · portal-login regression lock · still binary (`null` ↔ `true` only), no mutex pair added, no `mass-messaging-filter-no-portal-login` testid rendered.
+- **Regression locks confirmed green on isolation:**
+  - `src/test/mass-messaging-no-card-on-file.test.jsx`: 9/9 green.
+  - `src/test/p2-7-mass-messaging-card-portal-filters.test.jsx`: 5/5 green (positive-branch testid + strict-sibling checkbox contract unchanged).
+  - `src/test/phase15-mass-messaging.test.jsx`: 3/3 green (compose dialog core flow unchanged).
+- **Scope boundary (non-negotiables confirmed):** FE commit touches `MassMessagingComposeDialog.jsx` + new vitest + `memory/TECH_DEBT.md` only; sibling `Has active portal login` filter UNTOUCHED (checkbox, testid `mass-messaging-filter-portal-login`, null↔true-only toggle logic — Case 9 locks it); audience-status segmented control UNTOUCHED; `/app/mobile/` UNTOUCHED; `/app/backend/` UNTOUCHED (BE ship was separate commit `8be6f2b30`); no new deps; LIVE PREVIEW audience count integration preserved (state values round-trip to the BE unchanged — the new `false` sentinel flows through the existing debounced preview-refetch dependency array at L171-172).
+- **TD-yy ticket CLOSED.** BE SHA `8be6f2b30`; FE SHA (this commit) — see git log entry `feat(mass-messaging): add "No card on file" audience filter with mutex (YY, FE)`.
+
