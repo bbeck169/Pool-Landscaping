@@ -44,6 +44,7 @@ import JobTimerCard from "@/src/components/job/JobTimerCard";
 import { isWithinEditWindow, hoursSinceCompletion, EDIT_WINDOW_HOURS } from "@/src/lib/editWindow";
 import { canEditCompletedJob } from "@/src/lib/k6Unlock";
 import ClosedJobEditsBanner from "@/src/components/job/ClosedJobEditsBanner";
+import EditedAfterCompletionBadge from "@/src/components/job/EditedAfterCompletionBadge";
 import VideoMediaUploader from "@/src/components/media/VideoMediaUploader";
 import CouldNotServiceButton from "@/src/components/schedule/CouldNotServiceButton";
 import LineItemsSection from "@/src/components/jobs/LineItemsSection";
@@ -491,7 +492,11 @@ export default function JobDetail() {
             <OfflineBadge testID="job-detail-header-offline-badge" />
           </View>
           <View style={styles.heroContent}>
-            <StatusChip status={job.status} testID="job-status-chip" />
+            {/* WW — POST-edit badge next to the status chip (BE denorm). */}
+            <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 8 }} testID="job-status-row">
+              <StatusChip status={job.status} testID="job-status-chip" />
+              <EditedAfterCompletionBadge visible={job.edited_after_completion === true} />
+            </View>
             <Text style={styles.heroTitle}>{job.title}</Text>
             <CustomerLink customerId={job.customer_id} name={formatCustomerName(job)} style={styles.heroCustomer} testID="job-customer-link" />
           </View>

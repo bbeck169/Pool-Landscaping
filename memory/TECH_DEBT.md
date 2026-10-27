@@ -3097,3 +3097,19 @@ Three atomic commits (option A), all in `mobile/app/(app)/schedule/calendar.tsx`
   - Commit split — 2 atomic commits (BE + combined FE).
 - **Mobile parity:** DEFERRED to `e1_expo_frontend_dev` delegation. TD-78b checklist banner full-render mobile test gap (line 409) remains unchanged. Mobile WW scope: add equivalent `edited_after_completion` badge + narrow unlock lane on `app/job/[id]/checklist.tsx` + mobile `ServiceReport` equivalent. Backend commit `5d105aaa3` already covers the write-side invariants mobile would consume unchanged.
 
+
+## TD-ww-edit-completed-jobs · RESOLVED · Oct-2026 (WW · mobile commit)
+- **Mobile parity for BE `5d105aaa3` + FE `cc8858980`.** SHA = the commit titled `feat(mobile): WW edited-after-completion badge on job detail + checklist (WW mobile parity)` (see `git log`).
+- New `mobile/src/components/job/EditedAfterCompletionBadge.tsx` (StatusChip geometry, web amber `#FEF3C7`/`#78350F`/`#FCD34D`, testID `edited-after-completion-badge`). Rendered on `app/job/[id].tsx` next to `StatusChip` (new `job-status-row` wrapper) and on `app/job/[id]/checklist.tsx` directly under `ClosedJobEditsBanner`; both gated on strict `job.edited_after_completion === true`. Data already arrives via the existing `GET /jobs/{id}` fetch on both screens (full doc, `_id` only excluded) — no new request (web needed a secondary `jobMeta` fetch; mobile doesn't).
+- **Divergence note (operator D1(b), intentional):** mobile `checklist.tsx` keeps the broader K6 unlock — chemistry / notes / checklist / photos all editable post-completion for K6 roles incl. techs (`effectiveLocked = locked && !canEditCompleted`). Web tech ServiceReport is narrower (checklist + photos only; S2(a)). Do not "fix" one to match the other without an operator call.
+- **D2(a):** hidden/unreachable `app/(app)/service-report/[id].tsx` left untouched.
+- TD-78b banner + K6 role set (`src/lib/k6Unlock.ts`) unchanged. Portal surfaces don't read the denorm. Tests: `mobile/__tests__/ww-edited-after-completion-badge.test.tsx` (+ snapshot).
+- Follow-ups parked below: G1 (service-report PATCH doesn't flip the denorm) + G2 (admin 409 vs mobile unlock).
+
+## TD-ww-info-service-report-patch-missing-denorm-flip · P2 · Feb-2026
+- `PATCH /jobs/{id}/service-report` (`backend/routers/service_reports.py:575`) does NOT flip `jobs.edited_after_completion`. The 4 shipped WW flip-sites are `PUT /jobs/{jid}/field-report`, `PATCH /jobs/{jid}`, `POST /jobs/{jid}/photos`, `DELETE /jobs/{jid}/photos/{pid}`. Mobile `checklist.tsx` saves checklist/chemistry/notes through the service-report PATCH, so those post-completion edits won't light the badge (only photo add/delete + job-detail notes edit do). Web tech ServiceReport hits the same path (and its autosave still early-returns on `submitted_at`).
+- **Fix shape:** 5th flip-site — idempotent `db.jobs.update_one({id, tenant_id, edited_after_completion: {$ne: True}}, {$set: {edited_after_completion: True}})` inside the existing post-submit audit soft-fail try block when `_post_submit_edit` (or job `status == "completed"`), mirroring the 4 shipped sites. ~5-10 LOC + pytest case. BE ticket; no mobile change needed (mobile already reads the field).
+
+## TD-ww-info-service-report-patch-admin-409-vs-unlock-mismatch · P2 · Feb-2026
+- `backend/routers/service_reports.py:604-609` refuses post-submit saves for every role except `technician` (409 "Report has already been submitted and is locked"; PS-A only widened techs). Mobile `checklist.tsx` K6 unlock (`canEditCompletedJob`) also unlocks admin / super_admin / manager / owner / dispatcher, so those roles can edit but their save 409s. Pre-existing (not introduced by WW); not runtime-verified during the WW audit.
+- **Options (decide at ticket time):** (a) widen the BE allow-list to K6 roles (audit row already written per post-submit edit), or (b) keep BE as-is and have mobile keep non-tech K6 roles read-only on the checklist post-submit (or disable save there).

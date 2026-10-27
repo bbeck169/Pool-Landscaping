@@ -57,6 +57,7 @@ import { WaterBody, makeEmptyBody, missingRequiredReadings } from "@/src/lib/wat
 import { expandChemistryLabel } from "@/src/lib/expandChemistryLabel";
 import { canEditCompletedJob } from "@/src/lib/k6Unlock";
 import ClosedJobEditsBanner from "@/src/components/job/ClosedJobEditsBanner";
+import EditedAfterCompletionBadge from "@/src/components/job/EditedAfterCompletionBadge";
 import { retryWithBackoff } from "@/src/services/retryWithBackoff";
 import ChecklistSavePill, { type SavePillState } from "@/src/components/sync/ChecklistSavePill";
 import { cacheJobBootstrap, getCachedBootstrap } from "@/src/services/offlineCache";
@@ -931,6 +932,8 @@ export default function JobChecklistScreen() {
       <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: 160 + insets.bottom }}>
         {/* TD-78b — "Closed job — edits logged" (completed + K6 role; web rule). */}
         {canEditCompletedJob(role, job) ? <ClosedJobEditsBanner /> : null}
+        {/* WW — POST-edit badge (BE denorm); unlock gates above unchanged (D1 b). */}
+        <View style={{ marginBottom: spacing.md }}><EditedAfterCompletionBadge visible={job?.edited_after_completion === true} /></View>
         <View style={styles.hero} testID="checklist-hero">
           <Text style={styles.heroLabel}>
             {clientType} · backend:{backendKind}{effectiveLocked ? " · LOCKED" : canEditCompleted ? " · K6 UNLOCKED" : ""}
