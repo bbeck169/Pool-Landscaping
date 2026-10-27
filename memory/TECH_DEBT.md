@@ -3117,3 +3117,35 @@ Three atomic commits (option A), all in `mobile/app/(app)/schedule/calendar.tsx`
 ## TD-ww-info-service-report-patch-admin-409-vs-unlock-mismatch · P2 · Feb-2026
 - `backend/routers/service_reports.py:604-609` refuses post-submit saves for every role except `technician` (409 "Report has already been submitted and is locked"; PS-A only widened techs). Mobile `checklist.tsx` K6 unlock (`canEditCompletedJob`) also unlocks admin / super_admin / manager / owner / dispatcher, so those roles can edit but their save 409s. Pre-existing (not introduced by WW); not runtime-verified during the WW audit.
 - **Options (decide at ticket time):** (a) widen the BE allow-list to K6 roles (audit row already written per post-submit edit), or (b) keep BE as-is and have mobile keep non-tech K6 roles read-only on the checklist post-submit (or disable save there).
+
+## TD-zz-vitest-triage-wave-1 · Feb-2026 (ZZ-A · test-only de-stale)
+- **Context:** session's earlier deploy-readiness check flagged 33 vitest files red on `main`. ZZ Phase 1 (reply-only triage) classified them into 4 buckets (A/B/C/D) + 3 "unclear". ZZ-B Phase 1 pre-audit on the two Bucket B candidates (`chemical-application-form` + `photo-lazy-load-and-compress`) **reclassified BOTH to Bucket A** — neither is a production regression. Both are test-fixture drift from Feb-2026 BE/FE parity sweeps that didn't backport to the companion tests.
+- **Operator decision:** ship Bucket A fixes as 2 atomic single-file test-only commits. Downgrade #11 `ResolveDuplicate.test.jsx` to Bucket C (file exists at `src/pages/customers/__tests__/`, not pruned — 5/6 passing, 1 case needs rebaseline for the "Coming soon" placeholder marker evolution).
+- **Revised bucket counts:**
+  - Bucket B (real regression): **0 files** (down from initial 2).
+  - Bucket A (test rebaseline): **8 files** (adds #1 + #22; the other 6 are #3 partial, #4, #9, #16, #21, #23 — the 3 "unclear" are still to be re-audited).
+  - Bucket C (prior-refactor drift): **25 files** (adds #11; includes 5 mobile-only files awaiting `e1_expo_frontend_dev` delegation).
+  - Bucket D (flake / infra): **1 case** (one timeout within #3 `schedule-numbered-reorder`).
+
+### ZZ-A-1 (BE SHA pending) · `chemical-application-form.test.jsx` rebaseline
+- **Root cause:** Feb-2026 **CHECKLIST-DECIMAL-INPUT-FIX parity sweep** migrated 4 chemistry numeric fields (`temp-f`, `wind-mph`, `amount-sprayed-gal`, `concentrate-oz`) from native `type="number"` to the shared `<DecimalInput>` primitive (`src/components/common/DecimalInput.jsx`). The primitive is a `type="text"` input that commits to the parent's `onChange` ONLY on blur / Enter / explicit `commit()` — see `DecimalInput.jsx:93-115`. The test fired `fireEvent.change(...)` alone, which updates the DOM raw buffer but never triggers the parent commit. `form.amount_sprayed_gal` stayed at `""`, and `Number("") → 0` explained the `expected +0 to be 2.5` failure.
+- **Fix:** added a tiny module-scope helper `_commitDecimal(testid, value)` that wraps `fireEvent.change(...)` + `fireEvent.blur(...)` so the parent commit fires. Replaced 6 `fireEvent.change(...)` calls across 3 cases on the 2 DecimalInput-backed payload-asserting fields (`amount-sprayed-gal`, `concentrate-oz`): Case A (L284 "rejects negative area"), Case B (L495 "POST payload + navigate"), Case C (L545 "server-driven error map").
+- **Preserved exactly:** all non-DecimalInput `.change()` calls (text inputs: `chemical-name`, `target-pest`, `property-address`; number inputs that stayed native: `humidity-pct`, `area-treated-sqft`, `rei-hours`; selects: `customer`, `wind-direction`; application-date / start-time / stop-time fields). All `.value` read assertions (L357/L359/L386) kept — those work through the primitive's unfocused external-value → raw buffer sync at `DecimalInput.jsx:87-91`.
+- **No production code touched.** Test-only commit.
+- **Vitest confirmation:** 19/19 pass (was 18/19 pre-ZZ).
+
+### ZZ-A-2 (pending — ships next) · `photo-lazy-load-and-compress.test.jsx` rebaseline
+- **Root cause (previewing):** **TD-88 · Feb-2026** swapped `PhotoUploader` from `jobId`-based URL composition to consuming BE-emitted canonical URL fields (`thumb_url || url || data || data_url`). Test fixtures were not updated to carry `thumb_url`. The companion `PhotoUploader.canonicalUrl.test.jsx` ships correctly-shaped fixtures and passes.
+- Fix will update 2 fixtures to include `thumb_url` matching the TD-88 shape; preserves the `/^data:image/` negative assertion (base64 blob must not leak into the DOM).
+
+### Related Bucket C long-tail (not in scope for ZZ-A)
+- **#32 `task-l-mediastrip-thumb-swap.test.jsx`** — different source-grep guard against the TD-88 contract; same root cause as #22 but on a different component (`MediaStrip`). Not auto-fixed by ZZ-A-2.
+- **#11 `ResolveDuplicate.test.jsx`** at `src/pages/customers/__tests__/` — `resolve-duplicate-option-b-coming-soon` testid dropped as merge affordance shipped as real feature. Downgrade from "missing/prune" to C.
+- **Mobile-only (5)**: #17 `phase-mobile-drawer-parity`, #18 `phase-mobile-revenue-parity`, #19 `phase30-4-confirm-modal-migration`, #25 `phase35-mobile-finance-parity`, #33 `phase22-mobile-schedule-gates` — DEFERRED to `e1_expo_frontend_dev` delegation per `/app/mobile/` non-negotiable.
+- **Remaining Bucket A to batch next wave (5)**: #3 `schedule-numbered-reorder` (copy drift + 1 timeout case), #4 `phase-n2-input-restyle-refinement` (search-icon token sweep), #9 `expanded-identifier-guard` (narrow regex to exclude `__tests__/`), #23 `phase41-2-admin-list-page-primitive` (LOC gate rebaseline). The 3 "unclear" (#5 `schedule-map-tech-labels`, #16 `universal-search-hero`, #21 `customer-profile-recent-docs`) need a 2-min dig each to lock A or B.
+- **Bucket C long-tail (23 remaining after ZZ-A-2):** source-grep guards against DOM/dep-array/nav shapes that legitimately evolved — case-by-case rebaseline needed; operator to batch-authorize once a sweep window opens.
+
+### Scope boundary
+- Each ZZ-A commit touches ONE test file + `memory/TECH_DEBT.md` only. No production code. No `/app/backend/`. No `/app/mobile/`. No new deps.
+- Prompt-injection hygiene maintained throughout (no injections encountered in ZZ-A).
+

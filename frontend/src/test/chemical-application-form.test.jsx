@@ -145,6 +145,29 @@ vi.mock("@/components/files/FileUpload", () => {
 import ChemicalApplicationForm from "../pages/chemical/ChemicalApplicationForm";
 
 
+// ─── Helper · commit a <DecimalInput>-backed value ────────────────
+// ZZ-A · Feb-2026 — Four numeric fields (``temp-f``, ``wind-mph``,
+// ``amount-sprayed-gal``, ``concentrate-oz``) migrated to the
+// ``<DecimalInput>`` primitive during the Feb-2026 CHECKLIST-
+// DECIMAL-INPUT-FIX parity sweep. That primitive is a ``type="text"``
+// input that commits to the parent's ``onChange`` ONLY on blur /
+// Enter / explicit ``commit()`` — ``fireEvent.change(...)`` alone
+// updates the DOM raw buffer but never fires the parent commit, so
+// ``form.<field>`` stays at ``""`` and the POST payload coerces to
+// ``0`` via ``Number("")``. See ``DecimalInput.jsx:93-115`` for the
+// commit contract.
+//
+// Previously-passing cases (L357/L359/L386) that only READ
+// ``.value`` from these testids still work because the primitive's
+// ``useEffect`` syncs the external value → raw buffer when
+// unfocused, which is exactly what a parent-driven population does.
+function _commitDecimal(testid, value) {
+  const el = screen.getByTestId(testid);
+  fireEvent.change(el, { target: { value } });
+  fireEvent.blur(el);
+}
+
+
 // ═══════════════════════════════════════════════════════════════════
 // Fixtures
 // ═══════════════════════════════════════════════════════════════════
@@ -290,8 +313,8 @@ describe("ChemicalApplicationForm — validation", () => {
     fireEvent.change(screen.getByTestId("chem-app-form-customer"), { target: { value: "cust-1" } });
     fireEvent.change(screen.getByTestId("chem-app-form-chemical-name"), { target: { value: "Roundup" } });
     fireEvent.change(screen.getByTestId("chem-app-form-area-treated-sqft"), { target: { value: "-5" } });
-    fireEvent.change(screen.getByTestId("chem-app-form-amount-sprayed-gal"), { target: { value: "1" } });
-    fireEvent.change(screen.getByTestId("chem-app-form-concentrate-oz"), { target: { value: "8" } });
+    _commitDecimal("chem-app-form-amount-sprayed-gal", "1");
+    _commitDecimal("chem-app-form-concentrate-oz", "8");
     fireEvent.change(screen.getByTestId("chem-app-form-target-pest"), { target: { value: "Poa annua" } });
     fireEvent.change(screen.getByTestId("chem-app-form-rei-hours"), { target: { value: "24" } });
     // ``fireEvent.submit(form)`` — the submit button lives inside a
@@ -508,10 +531,8 @@ describe("ChemicalApplicationForm — submit", () => {
                        { target: { value: "Roundup PowerMAX" } });
     fireEvent.change(screen.getByTestId("chem-app-form-area-treated-sqft"),
                        { target: { value: "5000" } });
-    fireEvent.change(screen.getByTestId("chem-app-form-amount-sprayed-gal"),
-                       { target: { value: "2.5" } });
-    fireEvent.change(screen.getByTestId("chem-app-form-concentrate-oz"),
-                       { target: { value: "12" } });
+    _commitDecimal("chem-app-form-amount-sprayed-gal", "2.5");
+    _commitDecimal("chem-app-form-concentrate-oz", "12");
     fireEvent.change(screen.getByTestId("chem-app-form-target-pest"),
                        { target: { value: "Poa annua" } });
     fireEvent.change(screen.getByTestId("chem-app-form-rei-hours"),
@@ -559,10 +580,8 @@ describe("ChemicalApplicationForm — submit", () => {
                        { target: { value: "Roundup" } });
     fireEvent.change(screen.getByTestId("chem-app-form-area-treated-sqft"),
                        { target: { value: "5000" } });
-    fireEvent.change(screen.getByTestId("chem-app-form-amount-sprayed-gal"),
-                       { target: { value: "2" } });
-    fireEvent.change(screen.getByTestId("chem-app-form-concentrate-oz"),
-                       { target: { value: "8" } });
+    _commitDecimal("chem-app-form-amount-sprayed-gal", "2");
+    _commitDecimal("chem-app-form-concentrate-oz", "8");
     fireEvent.change(screen.getByTestId("chem-app-form-target-pest"),
                        { target: { value: "Poa annua" } });
     fireEvent.change(screen.getByTestId("chem-app-form-rei-hours"),
