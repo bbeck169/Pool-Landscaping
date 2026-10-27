@@ -2654,3 +2654,49 @@ If `test_body_annotation_resolves_without_forwardref_error` ever fires:
 - Call the helper at every success-return path.
 - Do NOT attempt to rewrite the decorator with `typing.get_type_hints` / `globalns` threading — the decorator does not inspect annotations and the root cause is FastAPI's schema builder, not the decorator's own reads.
 
+
+## TD-qq-reopen-narrow-dropped-member-warning-to-new-additions · RESOLVED · Feb-2026 (QQ-reopen)
+
+**Status:** CLOSED — follow-up to QQ Option A web ship `179416da6`.
+
+**What this entry chains to:**
+- Web ship: `179416da6` · `fix(ops-hub): surface silently-dropped crew members in save warning toast (QQ, Option A)` (first-pass FE observability for the BE silent-drop posture).
+- Mobile parity close-out: see `TD-qq-mobile-parity · NOT APPLICABLE · Feb-2026 (mobile surface absent)` above.
+- Narrowing fix: this entry.
+
+### Why a reopen was needed
+
+The QQ web ship surfaced the BE silent-drop as `Saved, but these members couldn't be added: X, Y, Z` whenever the diff between `form.tech_ids` and the returned doc's `tech_ids` was non-empty. This correctly fired for the primary target case (operator added a member in-session via the picker, BE dropped it). But it ALSO fired on edit saves where the opened crew doc already contained pre-existing ghost ids (admin / super_admin / soft-deleted members that `/api/technicians` filters out of the roster but are still in `crews.tech_ids` from legacy drift).
+
+The over-warn collided with the intent of `TD-crew-edit-no-auto-remove-and-save-full-roster · Feb-2026`:
+> _"operator-selected is the source of truth. Seed `form.tech_ids` with the full `incoming` array; flag any id that's missing from the current tenant's roster as 'unavailable' with the reason surfaced in the banner + per-chip marker."_
+
+That TD positioned pre-existing-drift as a **surfaced-pre-save** concern (the `crew-unavailable-banner` + per-chip markers). QQ Option A layered a redundant **post-save** warning on top of the same ghosts, with semantically wrong copy ("couldn't be added" implies an attempted addition — the operator didn't try to add them; they were carried forward from the stored doc). Operator-visible: an edit that only renamed the crew would unnecessarily show the warning naming all pre-existing ghosts.
+
+### Decision rationale
+
+Clean split of responsibility between surfacing surfaces:
+- **Pre-save** `crew-unavailable-banner` → owns surfacing **pre-existing drift** that the operator inherited when opening the edit modal. Operator decides whether to keep, remove, or replace each ghost before clicking save (per TD-crew-edit-no-auto-remove-and-save-full-roster).
+- **Post-save** QQ Option A warning → owns surfacing **newly-added-this-session drops** that the operator picked via the roster AND the BE then silently dropped. The warning copy "couldn't be added" is now accurate because it applies only to the picker-added subset.
+
+The narrowing is a one-line FE predicate change: `_droppedIds = _submitted.filter(x => !_persisted.includes(x) && !_preExisting.has(x))` where `_preExisting = new Set(editing && Array.isArray(editing.tech_ids) ? editing.tech_ids : [])`. New-crew (POST) path is untouched: `editing` is null → `_preExisting` is empty → all drops warn (correct — a brand-new crew's drops are all picker-added by definition).
+
+### What ships in this reopen commit
+
+| Change | Path | Shape |
+|---|---|---|
+| Source narrowing | `frontend/src/pages/ops/OpsHub.jsx` save handler | +6 insertions, -2 deletions in the `_droppedIds` block |
+| New Case 5 (2 tests) | `frontend/src/test/crew-save-dropped-members-warning.test.jsx` | Pre-existing ghost in edit-mode → plain Saved (incl. rename-only sub-case) |
+| New Case 6 (1 test) | same | Newly-added-this-session drop in edit-mode → warn with the new addition's name |
+| New Case 7 (1 test) | same | Mixed pre-existing-ghost + newly-added-dropped → warn ONLY for the new addition |
+| Case 4 regex-lock update | same | +2 asserts: `_preExisting = new Set(...)` capture + `!_preExisting.has(x)` filter clause |
+
+Vitest total after this ship: **18 passing cases** (12 pre-existing from `179416da6` + 2 new Case 4 regex-lock asserts + 2 new Case 5 scenarios + 1 new Case 6 + 1 new Case 7). All existing cases remain untouched and green.
+
+### What this entry does NOT change
+
+- Backend `routers/ops.py` silent-drop contract (`TD-crew-silently-drop-orphan-members-and-backfill · Feb-2026`) is preserved exactly.
+- Pre-save `crew-unavailable-banner` behavior is unchanged.
+- The 400 `foreign_tenant` error branch (TD-86 categorised chips) is unchanged.
+- Mobile parity remains N/A (per the sibling mobile close-out block). When a mobile crew editor is eventually built, it MUST mirror BOTH the QQ Option A warning AND this QQ-reopen narrowing — the parked `TD-qq-info-mobile-crew-editor-must-include-dropped-member-warning` TD above has been noted; whoever picks that up should also pull in the `_preExisting` narrowing from this reopen.
+

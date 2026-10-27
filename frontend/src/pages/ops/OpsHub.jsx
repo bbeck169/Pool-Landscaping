@@ -682,8 +682,14 @@ function Crews() {
       const _submitted = Array.isArray(form.tech_ids) ? form.tech_ids : [];
       const _persisted = Array.isArray(_res?.tech_ids)
         ? _res.tech_ids : _submitted;
+      // Exclude ghosts that were pre-existing in the opened crew doc —
+      // they are surfaced by the pre-save unavailable-chips banner per
+      // TD-crew-edit-no-auto-remove-and-save-full-roster.  Warn only on
+      // ids the operator newly added this session that then got dropped.
+      const _preExisting = new Set(
+        editing && Array.isArray(editing.tech_ids) ? editing.tech_ids : []);
       const _droppedIds = _submitted.filter(
-        (x) => !_persisted.includes(x));
+        (x) => !_persisted.includes(x) && !_preExisting.has(x));
       if (_droppedIds.length > 0) {
         // Resolve each dropped id to a display name — roster first
         // (``scopedTechs`` is what the picker rendered), then the

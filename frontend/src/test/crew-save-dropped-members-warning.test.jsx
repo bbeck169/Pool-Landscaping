@@ -75,8 +75,8 @@ afterEach(() => {
 // source regex-locked below also surfaces as a harness mismatch.
 
 function CrewSaveHarness({
-  editingId, form, scopedTechs, incomingMembers, apiPatchResult,
-  apiPostResult, onToast,
+  editingId, editingTechIds, form, scopedTechs, incomingMembers,
+  apiPatchResult, apiPostResult, onToast,
 }) {
   const [toast, setToast] = React.useState(null);
 
@@ -95,8 +95,15 @@ function CrewSaveHarness({
     const _submitted = Array.isArray(form.tech_ids) ? form.tech_ids : [];
     const _persisted = Array.isArray(_res?.tech_ids)
       ? _res.tech_ids : _submitted;
+    // Mirror the source narrowing from the QQ-reopen ship: ghosts
+    // that were pre-existing in the opened crew doc are the
+    // pre-save unavailable-chips banner's problem, not the
+    // post-save warning's.  Warn only on newly-added-this-session
+    // ids that got dropped by the BE silent-drop filter.
+    const _preExisting = new Set(
+      editingId && Array.isArray(editingTechIds) ? editingTechIds : []);
     const _droppedIds = _submitted.filter(
-      (x) => !_persisted.includes(x));
+      (x) => !_persisted.includes(x) && !_preExisting.has(x));
     if (_droppedIds.length > 0) {
       const _nameLookup = (id) => {
         const t = (scopedTechs || []).find((x) => x.id === id);
@@ -353,4 +360,159 @@ describe("QQ Case 4 · OpsHub.jsx source regex lock", () => {
       expect(SRC).toMatch(/e\?\.data\?\.detail/);
       expect(SRC).toMatch(/setBeErrors\(_errs\)/);
     });
+
+  it("QQ-reopen · captures _preExisting from editing?.tech_ids", () => {
+    // The reopen fix narrowed the warning to newly-added-this-session
+    // ids only.  Lock on the pre-existing-ghost snapshot source.
+    expect(SRC).toMatch(
+      /_preExisting\s*=\s*new\s+Set\(\s*editing\s*&&\s*Array\.isArray\(editing\.tech_ids\)/);
+  });
+
+  it("QQ-reopen · _droppedIds filter excludes _preExisting ghosts",
+    () => {
+      // Lock on the narrowing predicate itself so a future refactor
+      // that drops the ``!_preExisting.has(x)`` clause fails here
+      // and re-widens the warning to pre-existing drift.
+      expect(SRC).toMatch(
+        /_droppedIds\s*=\s*_submitted\.filter\([\s\S]{0,80}!_preExisting\.has\(x\)/);
+    });
 });
+
+
+// ══════════════════════════════════════════════════════════════════
+//  Case 5  —  QQ-reopen · edit-mode pre-existing ghost does NOT warn
+// ══════════════════════════════════════════════════════════════════
+
+describe("QQ-reopen Case 5 · pre-existing ghost in edit-mode is silent",
+  () => {
+    it("submit matches editing.tech_ids, BE drops the ghost → plain Saved",
+      async () => {
+        render(
+          <CrewSaveHarness
+            editingId="c-X"
+            // ``t-ghost`` is pre-existing in the opened crew doc —
+            // the pre-save unavailable-chips banner owns surfacing
+            // this to the operator; the post-save warning MUST NOT.
+            editingTechIds={["t-live", "t-ghost"]}
+            form={{ name: "X", tech_ids: ["t-live", "t-ghost"] }}
+            scopedTechs={[{ id: "t-live", name: "Live Tech" }]}
+            incomingMembers={[{ id: "t-ghost", name: "Soft-Deleted" }]}
+            apiPatchResult={{
+              id: "c-X", name: "X", tech_ids: ["t-live"],
+            }}
+          />,
+        );
+        await act(async () => {
+          fireEvent.click(screen.getByTestId("crew-save"));
+        });
+        expect(screen.getByTestId("toast-tone").textContent).toBe("success");
+        expect(screen.getByTestId("toast-message").textContent).toBe("Saved");
+      });
+
+    it("rename-only edit on a ghost-carrying crew → plain Saved", async () => {
+      // Operator opens Edit, only touches the ``name`` field, hits
+      // save.  Ghost was already in editing.tech_ids and still is
+      // in form.tech_ids (TD-crew-edit-no-auto-remove seeds form
+      // from the full stored list).  BE drops the ghost on save.
+      // No warning must fire — the pre-save banner already surfaced
+      // the ghost pre-save.
+      render(
+        <CrewSaveHarness
+          editingId="c-X2"
+          editingTechIds={["t-live-a", "t-live-b", "t-ghost-x"]}
+          form={{ name: "renamed-crew",
+                  tech_ids: ["t-live-a", "t-live-b", "t-ghost-x"] }}
+          scopedTechs={[
+            { id: "t-live-a", name: "Alice" },
+            { id: "t-live-b", name: "Bob" },
+          ]}
+          incomingMembers={[{ id: "t-ghost-x", name: "Ghost X" }]}
+          apiPatchResult={{
+            id: "c-X2", name: "renamed-crew",
+            tech_ids: ["t-live-a", "t-live-b"],
+          }}
+        />,
+      );
+      await act(async () => {
+        fireEvent.click(screen.getByTestId("crew-save"));
+      });
+      expect(screen.getByTestId("toast-tone").textContent).toBe("success");
+      expect(screen.getByTestId("toast-message").textContent).toBe("Saved");
+    });
+  });
+
+
+// ══════════════════════════════════════════════════════════════════
+//  Case 6  —  QQ-reopen · edit-mode newly-added-then-dropped DOES warn
+// ══════════════════════════════════════════════════════════════════
+
+describe("QQ-reopen Case 6 · newly-added-then-dropped in edit-mode warns",
+  () => {
+    it("operator adds a NEW member in-session, BE drops it → warn",
+      async () => {
+        render(
+          <CrewSaveHarness
+            editingId="c-Y"
+            editingTechIds={["t-live"]}
+            form={{ name: "Y",
+                    tech_ids: ["t-live", "t-new-dropped"] }}
+            scopedTechs={[
+              { id: "t-live",        name: "Live Tech" },
+              { id: "t-new-dropped", name: "New Addition" },
+            ]}
+            incomingMembers={[]}
+            apiPatchResult={{
+              id: "c-Y", name: "Y", tech_ids: ["t-live"],
+            }}
+          />,
+        );
+        await act(async () => {
+          fireEvent.click(screen.getByTestId("crew-save"));
+        });
+        expect(screen.getByTestId("toast-tone").textContent).toBe("warning");
+        expect(screen.getByTestId("toast-message").textContent).toBe(
+          "Saved, but these members couldn't be added: New Addition");
+      });
+  });
+
+
+// ══════════════════════════════════════════════════════════════════
+//  Case 7  —  QQ-reopen · mixed drop warns ONLY for the new addition
+// ══════════════════════════════════════════════════════════════════
+
+describe("QQ-reopen Case 7 · mixed pre-existing-ghost + new-dropped",
+  () => {
+    it("warning names only the newly-added-this-session dropped id",
+      async () => {
+        // ``t-old-ghost`` is pre-existing (banner's problem).
+        // ``t-new-dropped`` is session-added (warning's problem).
+        // Only the latter should surface post-save.
+        render(
+          <CrewSaveHarness
+            editingId="c-Z"
+            editingTechIds={["t-live", "t-old-ghost"]}
+            form={{ name: "Z",
+                    tech_ids: ["t-live", "t-old-ghost",
+                               "t-new-dropped"] }}
+            scopedTechs={[
+              { id: "t-live",        name: "Live Tech" },
+              { id: "t-new-dropped", name: "New Dropped" },
+            ]}
+            incomingMembers={[{ id: "t-old-ghost", name: "Old Ghost" }]}
+            apiPatchResult={{
+              id: "c-Z", name: "Z", tech_ids: ["t-live"],
+            }}
+          />,
+        );
+        await act(async () => {
+          fireEvent.click(screen.getByTestId("crew-save"));
+        });
+        expect(screen.getByTestId("toast-tone").textContent).toBe("warning");
+        expect(screen.getByTestId("toast-message").textContent).toBe(
+          "Saved, but these members couldn't be added: New Dropped");
+        // Belt-+-braces: the pre-existing ghost's name must NOT
+        // appear in the message.
+        expect(screen.getByTestId("toast-message").textContent)
+          .not.toMatch(/Old Ghost/);
+      });
+  });
