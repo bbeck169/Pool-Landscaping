@@ -30,3 +30,32 @@ it("C1 · unchanged around it: job_ids from the selection, success Alert, select
   expect(body).toContain("await load(true);");
   expect(body).toContain('Alert.alert("Reassign failed", e.message || "Unknown error");');
 });
+
+describe("UU-mobile-2 · tech-list source", () => {
+  const { reassignableTechs } = require("@/src/lib/bulkReassign");
+
+  it("C2 · openReassign loads GET /technicians (not /users?role=tech) via reassignableTechs", () => {
+    const body = fnBody("openReassign");
+    expect(body).toContain('const res = await api.get("/technicians");');
+    expect(body).toContain("const list = reassignableTechs(res);");
+    expect(SRC).not.toContain("/users?role=tech");
+  });
+
+  it("C2 · same unwrap as the calendar's /technicians load (bare array OR {technicians})", () => {
+    const t = { id: "t1", name: "Mike", role: "pool_tech" };
+    expect(reassignableTechs([t])).toEqual([t]);
+    expect(reassignableTechs({ technicians: [t] })).toEqual([t]);
+    expect(reassignableTechs(null)).toEqual([]);
+    expect(reassignableTechs({ users: [t] })).toEqual([]);
+  });
+
+  it("C2 · keeps only named rows with a BE-accepted tech role (pool_tech / landscape_tech / technician / tech)", () => {
+    const rows = [
+      { id: "a", name: "A", role: "pool_tech" }, { id: "b", name: "B", role: "Landscape_Tech" },
+      { id: "c", name: "C", role: "technician" }, { id: "d", name: "D", role: "tech" },
+      { id: "e", name: "E", role: null }, { id: "f", name: "F", role: "admin" },
+      { id: "g", name: "", role: "tech" }, { id: "", name: "H", role: "tech" },
+    ];
+    expect(reassignableTechs(rows).map((r: any) => r.id)).toEqual(["a", "b", "c", "d"]);
+  });
+});

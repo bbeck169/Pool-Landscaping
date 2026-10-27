@@ -62,6 +62,7 @@ import { useScheduleServiceCategory } from "@/src/hooks/useScheduleServiceCatego
 import ServiceCategoryChips from "@/src/components/schedule/ServiceCategoryChips";
 import MarkOpenButton from "@/src/components/schedule/MarkOpenButton";
 import ScheduleMonthView from "@/src/components/schedule/ScheduleMonthView";
+import { reassignableTechs } from "@/src/lib/bulkReassign";
 import { filterMonthJobs } from "@/src/lib/monthGrid";
 import { useToast } from "@/src/components/ToastProvider";
 // Phase 23 · 2026-08-02 — Service / Repair progress ring tiles above the grid.
@@ -662,8 +663,8 @@ function ScheduleCalendarInner() {
   const openReassign = async () => {
     if (!checked.size) return;
     try {
-      const res = await api.get("/users?role=tech");
-      const list = (res.users || res || []).filter((u: any) => u.id && u.name);
+      const res = await api.get("/technicians");
+      const list = reassignableTechs(res);
       setTechs(list);
     } catch { setTechs([]); }
     setReassignTechId("");
