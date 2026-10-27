@@ -11,13 +11,22 @@
  * keyword set but returns the backend template key `landscape`, not the
  * client-facing `landscaping`).
  *
- * Sync note (Phase J1 · Feb-2026, updated Phase P36.1): the priority
- * chain here mirrors backend/routers/jobs.py :: _derive_checklist_kind.
- * Keep both files in lockstep — service_type/title signal wins over
- * tech department. Phase P36.1 flipped the no-signal fallback from
- * "pool" to "generic" to match the backend's "non_pool" default and
- * avoid dragging non-pool jobs (tree_service, hvac, pest_control, …)
- * through pool-only UI.
+ * Sync note (Phase J1 · Feb-2026, updated Phase P36.1, revised VV
+ * Feb-2026): the priority chain here mirrors
+ * backend/routers/jobs.py :: _derive_checklist_kind.  Keep both files
+ * in lockstep — service_type/title signal wins over tech department.
+ * Phase P36.1 flipped the no-signal fallback from "pool" to "generic"
+ * to match the backend's "non_pool" default and avoid dragging
+ * non-pool jobs (tree_service, hvac, pest_control, …) through
+ * pool-only UI.  **VV · Feb-2026** flipped the keyword block to
+ * **LANDSCAPE PRIORITY** to match the backend's post-TD-69 shape
+ * (`routers/jobs.py:560-566` checks landscape keywords before pool).
+ * Before VV the FE kept the historical pool-first order, so a job
+ * whose title contained both pool-ish and landscape-ish tokens
+ * (e.g. "Pool View Estates Lawn Service") returned "pool" on the FE
+ * and "landscape" on the BE — a drift bug.  LANDSCAPE PRIORITY also
+ * mirrors the sibling resolver `portalServiceType.js::resolveServiceType`
+ * shipped by TD-69.
  */
 
 const POOL_KEYWORDS = ["pool", "chem"];
@@ -26,14 +35,18 @@ const LANDSCAPING_KEYWORDS = ["landscap", "lawn", "mow", "garden", "trim", "blow
 /**
  * @param {object|null|undefined} job — job document.
  *
- * Priority chain (Phase J1 · Feb-2026):
+ * Priority chain (Phase J1 · Feb-2026, revised VV Feb-2026):
  *   1. explicit override via `checklist_kind` on the job
- *   2. **Job Title / Service Type keywords** — promoted above tech
- *      department so the work being performed drives the checklist
- *      choice (a landscaping job gets the landscape checklist even
- *      when assigned to a Pool tech, and vice versa)
+ *   2. **Job Title / Service Type keywords** — LANDSCAPE PRIORITY
+ *      per VV (Feb-2026): if any landscape keyword matches, return
+ *      "landscaping" regardless of other pool-ish tokens.  Pool
+ *      check only fires when NO landscape signal is anywhere.
+ *      Mirrors `backend/routers/jobs.py:560-566` and TD-69's
+ *      `portalServiceType.js::resolveServiceType`.
  *   3. tech department (`technician_department`)
- *   4. `"pool"` fallback (safest default for this business — Phase 57)
+ *   4. `"generic"` fallback (Phase P36.1 — mirrors backend's
+ *      "non_pool" default; avoids dragging non-pool jobs through
+ *      pool-only UI)
  *
  * @returns {"pool"|"landscaping"|"generic"}
  */
@@ -44,14 +57,15 @@ export function getChecklistType(job) {
   if (kind === "pool") return "pool";
   if (kind === "landscape" || kind === "landscaping") return "landscaping";
   // 2) Phase J1 · Job Title / Service Type / Job Type keywords —
-  //    promoted above the tech-department block. Pool check preserved
-  //    ahead of landscape (historical frontend order).
+  //    promoted above the tech-department block.  VV · Feb-2026 —
+  //    LANDSCAPE PRIORITY: landscape keyword wins when both pool
+  //    and landscape tokens are present (mirrors BE and TD-69).
   const hay = [job.service_type, job.job_type, job.title]
     .filter(Boolean)
     .join(" ")
     .toLowerCase();
-  if (POOL_KEYWORDS.some((k) => hay.includes(k))) return "pool";
   if (LANDSCAPING_KEYWORDS.some((k) => hay.includes(k))) return "landscaping";
+  if (POOL_KEYWORDS.some((k) => hay.includes(k))) return "pool";
   // 3) Phase 57 · assigned tech's department — only consulted when the
   //    job itself gave no keyword signal.
   const dept = (job.technician_department || "").toLowerCase();

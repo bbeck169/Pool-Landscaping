@@ -2892,3 +2892,75 @@ The FE half extends `jobMatchesLane(job, laneId, techCrewIds)` with an optional 
 
 TD-xx closed.
 
+
+## TD-vv-landscape-jobs-show-pool-checklist · RESOLVED · Feb-2026 (VV)
+
+**Status:** CLOSED — single FE commit flips the keyword block in `getChecklistType` to LANDSCAPE PRIORITY so a job whose signal fields contain BOTH pool-ish and landscape-ish tokens resolves to "landscaping" (not "pool").
+
+### Chain
+
+- **BE** · `backend/routers/jobs.py::_derive_checklist_kind` was already landscape-first on `main` at `routers/jobs.py:560-566`:
+  ```python
+  if any(k in hay for k in _LANDSCAPE_KEYWORDS): return "landscape"
+  if any(k in hay for k in _POOL_KEYWORDS):     return "pool"
+  ```
+  Prior ship history for the BE flip is not recoverable from TECH_DEBT.md (grep found no explicit TD slug — likely landed under a different Phase-K ticket as part of the TD-69 remediation wave, or as a quiet mirror of TD-69's resolver).
+- **FE** · `frontend/src/lib/checklistType.js:53-54` was still pool-first until this commit. VV flips it. The pre-VV comment at L47-48 even acknowledged the drift explicitly (_"Pool check preserved ahead of landscape (historical frontend order)"_).
+
+### Root cause narrative
+
+`getChecklistType` priority chain (pre-VV):
+
+1. Explicit `job.checklist_kind` override.
+2. Keyword block over `job.service_type` / `job.job_type` / `job.title` — **POOL-FIRST** (bug).
+3. Tech department tie-breaker.
+4. "generic" fallback (Phase P36.1).
+
+The keyword block concatenates all three signal fields into a lowercase `hay` string and checks POOL_KEYWORDS before LANDSCAPING_KEYWORDS. If `hay` contained BOTH classes of tokens (common for landscape customers with pool-adjacent property names, or legacy jobs where `service_type` was never updated after a customer category change), pool-first returned "pool" — but the BE mirror returned "landscape" because its keyword block had already been flipped. Classic FE/BE drift.
+
+### Narrow impact
+
+Pre-stamping era (post Feb-2026 BE insert hook): every BE-created job gets `job.checklist_kind` set at insert via `_derive_checklist_kind`, so the FE's keyword block is never reached on consumer screens that pass a BE-stamped job. The pool-first bug only hit:
+
+- Legacy jobs created before the BE stamping hook landed.
+- Jobs synthesised by external import pipelines that bypass `_derive_checklist_kind`.
+- Jobs mutated in tests / mocks that leave `checklist_kind` null.
+
+`ChecklistModal.jsx` (the "field view" the operator asked about) is the only consumer of `getChecklistType` on the FE, and it reads `job.checklist_kind` first in its priority chain. For BE-stamped jobs, the pool-first keyword branch was effectively dead code; for the three categories above, the bug was observable.
+
+### Mirror of TD-69
+
+VV adopts the same LANDSCAPE PRIORITY idiom shipped by `TD-69 · Feb-2026 — portal service-reports mislabel`. TD-69's resolver (`frontend/src/lib/portalServiceType.js::resolveServiceType`) scans every candidate field and returns landscape if ANY field has a landscape keyword, pool only when no landscape signal is anywhere. VV applies the same semantics to the checklist resolver.
+
+### "Both" / null-category semantics
+
+Not touched. Reading A was approved — this fix is a resolver-flip only, no `customer.service_category` consultation. Pre-existing behavior preserved exactly for every job that doesn't have both pool AND landscape keyword hits.
+
+### What ships
+
+- `frontend/src/lib/checklistType.js` — keyword block landscape-first; sync comment (L9-20) updated to reflect current parity + TD-69 lineage; priority-chain docstring (L30-45) updated.
+- `frontend/src/test/vv-checklist-landscape-priority.test.jsx` — 9 passing cases:
+  - (a) **operator's bug** · "Pool View Estates Lawn Service" + no `checklist_kind` → "landscaping".
+  - (b) mixed-signal lock · `service_type="Pool Maintenance"` + `title="mow and trim"` → "landscaping".
+  - (c) pool-only regression lock · "Weekly Pool Cleaning" → "pool".
+  - (d) landscape-only regression lock · "Weekly Mowing" → "landscaping".
+  - (e, f) `checklist_kind` override wins (both directions, both "landscape" and "landscaping" variants).
+  - (g) tech-department tie-breaker intact.
+  - (h) "generic" fallback intact.
+  - (i) null-safety.
+
+### Not shipped by VV
+
+- Mobile parity is out of scope — the mobile equivalent of `getChecklistType` (if any) lives in `/app/mobile/` and is a separate dispatch to `e1_expo_frontend_dev`.
+- `customer.service_category` consultation (Reading B) remains unaddressed. A future ticket can layer `customer.service_category === "landscape"` as a signal above the keyword block if the operator wants authoritative customer-category override.
+
+### FE/BE sync-comment update location
+
+`frontend/src/lib/checklistType.js` L9-20 (sync note block) and L30-45 (priority-chain docstring) now explicitly cite:
+
+- BE mirror at `routers/jobs.py:560-566`.
+- TD-69 sibling resolver `portalServiceType.js::resolveServiceType`.
+- The VV flip reason.
+
+A future reader comparing BE and FE resolvers has a clean one-stop reference.
+
