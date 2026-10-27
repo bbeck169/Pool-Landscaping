@@ -278,16 +278,28 @@ export function Modal({ open, onClose, title, children, footer, testid, wide }) 
 export function Toast({ toast, onClose }) {
   if (!toast) return null;
   const tone = toast.tone || "success";
-  const styles = {
+  // TT hotfix (Feb-2026) — ``warning`` tone was added to resolve the
+  // QQ-reopen ship's crash where ``setToast({ tone: "warning" })``
+  // dereferenced an undefined palette.  Also added a safe
+  // ``?? tones.info`` fallback so any future unknown tone resolves
+  // to the lowest-emphasis neutral palette instead of throwing.
+  // Fallback target is ``info`` deliberately (NOT ``success``,
+  // which would falsely signal "all good"; NOT ``error``, flagged
+  // against reuse in the mobile parked TD at
+  // TD-qq-info-mobile-crew-editor-must-include-dropped-member-warning).
+  const tones = {
     success: { bg: colors.success, fg: "#fff" },
-    error: { bg: colors.error, fg: "#fff" },
-    info: { bg: colors.brand, fg: "#fff" },
-  }[tone];
+    error:   { bg: colors.error,   fg: "#fff" },
+    info:    { bg: colors.brand,   fg: "#fff" },
+    warning: { bg: colors.warning, fg: "#fff" },
+  };
+  const styles = tones[tone] ?? tones.info;
   return (
     <div
       className="fixed bottom-6 right-6 z-50 rounded-xl px-4 py-3 shadow-lg text-sm font-semibold"
       style={{ backgroundColor: styles.bg, color: styles.fg }}
       data-testid="toast"
+      data-tone={tone}
       onClick={onClose}
     >
       {toast.message}

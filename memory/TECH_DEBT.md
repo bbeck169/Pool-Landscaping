@@ -2700,3 +2700,60 @@ Vitest total after this ship: **18 passing cases** (12 pre-existing from `179416
 - The 400 `foreign_tenant` error branch (TD-86 categorised chips) is unchanged.
 - Mobile parity remains N/A (per the sibling mobile close-out block). When a mobile crew editor is eventually built, it MUST mirror BOTH the QQ Option A warning AND this QQ-reopen narrowing — the parked `TD-qq-info-mobile-crew-editor-must-include-dropped-member-warning` TD above has been noted; whoever picks that up should also pull in the `_preExisting` narrowing from this reopen.
 
+
+### TD-qq-reopen-fix-missing-warning-toast-variant · RESOLVED · Feb-2026 (TT, hotfix)
+
+**Status:** CLOSED — P0 hotfix sub-entry under the QQ-reopen resolution block above.
+
+**Chain:**
+- Web ship: `179416da6` · QQ Option A warning toast.
+- Narrowing ship: `4f7962ea0` · QQ-reopen pre-existing-ghost narrowing.
+- **This hotfix: TT ship** (SHA logged in commit header).
+
+### Root cause
+
+`frontend/src/components/ui-kit.jsx::Toast` (pre-TT L278-296) handled only three tones in its palette map (`success | error | info`) and had NO default fallback — the map was `{...}[tone]` with no `??` guard. When QQ Option A started emitting `setToast({ tone: "warning", ... })` from the save handler, the Toast dereferenced `styles.bg` on an `undefined` palette and crashed with `Cannot read properties of undefined (reading 'bg')`. The crash fired at `style={{ backgroundColor: styles.bg, color: styles.fg }}` (L289 pre-TT), so the toast never mounted and the crew-save flow raised a React error boundary instead of showing the user feedback.
+
+The gap had been latent since the Toast's inception — only exposed now because QQ was the first production surface to pass a tone outside `success | error | info`. The parked `TD-qq-info-mobile-crew-editor-must-include-dropped-member-warning` TD (above) had flagged the SAME gap on the mobile `ToastProvider.tsx:31` but nobody re-audited the web Toast when writing that TD, so the web crash shipped undetected.
+
+### Fix
+
+1. Added a `warning` key to the Toast tone map using the kit's canonical `colors.warning` token (`#CA8A04`, amber-600 — pre-existing in `theme.js:26`). Matches the solid-fill-background pattern of the sibling `success` / `error` / `info` tones (full-color bg + white fg, NOT the pale soft-fill that `Chip`'s `warning` palette uses — different kit component, different fill convention).
+2. Added a safe fallback: `const styles = tones[tone] ?? tones.info;`. Fallback target is `info` deliberately:
+   - NOT `success` — would falsely signal "all good" when a developer passes an unexpected tone.
+   - NOT `error` — explicitly flagged against reuse in the parked mobile TD (`TD-qq-info-mobile-crew-editor-must-include-dropped-member-warning`: _"Do not reuse `error` tone"_).
+   - `info` is the lowest-emphasis neutral default — safest for any unknown future tone.
+3. Added `data-tone={tone}` attribute so the operator and vitest can select by the originally-requested tone key (not the fallback-resolved one), making regressions visible without reading inline styles.
+
+The pre-TT default `const tone = toast.tone || "success";` is **preserved** — callers who omit `tone` still get the pre-TT success contract. Only the UNKNOWN-tone path changed (crash → info fallback).
+
+### Blast-radius audit — Toast-level `tone: "warning"` call-sites (production, non-test, non-Button/mustConfirm)
+
+All 4 were crashing in production before this hotfix. All 4 auto-resolve to the amber warning palette with no further code change required.
+
+| # | File | Line | Context |
+|---|---|---:|---|
+| 1 | `frontend/src/pages/ops/OpsHub.jsx` | 708 | QQ-reopen crew-save `setToast({ tone: "warning", message: "Saved, but these members couldn't be added: X, Y, Z" })` — the specific call-site that reproduced the operator-reported crash. |
+| 2 | `frontend/src/pages/ops/OpsHub.jsx` | 2688 | Bulk-archive partial-success: `setToast({ tone: "warning", message: "${ok} archived · ${failCount} locked", description: res.failed slice })`. |
+| 3 | `frontend/src/pages/customers/CustomersList.jsx` | 542 | Bulk-portal-invite partial-success toast (confirmed `setToast` context by `tone: "warning"` grep co-locality with sibling success/error branches). |
+| 4 | `frontend/src/pages/customers/CustomersList.jsx` | 1419 | `setToast({ tone: "warning", ... })` — another CustomersList partial-success surface. |
+
+Separately: `tone: "warning"` is also used in **test files** (`crew-save-dropped-members-warning.test.jsx`, `convert-estimate-to-invoice.test.jsx`, `send-and-copy-payment-link.test.jsx`, `convert-quote-to-invoice.test.jsx`, `customer-payment-link-truthful-toast.test.jsx`) but those are mock-level assertions on the toast object shape, not real Toast renders — they do not reach the crashing code path and are not in the blast radius.
+
+Separately: `tone: "danger"` call-sites exist widely (`JobsList.jsx`, `OpsHub.jsx:735`, `MarketingMediaAdmin.jsx:125`, etc.) but all are on `Button` / `mustConfirm` / bulk-action descriptors, NOT on `Toast` — different consumers with their own tone handlers. They do NOT crash. Spot-check confirmed via grep co-locality (`setToast(...)` vs `{ ..., tone: "danger", ... }` on `Button`/dialog descriptors is cleanly separable).
+
+### Coverage shipped
+
+`frontend/src/test/ui-kit-toast-tones.test.jsx` — new vitest file, 7 passing cases:
+
+- `warning` tone renders with `colors.warning` + white fg + `data-tone="warning"` attribute. **(1)**
+- Unknown tone (`"unknown-made-up-value"`) does NOT throw, falls back to `info` palette, preserves `data-tone` as the originally-requested unknown key. **(1)**
+- Pre-TT regression lock on `success | error | info` palettes. **(3)**
+- Omitted-tone default resolves to `success` (preserves pre-TT contract). **(1)**
+- Null/empty toast prop renders nothing (pre-TT contract). **(1)**
+
+### Why this did not fire sooner
+
+- Earlier `tone: "warning"` sites on Toast surfaces (`CustomersList.jsx:542`, `1419`; `OpsHub.jsx:2688`) must have shipped before Toast rendering was tested with those tones, OR were on cold paths that an operator rarely hit (bulk-archive partial failures, bulk-portal-invite partial failures). The QQ ship at `179416da6` finally exposed the gap on a hot path (every crew save with a newly-added-then-dropped member) and the operator caught it immediately.
+- The 7-case regression lock in this hotfix locks every production tone (`success`, `error`, `info`, `warning`) AND the unknown-fallback path — so adding a future `tone: "danger"` / `tone: "pending"` to Toast would surface here before shipping.
+
