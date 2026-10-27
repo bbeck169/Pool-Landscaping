@@ -64,7 +64,7 @@ import MarkOpenButton from "@/src/components/schedule/MarkOpenButton";
 import ScheduleMonthView from "@/src/components/schedule/ScheduleMonthView";
 import { reassignableTechs, bulkReassignPayload, type ReassignPick } from "@/src/lib/bulkReassign";
 import ReassignPickerList from "@/src/components/schedule/ReassignPickerList";
-import { filterMonthJobs } from "@/src/lib/monthGrid";
+import { filterMonthJobs, buildTechCrewIds } from "@/src/lib/monthGrid";
 import { useToast } from "@/src/components/ToastProvider";
 // Phase 23 · 2026-08-02 — Service / Repair progress ring tiles above the grid.
 import JobTrackerTiles from "./JobTrackerTiles";
@@ -413,15 +413,21 @@ function ScheduleCalendarInner() {
   // specific tech_id keeps that tech's jobs + unassigned jobs.
   // P9-C: defense-in-depth — techs always scoped to own jobs, even if
   // "all" leaks into state (fail closed).
+  // TD-xx mobile (web XX c19b8daf3) — union crew membership (plural) for
+  // both the admin filter and the auth-self tech branch (D2a). BE already
+  // applies the member_added_at floor for techs; not duplicated here.
+  const activeTechId = techFilter !== "all" ? techFilter : (isTech ? resolvedTechId : null);
+  const techCrewIds = useMemo(() => buildTechCrewIds(crews, activeTechId), [crews, activeTechId]);
+  const inTechCrews = useCallback((j: any) => !!techCrewIds && !!j.crew_id && techCrewIds.has(j.crew_id), [techCrewIds]);
   const filteredJobs = useMemo(() => {
     if (isTech) {
       const tid = techFilter !== "all" ? techFilter : resolvedTechId;
       if (!tid) return []; // fail closed: no id → empty
-      return jobs.filter((j) => j.technician_id === tid || !j.technician_id);
+      return jobs.filter((j) => j.technician_id === tid || !j.technician_id || inTechCrews(j));
     }
     if (techFilter === "all") return jobs;
-    return jobs.filter((j) => j.technician_id === techFilter || !j.technician_id);
-  }, [jobs, techFilter, isTech, resolvedTechId]);
+    return jobs.filter((j) => j.technician_id === techFilter || !j.technician_id || inTechCrews(j));
+  }, [jobs, techFilter, isTech, resolvedTechId, inTechCrews]);
 
   // INACTIVE-CUSTOMER-CASCADE — hide cancelled/skipped by default.
   // Persisted under `schedule_show_cancelled` (matches web key).
@@ -459,8 +465,8 @@ function ScheduleCalendarInner() {
   // (crew / tech / category) + the same client filters as filteredJobs/visibleJobs.
   const monthScopeQuery = `${!isTech && crewFilter ? `&crew_id=${crewFilter}` : ""}${isTech && resolvedTechId ? `&technician_id=${resolvedTechId}` : ""}${serviceCategoryParam(serviceCategory)}`;
   const monthClientFilter = useCallback(
-    (arr: any[]) => filterMonthJobs(arr, { isTech, techFilter, resolvedTechId, showCancelled }),
-    [isTech, techFilter, resolvedTechId, showCancelled],
+    (arr: any[]) => filterMonthJobs(arr, { isTech, techFilter, resolvedTechId, showCancelled, techCrewIds }),
+    [isTech, techFilter, resolvedTechId, showCancelled, techCrewIds],
   );
 
   const load = useCallback(async (force = false) => {
