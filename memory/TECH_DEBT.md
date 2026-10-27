@@ -3062,3 +3062,38 @@ Three atomic commits (option A), all in `mobile/app/(app)/schedule/calendar.tsx`
   - TD-78a (closed-job lock audit) · TD-78b (checklist banner) · TD-78c (dispatcher inclusion) — all shipped.
   - TD-78b checklist banner full-render mobile test gap (line 409) — unchanged by WW.
 
+
+## TD-ww-edit-completed-jobs · RESOLVED · Feb-2026 (WW · FE commit)
+- **FE wire-up (2 files, 2 new vitest files, one atomic commit):**
+  - **`frontend/src/pages/jobs/JobDetail.jsx` (1 anchor):** inserted the new `jd-edited-after-completion-badge` adjacent to the existing `StatusPill` at the header card. Strict-equality gate `job.edited_after_completion === true` matches the BE's `$set: True` denorm shape — any non-boolean value yields no render. Badge SITS ALONGSIDE the two pre-existing K6 banners (`jd-closed-job-edits-logged-banner` + `jd-k6-edit-after-completion-banner`) which stay unchanged — the K6 banners are PRE-edit "editable" cues; the WW badge is the POST-edit "has been edited" cue (operator S3(a) literal).
+  - **`frontend/src/pages/tech/ServiceReport.jsx` (3 anchors):**
+    1. **Parallel job-meta fetch** — added `jobMeta` state slice + a secondary `api.get(\`/jobs/${id}\`)` in `load()` wrapped in a soft-fail try/catch so a 404 (soft-deleted job) or 403 keeps the pre-WW locked UX intact. Needed because `GET /jobs/{id}/service-report::existing["job"]` subdoc does NOT surface `edited_after_completion` (BE enrichment surface mismatch — not widening it in-scope since the FE commit is bounded to 2 FE files + 2 vitest + memory per operator non-negotiable). Backend `GET /jobs/{id}` enforces the same crew-aware tech-auth guard as the service-report GET, so the 200 doubles as a BE-authorized proxy.
+    2. **Narrow unlock derivation** — `const wwUnlocked = locked && _parentStatus === "completed" && !!jobMeta;` — three-term compound gate. `_parentStatus` reads from `jobMeta?.status` with fallback to `report?.job?.status`. The `!!jobMeta` term doubles as the BE-authorized proxy (if the secondary GET succeeded, the viewer is write-authorized on this job per `is_tech_authorized_on_job`). Open-status jobs (`in_progress` / `active` / `scheduled`) stay fully locked — the derivation requires strict `=== "completed"`.
+    3. **Gate updates:**
+       - Checklist toggle button (previously `disabled={locked}`): now `disabled={locked && !wwUnlocked}` + handler `(!locked || wwUnlocked) && toggleCheck(i)`.
+       - Checklist note input visibility (previously `c.checked && !locked`): now `c.checked && (!locked || wwUnlocked)`.
+       - Photo delete button (previously `!locked && (...)`): now `(!locked || wwUnlocked) && (...)`.
+       - Photo add label (previously `!locked && remaining > 0`): now `(!locked || wwUnlocked) && remaining > 0`.
+       - **CHEM-LOCK preserved exactly** on chemistry readings (3 rows × ~4 controls each), chemicals-added rows, repair-mode notes, main notes textarea — all 7+ remaining `disabled={locked}` sites unchanged (operator S2(a) narrow scope). The ONLY `disabled={locked && !wwUnlocked}` in the file is the checklist toggle — vitest Case 6 locks the count invariant.
+       - `svc-report-locked-hint` CHEM-LOCK banner stays rendered under `{locked ? ...}`; copy adapts to `wwUnlocked` so techs know WHICH controls just opened (checklist + photos) and WHICH stayed locked (chemistry + notes). No second banner shipped.
+       - New `svc-report-edited-after-completion-badge` added as a mirror of the JobDetail badge — same strict-equality gate on `jobMeta?.edited_after_completion === true`.
+- **Payload paths unchanged.** The checklist toggle still writes to `PUT /jobs/${id}/field-report` (operator S4(a) preserved the legacy path); the photo add/delete controls still hit `POST /jobs/${id}/photos` + `DELETE /jobs/${id}/photos/${pid}`. BE commit `5d105aaa3` wires the audit + denorm flip on all four sites.
+- **Vitest coverage** (2 new files, 20 cases total — source-grep style mirrors the sibling `jobdetail-td78b-banner` suite):
+  - `ww-jobdetail-edited-after-completion-badge.test.jsx` (8 cases): badge testid present; strict `=== true` gate; negative-lock on truthy-coerce rewrites; three testids coexist (K6 banners alongside); no dismissal state; literal copy "Edited after completion"; no portal/customer-context branch; `canEditCompleted` K6 gate regression-locked.
+  - `ww-service-report-tech-unlock.test.jsx` (12 cases): `wwUnlocked` derivation shape (locked + "completed" + `!!jobMeta`); checklist toggle gate opens on `wwUnlocked`; checklist note input gate opens; photo DELETE gate opens; photo ADD gate opens; **CHEM-LOCK preserved** — exactly one `disabled={locked && !wwUnlocked}` in the file (the checklist toggle) + ≥7 `disabled={locked}` sites remain for chemistry/notes/chemicals-added; `svc-report-locked-hint` banner outer gate stays `{locked ? ...}` with adaptive copy; badge testid + strict-equality gate; badge not portal-wired; parallel `GET /jobs/{id}` with soft-fail try/catch; open-status jobs stay fully locked (no `"in_progress"` / `"active"` / `"scheduled"` in the derivation).
+- **Regression locks confirmed green on isolation:**
+  - `src/test/ww-jobdetail-edited-after-completion-badge.test.jsx`: 8/8 green.
+  - `src/test/ww-service-report-tech-unlock.test.jsx`: 12/12 green.
+  - `src/test/jobdetail-k6-completed-unlock.test.jsx`: 5/5 green (K6 role gate + banner locks unchanged).
+  - `src/test/jobdetail-td78b-banner.test.jsx`: 5/5 green (TD-78b closed-job banner shape unchanged).
+  - `src/test/JobDetail.unlock.test.jsx`: 12/12 green (K6 unlock PATCH payload shape unchanged).
+- **Scope boundary (non-negotiables confirmed):** FE commit touches `JobDetail.jsx` + `ServiceReport.jsx` + 2 new vitest + `memory/TECH_DEBT.md` only. `/app/mobile/` UNTOUCHED. `/app/backend/` UNTOUCHED (BE ship was separate commit `5d105aaa3`). Portal routes UNTOUCHED (no changes to `PortalServiceReports.jsx` or any customer-facing component — Phase 1 audit verified zero portal reads of `edited_after_completion`; vitest Case 7/11 confirm the badge isn't wrapped in any portal-context branch). Existing K6 banners (`jd-closed-job-edits-logged-banner`, `jd-k6-edit-after-completion-banner`) UNTOUCHED. CHEM-LOCK on chemistry/notes UNTOUCHED. No new deps.
+- **TD-ww ticket CLOSED.** BE SHA `5d105aaa3`; FE SHA (this commit) — see git log entry `feat(jobs/tech): WW badge + tech ServiceReport post-completion unlock for checklist/photos (WW, FE)`.
+- **Operator decision receipts** (closed on this ticket):
+  - S1 (a) — `dispatcher` stays IN K6_UNLOCK_ROLES. Role set UNTOUCHED on BE + FE.
+  - S2 (a) — tech ServiceReport narrow unlock = checklist + photos ONLY; chemistry/notes STAY locked.
+  - S3 (a) — net-new badge; renders only after first post-completion mutation; sits alongside K6 banners.
+  - S4 (a) — new `closed_job_checklist_toggle` event discriminator on legacy PUT path; FE path unchanged.
+  - Commit split — 2 atomic commits (BE + combined FE).
+- **Mobile parity:** DEFERRED to `e1_expo_frontend_dev` delegation. TD-78b checklist banner full-render mobile test gap (line 409) remains unchanged. Mobile WW scope: add equivalent `edited_after_completion` badge + narrow unlock lane on `app/job/[id]/checklist.tsx` + mobile `ServiceReport` equivalent. Backend commit `5d105aaa3` already covers the write-side invariants mobile would consume unchanged.
+

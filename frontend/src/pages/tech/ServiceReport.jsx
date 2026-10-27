@@ -81,6 +81,17 @@ export default function ServiceReport() {
     useIdempotencyKey();
 
   const [report, setReport] = useState(null);
+  // WW · Feb-2026 — Secondary job doc load so the ServiceReport
+  // page can read ``edited_after_completion`` (not surfaced on
+  // ``report.job`` subdoc) + ``technician_id`` for the client-
+  // side unlock approximation. Pairs with WW BE commit
+  // 5d105aaa3 which flips the denorm on the first post-
+  // completion mutation across 4 write sites. Backend
+  // ``GET /jobs/{id}`` enforces the same crew-aware tech-auth
+  // guard as ``GET /jobs/{id}/service-report`` — if this load
+  // 404s, we silently keep the pre-WW locked UX (no badge, no
+  // unlock lane).
+  const [jobMeta, setJobMeta] = useState(null);
   const [busy, setBusy] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [saveState, setSaveState] = useState("idle"); // idle | saving | saved | error
@@ -107,6 +118,15 @@ export default function ServiceReport() {
     try {
       const r = await api.get(`/jobs/${id}/service-report`);
       setReport(r);
+      // WW · Feb-2026 — parallel job-meta fetch for the badge +
+      // unlock approximation. Soft-fail: a 404 (soft-deleted
+      // job) or 403 keeps the pre-WW locked UX in place.
+      try {
+        const j = await api.get(`/jobs/${id}`);
+        setJobMeta(j);
+      } catch (_e) {
+        setJobMeta(null);
+      }
     } catch (e) {
       alert(e.message);
     } finally { setBusy(false); }
@@ -419,6 +439,36 @@ export default function ServiceReport() {
 
   const uncheckedCount = (report.checklist_items || []).filter((c) => !c.checked).length;
   const locked = !!report.submitted_at;
+  // WW · Feb-2026 — Narrow post-completion unlock lane for techs
+  // (and admins hitting the tech page). Enables checklist toggles
+  // + photo add/delete on a submitted report when:
+  //   (a) the parent job is in ``status == "completed"``, AND
+  //   (b) the current user is NOT a customer (admin/manager/
+  //       owner/tech/dispatcher all pass — BE guard
+  //       ``is_tech_authorized_on_job`` is the authoritative
+  //       check; this FE gate is a UX approximation per the
+  //       TD-78b note on JobDetail.jsx::K6_UNLOCK_ROLES).
+  // Chemistry / notes / chemicals-added STAY locked
+  // (CHEM-LOCK invariant preserved per operator S2(a) narrow
+  // scope).  The actual write-side 403 (if the tech isn't
+  // authorized on the job) still fires on the BE and surfaces
+  // through the existing ``alert()`` paths in ``addPhoto`` /
+  // ``toggleCheck`` write handlers.
+  const _parentStatus = (jobMeta?.status || report?.job?.status || "").toLowerCase();
+  const _userRole = (jobMeta?._role_hint
+                      || report?._user_role_hint
+                      || "").toLowerCase();
+  // The role hint fields above never ship from the BE — they're
+  // test-injection seams. Default to "no customer" via
+  // ``report.submitted_at`` + authorized-GET-returned-200 cascade:
+  // if we got here with a 200 ``report`` AND a 200 ``jobMeta``,
+  // the BE already confirmed the viewer is authorized to see this
+  // job. Mirrors the JobDetail K6 "role present + status
+  // completed" gate.
+  const wwUnlocked =
+    locked
+    && _parentStatus === "completed"
+    && !!jobMeta;  // 200 on GET /jobs/{id} ⇒ caller is BE-authorized
 
   // Phase 22 · Feb 2026 — Share visit link. Builds the public portal
   // URL and copies it to the OS clipboard. Only rendered when the
@@ -482,7 +532,13 @@ export default function ServiceReport() {
       {/* CHEM-LOCK · Feb-2026 — Tech-side "locked" hint.  Renders
           when the report is submitted AND admin hasn't unlocked.
           The tech's edit controls are already ``disabled={locked}``
-          throughout this file — this banner just tells them WHY. */}
+          throughout this file — this banner just tells them WHY.
+          WW · Feb-2026 — ``wwUnlocked`` opens a narrow lane for
+          checklist + photo add/delete on completed jobs; chemistry
+          / notes / chemicals-added stay locked (operator S2(a)).
+          The hint copy below adapts to the narrow unlock so techs
+          know WHICH controls just opened without us firing a
+          second banner. */}
       {locked ? (
         <div
           className="rounded-2xl p-3 mb-3 flex items-start gap-2 text-sm"
@@ -497,10 +553,36 @@ export default function ServiceReport() {
           <div>
             <div className="font-semibold">Report is locked</div>
             <div style={{ color: "#92400E" }}>
-              This visit has been submitted. Ask an admin to unlock
-              it if you need to correct something.
+              {wwUnlocked
+                ? "This visit has been submitted. Checklist toggles and photo add/delete are open on this completed job; chemistry and notes are locked. Changes are logged."
+                : "This visit has been submitted. Ask an admin to unlock it if you need to correct something."}
             </div>
           </div>
+        </div>
+      ) : null}
+
+      {/* WW · Feb-2026 — "Edited after completion" badge mirroring
+          the sibling badge on ``JobDetail.jsx`` (testid
+          ``jd-edited-after-completion-badge``). Renders only AFTER
+          the first post-completion mutation flipped
+          ``jobs.edited_after_completion`` on the BE (see WW BE
+          commit 5d105aaa3). Admin + tech only; NOT read by any
+          customer-portal surface (Phase 1 audit verified
+          ``PortalServiceReports.jsx`` has zero reads of this
+          denorm). */}
+      {jobMeta?.edited_after_completion === true ? (
+        <div
+          className="rounded-2xl p-2 mb-3 inline-flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider"
+          style={{
+            backgroundColor: "#FEF3C7",
+            color: "#78350F",
+            border: "1px solid #FCD34D",
+          }}
+          data-testid="svc-report-edited-after-completion-badge"
+          role="status"
+        >
+          <span aria-hidden>🕒</span>
+          Edited after completion
         </div>
       ) : null}
 
@@ -568,7 +650,7 @@ export default function ServiceReport() {
                  style={{ border: `1px solid ${colors.border}`, aspectRatio: "1/1" }}
                  data-testid={`svc-photo-${p.id}`}>
               <img src={p.data || p.url} alt={p.label} className="w-full h-full object-cover"/>
-              {!locked && (
+              {(!locked || wwUnlocked) && (
                 <button onClick={() => removePhoto(p.id)}
                         className="absolute top-1 right-1 rounded-full p-1"
                         style={{ backgroundColor: "rgba(0,0,0,0.7)", color: "#fff" }}
@@ -579,7 +661,7 @@ export default function ServiceReport() {
               )}
             </div>
           ))}
-          {!locked && remaining > 0 && (
+          {(!locked || wwUnlocked) && remaining > 0 && (
             <label className="rounded-xl flex items-center justify-center cursor-pointer"
                    style={{ border: `2px dashed ${colors.border}`,
                             backgroundColor: colors.surfaceSecondary,
@@ -755,9 +837,9 @@ export default function ServiceReport() {
                    style={{ backgroundColor: colors.surface,
                             border: `1px solid ${c.checked ? colors.success : colors.border}` }}
                    data-testid={`svc-check-${c.id}`}>
-                <button onClick={() => !locked && toggleCheck(i)}
+                <button onClick={() => (!locked || wwUnlocked) && toggleCheck(i)}
                         className="w-full flex items-start gap-2 text-left"
-                        disabled={locked}
+                        disabled={locked && !wwUnlocked}
                         data-testid={`svc-check-toggle-${c.id}`}>
                   {c.checked ? <CheckSquare size={20} style={{ color: colors.success }}/>
                              : <Square size={20} style={{ color: colors.muted }}/>}
@@ -765,7 +847,7 @@ export default function ServiceReport() {
                     {c.label}
                   </span>
                 </button>
-                {c.checked && !locked && (
+                {c.checked && (!locked || wwUnlocked) && (
                   <input value={c.notes || ""} placeholder="Optional note"
                          onChange={(e) => setCheckNote(i, e.target.value)}
                          className="w-full mt-2 px-2 py-1 rounded text-xs"

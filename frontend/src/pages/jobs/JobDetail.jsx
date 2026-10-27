@@ -600,8 +600,37 @@ export default function JobDetail() {
       >
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <div className="flex items-center gap-2 mb-2">
+            <div className="flex items-center gap-2 mb-2 flex-wrap">
               <StatusPill status={job.status} />
+              {/* WW · Feb-2026 — "Edited after completion" badge.
+                  Renders only AFTER the first post-completion
+                  mutation flipped ``jobs.edited_after_completion``
+                  on the BE (one of PATCH /jobs/{id}, POST/DELETE
+                  photos, or PUT /field-report with checklist on a
+                  completed job — see WW BE commit 5d105aaa3 for
+                  the 4-site flip).  Sits ALONGSIDE the existing
+                  K6 banners above (``jd-closed-job-edits-logged-
+                  banner`` + ``jd-k6-edit-after-completion-
+                  banner``) — those are PRE-edit "editable" cues;
+                  this is the POST-edit "has been edited" cue.
+                  Admin + tech only; the badge is NOT read by any
+                  customer-portal surface (verified in Phase 1
+                  audit of PortalServiceReports.jsx). */}
+              {job.edited_after_completion === true ? (
+                <span
+                  className="inline-flex items-center gap-1 text-[11px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full"
+                  style={{
+                    backgroundColor: "#FEF3C7",
+                    color: "#78350F",
+                    border: "1px solid #FCD34D",
+                  }}
+                  data-testid="jd-edited-after-completion-badge"
+                  role="status"
+                >
+                  <span aria-hidden>🕒</span>
+                  Edited after completion
+                </span>
+              ) : null}
               <span className="text-xs" style={{ color: colors.muted }}>
                 {job.service_type}
               </span>
