@@ -2770,6 +2770,9 @@ Red test on `main`: `frontend/src/test/k47-invoice-view-tracking.test.jsx` · `P
 
 ## TD-uu-schedule-bulk-assign-shows-crews-and-techs · RESOLVED · Feb-2026 (UU)
 
+> **Correction · Feb-2026 (XX)** — the paragraph below ("Downstream readers … already union over `technician_id` / `assigned_technician_id` / `assigned_to` / `tech_user_id` / `crew_id` at `routers/jobs.py:926-1060` + `CalendarSchedule.jsx:884-888`") was **over-stated**. That union holds only for the auth-self Phase P9 lane (`routers/jobs.py:387-466`) and the Phase F6a crew-filter path (`routers/jobs.py:1055-1095`). The admin `?technician_id=X` filter lane at `routers/jobs.py:468-488` and the FE `jobMatchesLane` at `CalendarSchedule.jsx:236-246` matched direct tech-id fields only and did NOT resolve crew membership. UU's assumption that the whole read surface was already crew-aware was wrong; see **TD-xx-crew-only-jobs-invisible-on-schedule · RESOLVED · Feb-2026 (XX)** below for the fix. Future readers reviewing this UU block for related work must consult the XX block for the correct downstream-reader taxonomy.
+
+
 **Status:** CLOSED — single-commit FE-only ship surfaces the pre-existing BE crew-assign capability on the Schedule bulk-action "Assign tech" dropdown.
 
 **BE context (unchanged by this ship):** `POST /api/jobs/bulk-reassign` (`backend/routers/jobs.py:4573`) has accepted `new_crew_id` alongside `new_tech_id` since **Feb-2026 Crew Phase A**. Validates same-tenant, writes `crew_id` and / or `technician_id` to the job doc independently, emits bell notifications + audit log rows per job. Downstream readers (`CalendarSchedule`, `jobsFilter`, `dispatch`, `scheduler map` colour legend) already union over `technician_id` / `assigned_technician_id` / `assigned_to` / `tech_user_id` / `crew_id` at `routers/jobs.py:926-1060` + `CalendarSchedule.jsx:884-888`. The capability has simply never been surfaced on the FE Schedule bulk-action bar until this ticket.
@@ -2810,4 +2813,61 @@ Three preferences were considered:
 ### Mobile parity
 
 **Explicitly out of scope.** The equivalent mobile Schedule bulk-action surface at `/app/mobile/` (if it exists) is a separate dispatch to `e1_expo_frontend_dev` after this ships. No parked TD created yet pending the mobile dev's pre-audit.
+
+
+## TD-xx-crew-only-jobs-invisible-on-schedule · OPEN (BE shipped; FE pending) · Feb-2026 (XX)
+
+**Status:** BE half shipped (SHA pending). FE sibling commit follows immediately. Entry will close when FE SHA lands.
+
+**Operator-reported P0:** Jobs assigned via UU's `new_crew_id` (crew-only; `technician_id` null) were invisible on BOTH:
+- The admin Schedule page per-tech filter (`?technician_id=X`).
+- The per-crew-member view when filtering by any individual crew member.
+
+**Chain:**
+- UU `1497ddd77` — shipped `new_crew_id` writes on the Edit Job + bulk-reassign paths. Correct in isolation.
+- UU memory block above over-claimed the read-surface was crew-aware across all lanes. See the Correction note on the UU block for the exact over-statement.
+- XX — closes the read-surface gap in both halves (BE admin lane + FE `jobMatchesLane`).
+
+### Root cause narrative
+
+Three READ paths that resolve "which jobs does this tech see":
+
+1. **Auth-self Phase P9 lane** (`routers/jobs.py:387-466`) — tech viewing own schedule. **Already correct** since Phase P9. Builds `$or` over tech-id-variants AND `crew_id IN <own crews>`.
+2. **Phase F6a crew-filter path** (`routers/jobs.py:1055-1095`) — admin filtering by `?crew_id=X`. **Already correct** since F6a. Builds `$or` of `crew_id = X` AND `technician_id IN crew.tech_ids`.
+3. **Admin tech-filter lane** (`routers/jobs.py:468-488`) — admin filtering by `?technician_id=X`. **MISSED crew membership.** The Phase K42 resolver returned a four-field `$or` over `JOB_TECH_FIELDS × id-variants`; no crew widening.
+
+The FE mirror `jobMatchesLane(job, laneId)` at `CalendarSchedule.jsx:236-246` had the SAME gap — direct field match plus `job.crew_id === laneId` only (literal crew-id-is-laneId; no "laneId is a member of crew" resolution).
+
+### XX fix shape
+
+- **BE** · Extend admin tech-filter lane at `scope_jobs_query` to fetch `crews` where `tech_ids ∋ _variants` and append `{"crew_id": {"$in": crew_ids}}` to the resolver's existing `$or`. Union semantics — SAME `$or`, no `$and`. Mirrors the plural crew-membership shape used in the auth-self and crew-filter lanes.
+- **FE** · Extend `jobMatchesLane(job, laneId, techCrewIds?)` with an optional third arg: a Set of crew-ids the laneId tech is a member of. Call-site pre-computes it from the already-fetched `crews` state. Pre-existing calls without the third arg behave identically to pre-XX (regression lock).
+
+### Plural-semantics decision
+
+A tech who is a member of multiple crews sees jobs from EVERY crew they're in. Rationale: mirrors the Phase F6a crew-filter and Phase P9 auth-self lanes (both already plural). No "primary crew" field; no new schema.
+
+### What ships in Commit 1 (BE)
+
+- `backend/routers/jobs.py::scope_jobs_query` admin elif-lane (~30 lines added).
+- `backend/tests/test_td_xx_admin_tech_filter_crew_widening.py` — 6 passing cases:
+  - (a) regression lock: four-field disjunction survives widening.
+  - (b) THE FIX: crew-only job matched via `crew_id` branch.
+  - (c) union-not-$and: both direct+crew in same `$or`, no duplicates.
+  - (d) negative lock: foreign crew's jobs excluded.
+  - (e) plural lock: multi-crew tech sees jobs from all their crews.
+  - (f) auth-self path untouched (elif structure survived edit).
+
+### What ships in Commit 2 (FE)
+
+- `frontend/src/pages/schedule/CalendarSchedule.jsx::jobMatchesLane` + call-site derivation (~15 lines).
+- `frontend/src/test/schedule-jobmatcheslane-crew-widening.test.jsx` — 5 vitest cases (see dispatch).
+
+### Why 2-commit split (not 1 combined)
+
+The two halves must flip in lockstep to produce the operator-visible fix (BE returns rows + FE renders them). Shipping as two atomic commits preserves per-concern git bisectability. BE first (test-provable in isolation); FE second (confirmed round-trip against BE sibling).
+
+### Mobile parity
+
+**Not touched by XX.** Mobile Schedule has its own equivalent at `/app/mobile/` (if the surface exists); delegation to `e1_expo_frontend_dev` follows after both XX commits land. Note that the UU-mobile `tech_id` payload bug and `/users?role=tech` tech-list source bug flagged in the DEPLOY-RC health check are SEPARATE from XX — those are mobile-WRITE-path bugs, XX is a READ-path lane bug.
 

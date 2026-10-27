@@ -479,12 +479,41 @@ async def scope_jobs_query(user: dict, tenant: dict, status: Optional[str], tech
         _variants, _or = await resolve_and_build_filter(
             technician_id, tenant_id=tenant.get("id"),
         )
-        if _or:
-            q.update(_or)
+        # XX · Feb-2026 — widen the admin tech-filter to ALSO match
+        # jobs whose ``crew_id`` resolves to a crew that contains
+        # this tech.  UU shipped ``new_crew_id`` writes without
+        # extending the admin read lane; a crew-only job (crew_id
+        # set, technician_id null) was invisible to every per-tech
+        # admin filter.  Plural semantics: a tech who is a member of
+        # multiple crews sees jobs from EVERY one of those crews
+        # (same contract the auth-self Phase P9 lane uses at L387-466).
+        _crew_rows = await db.crews.find(
+            {"tenant_id": tenant.get("id"),
+             "tech_ids": {"$in": _variants or [technician_id]}},
+            {"_id": 0, "id": 1},
+        ).to_list(None)
+        _crew_ids = [c["id"] for c in _crew_rows if c.get("id")]
+        if _or and "$or" in _or:
+            # Resolver returned a four-field tech-id disjunction.
+            # Union the crew-membership branch INTO the same ``$or``
+            # (widening — a job matches if any tech-field OR the
+            # crew_id resolves this tech).
+            _merged = list(_or["$or"])
+            if _crew_ids:
+                _merged.append({"crew_id": {"$in": _crew_ids}})
+            q["$or"] = _merged
+        elif _crew_ids:
+            # Resolver returned no tech-id matches (unknown id) but
+            # the id IS a crew member — still show their crew jobs.
+            q["$or"] = [
+                {"technician_id": technician_id},
+                {"crew_id": {"$in": _crew_ids}},
+            ]
         else:
             # Fallback — resolver could not find the id in either
-            # collection.  Preserve legacy behaviour so the caller
-            # still gets an empty set (not a full-scan blow-out).
+            # collection AND no crew contains it.  Preserve legacy
+            # behaviour so the caller still gets an empty set (not a
+            # full-scan blow-out).
             q["technician_id"] = technician_id
     if status and status != "all":
         q["status"] = status
