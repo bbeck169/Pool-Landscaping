@@ -2767,3 +2767,47 @@ Red test on `main`: `frontend/src/test/portal-invoice-title.test.jsx` · `TD-72b
 
 Red test on `main`: `frontend/src/test/k47-invoice-view-tracking.test.jsx` · `Phase K47 · Frontend web surface > InvoicesList has the Viewed column with a per-row testID` (L99). Stale substring assertion `expect(src).toContain(">Viewed<")` expected a raw `<th>Viewed</th>` column-header shape; the TD-95 Viewed-column sort-key refactor at `InvoicesList.jsx:1055` promoted it to the sortable primitive `<_SortableTh label="Viewed" col="viewed" ...>`, eliminating the literal `>Viewed<` substring from the source. Not a regression — feature enhancement (column became sortable). Replaced the substring with `/label=['"]Viewed['"]\s+col=['"]viewed['"]/` which locks both the user-visible label AND the sort-col key (tighter than the pre-SS assertion). Per-row testid assertion (`invoice-viewed-${r.id}`) and the `r.first_viewed_at` denorm-field read remain untouched. Ship: see commit header. Vitest confirmation: 17/17 pass post-fix.
 
+
+## TD-uu-schedule-bulk-assign-shows-crews-and-techs · RESOLVED · Feb-2026 (UU)
+
+**Status:** CLOSED — single-commit FE-only ship surfaces the pre-existing BE crew-assign capability on the Schedule bulk-action "Assign tech" dropdown.
+
+**BE context (unchanged by this ship):** `POST /api/jobs/bulk-reassign` (`backend/routers/jobs.py:4573`) has accepted `new_crew_id` alongside `new_tech_id` since **Feb-2026 Crew Phase A**. Validates same-tenant, writes `crew_id` and / or `technician_id` to the job doc independently, emits bell notifications + audit log rows per job. Downstream readers (`CalendarSchedule`, `jobsFilter`, `dispatch`, `scheduler map` colour legend) already union over `technician_id` / `assigned_technician_id` / `assigned_to` / `tech_user_id` / `crew_id` at `routers/jobs.py:926-1060` + `CalendarSchedule.jsx:884-888`. The capability has simply never been surfaced on the FE Schedule bulk-action bar until this ticket.
+
+### What ships
+
+**One FE commit** (BE untouched):
+
+1. **`AssignTechDropdown`** (`frontend/src/pages/schedule/CalendarSchedule.jsx`, picker fn) — now accepts a `crews` prop and merge-renders crews first (sub-label literal `"crew"`), then the pre-UU role-filtered techs (sub-label unchanged: `(t.role || "").replace("_", " ")`). Pre-UU tech-role filter (`pool_tech | landscape_tech | technician | tech`) is UNCHANGED — the tech half of the merged list still excludes admin / dispatcher / customer. Each crew row carries the testid `grid-selection-assign-crew-${c.id}` (mirror of the pre-existing `grid-selection-assign-tech-${...}`).
+2. **`onPick` payload shape** changed from a bare id to `{ kind: "tech" | "crew", id }` so the parent can route to the correct BE arg.
+3. **Parent state** (`CalendarSchedule.jsx:657-664`) — added `assignPickedKind` sidecar state (default `"tech"`) alongside the existing `assignPickedTechId`. Chose sidecar over renaming to keep the diff minimal and preserve all existing references to `assignPickedTechId`.
+4. **`doBulkReassign`** — switches payload between `{ job_ids, new_crew_id: id }` (crew pick) and `{ job_ids, new_tech_id: id }` (tech pick, regression-locked). Crew display name for the toast is resolved from the local `crews` list because the BE response's `new_tech_name` field doesn't apply to the crew branch.
+5. **`BulkReassignConfirmModal`** — accepts `crews` + `pickedKind` props; resolves the display name from `crews` when `pickedKind === "crew"`, otherwise from `techs` (regression-locked for the pre-UU tech-only path).
+6. **Call-sites** (3 total, all updated): L3046 (`AssignTechDropdown` inside `GridPanel`), L2727 (`GridPanel` prop destructure), L2511-2520 (`BulkReassignConfirmModal`). Confirmed via grep — no other call-sites of either component exist.
+
+### Vitest coverage shipped
+
+`frontend/src/test/schedule-bulk-reassign-crew.test.jsx` — 17 passing cases:
+
+- **Case 1 · dropdown merges crews + techs** (1): crews first with sub-label "crew", then techs with the pre-UU role sub-label.
+- **Case 2 · crew pick routes to `new_crew_id`** (1): asserts the exact payload shape AND that `new_tech_id` is absent.
+- **Case 3 · tech pick routes to `new_tech_id`** (1, regression lock): asserts the exact pre-UU payload shape AND that `new_crew_id` is absent.
+- **Case 4 · tech role-filter unchanged** (1): admin / dispatcher / customer users are filtered OUT of the tech half.
+- **Case 5 · empty / undefined crews degrades to tech-only** (3): empty crew list, both lists empty, undefined crews.
+- **Case 6 · source regex-locks on `CalendarSchedule.jsx`** (10): picker prop shape, both onPick payload shapes, crew testid shape, literal "crew" sub-label, `doBulkReassign` crew/tech branch pair, modal prop shape, modal crew name resolution, pre-UU role-filter regression lock.
+
+### Why single-commit FE-only
+
+The BE already supports crew-as-assignable end-to-end since Feb-2026 Crew Phase A. The FE's `BulkReassignTechPicker` had been filtering to tech-role users only and `doBulkReassign` had been hard-coding `new_tech_id` in the payload; both are pure FE gaps closed by this ticket. **Zero BE edits, zero schema migration, zero downstream reader change.**
+
+### Why Preference A
+
+Three preferences were considered:
+- **A (chosen):** set `crew_id` on each job via BE's `new_crew_id` arg. Clean separation of `crew_id` + `technician_id` dimensions preserved; downstream readers already union both.
+- **B (rejected):** fan-out — set the Job's `tech_ids` to the crew's `tech_ids` snapshot. Would conflict with the already-shipped BE contract that treats `crew_id` as a first-class independent field; snapshot drift between crew-member edits and already-assigned jobs would be a new class of bug.
+- **C (rejected):** single primary tech (first crew member). Loses operator intent entirely.
+
+### Mobile parity
+
+**Explicitly out of scope.** The equivalent mobile Schedule bulk-action surface at `/app/mobile/` (if it exists) is a separate dispatch to `e1_expo_frontend_dev` after this ships. No parked TD created yet pending the mobile dev's pre-audit.
+

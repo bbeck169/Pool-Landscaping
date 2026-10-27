@@ -656,6 +656,12 @@ export default function CalendarSchedule() {
   // "Delete N". Admin+ only, per backend permission check.
   const [assignConfirmOpen, setAssignConfirmOpen] = useState(false);
   const [assignPickedTechId, setAssignPickedTechId] = useState("");
+  // UU · Feb-2026 — crew-aware bulk reassign. ``assignPickedKind``
+  // carries the kind ("tech" | "crew") of ``assignPickedTechId`` so
+  // ``doBulkReassign`` can route to the correct ``new_tech_id`` /
+  // ``new_crew_id`` arg on ``POST /jobs/bulk-reassign`` (BE accepts
+  // both; the capability shipped under Feb-2026 Crew Phase A).
+  const [assignPickedKind, setAssignPickedKind] = useState("tech");
   const [assignBusy, setAssignBusy] = useState(false);
   const canMultiSelectAssign = canMultiSelectDelete;
   // BULK-RESCHEDULE-FIX · Feb-2026 — unified selection.
@@ -729,12 +735,23 @@ export default function CalendarSchedule() {
     setAssignBusy(true);
     try {
       const ids = Array.from(selectedJobIds);
-      const r = await api.post("/jobs/bulk-reassign", {
-        job_ids: ids, new_tech_id: assignPickedTechId,
-      });
+      // UU · Feb-2026 — route to ``new_crew_id`` when a crew is
+      // picked (BE accepts either new_tech_id OR new_crew_id since
+      // Feb-2026 Crew Phase A).  ``new_tech_name`` on the response
+      // is still populated by the BE for the tech path; the crew
+      // path uses the local crew lookup for the toast text so the
+      // user sees "Reassigned N job(s) to <Crew Name>".
+      const _payload = assignPickedKind === "crew"
+        ? { job_ids: ids, new_crew_id: assignPickedTechId }
+        : { job_ids: ids, new_tech_id: assignPickedTechId };
+      const r = await api.post("/jobs/bulk-reassign", _payload);
       const count = r?.count ?? 0;
       const failed = (r?.failed || []).length;
-      const techName = r?.new_tech_name || "tech";
+      const _crewName = assignPickedKind === "crew"
+        ? ((crews || []).find((c) => c.id === assignPickedTechId)?.name
+            || "crew")
+        : null;
+      const techName = _crewName || r?.new_tech_name || "tech";
       if (failed) {
         setToast({ text: `Reassigned ${count} of ${ids.length} to ${techName} · ${failed} failed`,
                      kind: "err" });
@@ -744,6 +761,7 @@ export default function CalendarSchedule() {
       clearSelection();
       setAssignConfirmOpen(false);
       setAssignPickedTechId("");
+      setAssignPickedKind("tech");
       await load();
     } catch (e) {
       setToast({ text: e?.message || "Bulk reassign failed", kind: "err" });
@@ -2424,11 +2442,15 @@ export default function CalendarSchedule() {
           onBulkNavigateRoute={doBulkNavigateRoute}
           canMultiSelectAssign={canMultiSelectAssign}
           onPatchJob={patchJobInPlace}
-          onOpenBulkAssign={(techId) => {
-            setAssignPickedTechId(techId);
+          onOpenBulkAssign={({ kind, id }) => {
+            // UU · Feb-2026 — picker now emits ``{ kind, id }``
+            // so parent state can route to the right BE arg.
+            setAssignPickedKind(kind);
+            setAssignPickedTechId(id);
             setAssignConfirmOpen(true);
           }}
           techs={techs}
+          crews={crews}
           onOpenEdit={isAdminRole ? ((jobRow) => setEditingJob(jobRow)) : undefined}
           isAdminForCard={isAdminRole}
           canClickCustomerName={canClickCustomerName}
@@ -2511,9 +2533,11 @@ export default function CalendarSchedule() {
         <BulkReassignConfirmModal
           count={selectedJobIds.size}
           techs={techs}
+          crews={crews}
           pickedTechId={assignPickedTechId}
+          pickedKind={assignPickedKind}
           busy={assignBusy}
-          onCancel={() => { setAssignConfirmOpen(false); setAssignPickedTechId(""); }}
+          onCancel={() => { setAssignConfirmOpen(false); setAssignPickedTechId(""); setAssignPickedKind("tech"); }}
           onConfirm={doBulkReassign}
         />
       ) : null}
@@ -2726,7 +2750,7 @@ export function GridPanel({
   // Phase F1 · Feb-2026 · multi-stop "Navigate route" bulk action —
   onBulkNavigateRoute,
   // Phase 28 · Feb-2026 · Schedule multi-select bulk reassign —
-  canMultiSelectAssign, onOpenBulkAssign, techs,
+  canMultiSelectAssign, onOpenBulkAssign, techs, crews,
   // Feb-2026 · Schedule-screen inline edit — admin+ Pencil affordance.
   onOpenEdit, isAdminForCard,
   // SCHEDULE-CUSTOMER-CLICKTHROUGH · Feb-2026 — precomputed boolean
@@ -3045,6 +3069,7 @@ export function GridPanel({
           {canMultiSelectAssign ? (
             <AssignTechDropdown
               techs={techs}
+              crews={crews}
               onPick={onOpenBulkAssign}
               count={selectedJobIds.size}
             />
@@ -3696,7 +3721,7 @@ function BulkDeleteConfirmModal({ count, busy, onCancel, onConfirm }) {
  * ``onPick(technician_id)`` which the parent uses to open the confirm
  * modal.
  */
-function AssignTechDropdown({ techs, onPick, count }) {
+function AssignTechDropdown({ techs, crews, onPick, count }) {
   const [open, setOpen] = React.useState(false);
   const ref = React.useRef(null);
   React.useEffect(() => {
@@ -3712,6 +3737,14 @@ function AssignTechDropdown({ techs, onPick, count }) {
     return role === "pool_tech" || role === "landscape_tech"
         || role === "technician" || role === "tech";
   });
+  // UU · Feb-2026 — merge crews into the dropdown.  BE already
+  // accepts ``new_crew_id`` on ``POST /jobs/bulk-reassign`` (Feb-
+  // 2026 Crew Phase A); the picker just needed to surface the
+  // existing capability.  Crews render first, then techs (so the
+  // operator sees the broader-scope option up top).  Each entry
+  // emits a ``{ kind, id }`` payload so the parent can route to
+  // the correct BE arg.
+  const crewOptions = Array.isArray(crews) ? crews : [];
   return (
     <div ref={ref} className="relative">
       <button
@@ -3734,29 +3767,51 @@ function AssignTechDropdown({ techs, onPick, count }) {
           }}
           data-testid="grid-selection-assign-menu"
         >
-          {options.length === 0 ? (
+          {crewOptions.length === 0 && options.length === 0 ? (
             <div className="px-3 py-2 text-xs" style={{ color: "#6b7280" }}
                  data-testid="grid-selection-assign-empty">
               No techs available
             </div>
-          ) : options.map((t) => (
-            <button
-              key={t.technician_id || t.id}
-              type="button"
-              onClick={() => {
-                setOpen(false);
-                onPick(t.technician_id || t.id);
-              }}
-              className="w-full text-left px-3 py-2 text-xs hover:bg-gray-100"
-              style={{ color: "#111" }}
-              data-testid={`grid-selection-assign-tech-${t.technician_id || t.id}`}
-            >
-              <div className="font-semibold">{t.name || t.first_name || t.email}</div>
-              <div style={{ color: "#6b7280", fontSize: 10 }}>
-                {(t.role || "").replace("_", " ")}
-              </div>
-            </button>
-          ))}
+          ) : (
+            <>
+              {crewOptions.map((c) => (
+                <button
+                  key={`crew-${c.id}`}
+                  type="button"
+                  onClick={() => {
+                    setOpen(false);
+                    onPick({ kind: "crew", id: c.id });
+                  }}
+                  className="w-full text-left px-3 py-2 text-xs hover:bg-gray-100"
+                  style={{ color: "#111" }}
+                  data-testid={`grid-selection-assign-crew-${c.id}`}
+                >
+                  <div className="font-semibold">{c.name || "Unnamed crew"}</div>
+                  <div style={{ color: "#6b7280", fontSize: 10 }}>
+                    crew
+                  </div>
+                </button>
+              ))}
+              {options.map((t) => (
+                <button
+                  key={t.technician_id || t.id}
+                  type="button"
+                  onClick={() => {
+                    setOpen(false);
+                    onPick({ kind: "tech", id: t.technician_id || t.id });
+                  }}
+                  className="w-full text-left px-3 py-2 text-xs hover:bg-gray-100"
+                  style={{ color: "#111" }}
+                  data-testid={`grid-selection-assign-tech-${t.technician_id || t.id}`}
+                >
+                  <div className="font-semibold">{t.name || t.first_name || t.email}</div>
+                  <div style={{ color: "#6b7280", fontSize: 10 }}>
+                    {(t.role || "").replace("_", " ")}
+                  </div>
+                </button>
+              ))}
+            </>
+          )}
         </div>
       ) : null}
     </div>
@@ -3772,11 +3827,21 @@ function AssignTechDropdown({ techs, onPick, count }) {
  * tech's display name so admins can double-check before firing the
  * POST /api/jobs/bulk-reassign call.
  */
-function BulkReassignConfirmModal({ count, techs, pickedTechId, busy,
+function BulkReassignConfirmModal({ count, techs, crews, pickedTechId,
+                                        pickedKind, busy,
                                         onCancel, onConfirm }) {
-  const picked = (techs || []).find(
-    (t) => (t.technician_id || t.id) === pickedTechId);
-  const techName = (picked && (picked.name || picked.first_name || picked.email)) || "tech";
+  // UU · Feb-2026 — resolve display name from the right source
+  // based on ``pickedKind``.  Tech lookup unchanged for the
+  // regression lock on the pre-UU single-tech flow.
+  let techName = "tech";
+  if (pickedKind === "crew") {
+    const _crew = (crews || []).find((c) => c.id === pickedTechId);
+    techName = (_crew && _crew.name) || "crew";
+  } else {
+    const picked = (techs || []).find(
+      (t) => (t.technician_id || t.id) === pickedTechId);
+    techName = (picked && (picked.name || picked.first_name || picked.email)) || "tech";
+  }
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center"
