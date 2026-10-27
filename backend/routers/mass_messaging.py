@@ -65,9 +65,15 @@ class BroadcastBase(BaseModel):
     audience_status: str = Field("active", pattern="^(active|inactive|both)$")
     # P2 #7 · Feb-2026 — Card-on-file + Portal-login filters.
     # ``None`` = no restriction; ``True`` = customer must have it.
-    # ``False`` is NOT supported in this ticket (deferred as P3
-    # negation variant); the normalizer rejects it at the boundary
-    # with 400 so we don't accidentally ship half-wired negation.
+    #
+    # YY · Feb-2026 — ``has_card_on_file`` now ALSO accepts ``False``
+    # ("no card on file" cohort — matches ``has_card_on_file != True``,
+    # i.e. ``False`` + null + missing, which is the exact inverse of
+    # the ``True`` branch). ``has_portal_login`` stays strict
+    # (``None`` | ``True`` only); the YY opt-in pattern below is
+    # the template for extending negation to portal-login later.
+    # The ``_validate_filters`` normalizer enforces this per-field
+    # asymmetry at the boundary.
     has_card_on_file: Optional[bool] = None
     has_portal_login: Optional[bool] = None
 
@@ -121,11 +127,15 @@ def _validate_filters(category_ids: List[str], service_days: List[str],
     empties. Rejects unknown day codes with 400 so the UI can't
     silently miss them.
 
-    P2 #7 · Feb-2026 — the two boolean filters are strictly
-    ``True`` | ``None`` only. Any other type (string ``"yes"``,
-    integer ``1``, explicit ``False``) is rejected at the boundary
-    with 400 so negation support doesn't get accidentally shipped
-    through a stray truthy string before the UI opts in."""
+    P2 #7 · Feb-2026 — the two boolean filters originally accepted
+    ``True`` | ``None`` only. YY · Feb-2026 opens the negation
+    variant on ``has_card_on_file`` ONLY — it now accepts
+    ``True`` | ``False`` | ``None``. ``has_portal_login`` remains
+    strict (``True`` | ``None``); the YY opt-in pattern on
+    ``has_card_on_file`` is the template for extending it later.
+    Any other type (string ``"yes"``, integer ``1``, etc.) is
+    rejected at the boundary with 400 so stray truthy strings
+    can't accidentally ship through the per-field asymmetry."""
     cats = sorted({(c or "").strip() for c in (category_ids or []) if (c or "").strip()})
     days_low = [(d or "").strip().lower() for d in (service_days or []) if (d or "").strip()]
     for d in days_low:
@@ -133,19 +143,29 @@ def _validate_filters(category_ids: List[str], service_days: List[str],
             raise HTTPException(400, f"Unknown service_day: {d}")
     days = sorted(set(days_low))
     techs = sorted({(t or "").strip() for t in (assigned_tech_user_ids or []) if (t or "").strip()})
-    # Reject stray truthy / non-boolean inputs on both P2 #7 flags.
-    # ``None`` (default) + ``True`` are the only accepted shapes.
-    for _name, _val in (("has_card_on_file", has_card_on_file),
-                         ("has_portal_login", has_portal_login)):
-        if _val is None:
-            continue
-        if _val is True:
-            continue
+    # ``has_card_on_file``: ``None`` | ``True`` | ``False`` accepted.
+    # YY · Feb-2026 lifted the ``False`` rejection to ship the
+    # "no card on file" audience filter. Any OTHER value (string,
+    # int, etc.) still fails closed with 400.
+    if (has_card_on_file is not None
+            and has_card_on_file is not True
+            and has_card_on_file is not False):
         raise HTTPException(400, {
             "code": "INVALID_FILTER_VALUE",
-            "field": _name,
+            "field": "has_card_on_file",
+            "message": "Only null, true, or false are accepted; "
+                       "strings / numbers are rejected.",
+        })
+    # ``has_portal_login``: ``None`` | ``True`` only. Negation
+    # deferred — follow the YY opt-in pattern on
+    # ``has_card_on_file`` to extend.
+    if has_portal_login is not None and has_portal_login is not True:
+        raise HTTPException(400, {
+            "code": "INVALID_FILTER_VALUE",
+            "field": "has_portal_login",
             "message": "Only null or true are accepted; false / strings / "
-                       "numbers are rejected (negation deferred as P3).",
+                       "numbers are rejected (negation deferred — see YY "
+                       "opt-in pattern on has_card_on_file to extend).",
         })
     return {"category_ids": cats, "service_days": days,
              "assigned_tech_user_ids": techs,
@@ -205,8 +225,17 @@ async def _resolve_audience(tenant_id: str, *,
     # customers that have never had a PM attached (vs ``False``
     # which fires when a PM is detached) means we have to match
     # ``True`` strictly, not ``$ne: False``.
+    #
+    # YY · Feb-2026 — negation branch: ``False`` matches the
+    # "no card on file" cohort. ``{"$ne": True}`` is the exact
+    # inverse of the positive branch (hits ``False`` + null +
+    # missing — i.e. every customer the ``True`` branch excludes),
+    # using the SAME denorm so the TD-10 banner/filter semantic
+    # agreement carries over unchanged.
     if has_card_on_file is True:
         q["has_card_on_file"] = True
+    elif has_card_on_file is False:
+        q["has_card_on_file"] = {"$ne": True}
     # P2 #7 · Portal-login — users-scan set-build. "Active portal
     # account" = ``role=customer`` user row with a non-empty
     # ``password_hash`` and ``deleted_at`` null (or absent) and
