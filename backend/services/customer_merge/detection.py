@@ -22,6 +22,10 @@ import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from config import db
+from services.customers.fuzzy_pairs import (
+    JW_MIN_SAFE_THRESHOLD,
+    jaro_winkler_neighbors,
+)
 
 
 # ─── Jaro-Winkler (in-process, no dep) ──────────────────────────────
@@ -313,21 +317,35 @@ def _detect_groups(
         named = [(r, _norm_name(r.get("name"))) for r in rows]
         named = [(r, n) for r, n in named if n]
         seen: set[str] = set()
+        # Ticket 292982: the all-pairs Jaro-Winkler sweep held the GIL for
+        # 15-25 s per scan and starved every concurrent request.  Find the
+        # matching pairs with rapidfuzz (GIL-free) and walk only those.
+        # Below the safe threshold keep the legacy pure-Python sweep.
+        neighbors = None
+        if min_score >= JW_MIN_SAFE_THRESHOLD:
+            neighbors = jaro_winkler_neighbors(
+                [n for _, n in named], min_score, jaro_winkler,
+            )
         for i, (a, an) in enumerate(named):
             if a["id"] in seen:
                 continue
             cluster: List[Dict[str, Any]] = [a]
             best_score = 1.0
-            for j in range(i + 1, len(named)):
-                b, bn = named[j]
+            if neighbors is not None:
+                candidates = (
+                    (named[j][0], score)
+                    for j, score in neighbors.get(i, ())
+                )
+            else:
+                candidates = (
+                    (named[j][0], jaro_winkler(an, named[j][1]))
+                    for j in range(i + 1, len(named))
+                    if named[j][1] != an
+                )
+            for b, score in candidates:
                 # skip if already exact-matched pair
                 if b["id"] in seen:
                     continue
-                # exact name equality is handled by name+address; only
-                # emit fuzzy for STRICTLY NON-EQUAL name strings
-                if an == bn:
-                    continue
-                score = jaro_winkler(an, bn)
                 if score >= min_score:
                     cluster.append(b)
                     best_score = min(best_score, score)

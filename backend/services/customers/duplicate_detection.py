@@ -45,6 +45,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
+from services.customers.fuzzy_pairs import levenshtein_or_substring_pairs
 from services.imports.customer_autocreate import _norm_phone
 from services.imports.customer_match_ladder import (
     _canon_name,
@@ -294,31 +295,18 @@ def _detect_from_rows(
             _FUZZY_SWEEP_CUSTOMER_CEILING,
         )
     else:
-        n = len(fuzzy_candidates)
-        for i in range(n):
-            cid_a, n_a = fuzzy_candidates[i]
-            for j in range(i + 1, n):
-                cid_b, n_b = fuzzy_candidates[j]
-                # Already linked under an exact tier?  Still
-                # record ``name_fuzzy`` as a reason only if the
-                # fuzzy predicate ALSO hits — the FE renders
-                # the full reason list for the pair.
-                if (n_a == n_b):
-                    # Exact-name hit — tier 1 already linked
-                    # them AND stamped ``name_exact``.  Skip
-                    # to avoid misreporting as fuzzy.
-                    continue
-                is_substr = (
-                    len(n_b) >= _FUZZY_MIN_NAME_LEN
-                    and len(n_a) >= _FUZZY_MIN_NAME_LEN
-                    and (n_a in n_b or n_b in n_a)
-                )
-                d = (
-                    0 if is_substr
-                    else levenshtein(n_a, n_b, _FUZZY_MAX_DIST)
-                )
-                if d <= _FUZZY_MAX_DIST:
-                    _link(cid_a, cid_b, "name_fuzzy")
+        # Ticket 292982: the pure-Python all-pairs Levenshtein sweep held
+        # the GIL for 10-15 s per scan.  Find the matching pairs with
+        # rapidfuzz (GIL-free), already sorted (i, j) so union-find roots
+        # and group ids come out exactly as before.
+        for i, j in levenshtein_or_substring_pairs(
+            [n for _, n in fuzzy_candidates],
+            _FUZZY_MAX_DIST, _FUZZY_MIN_NAME_LEN,
+        ):
+            _link(
+                fuzzy_candidates[i][0], fuzzy_candidates[j][0],
+                "name_fuzzy",
+            )
 
     # ── Materialise groups ──
     # The union-find's groups() contains every added id — groups
