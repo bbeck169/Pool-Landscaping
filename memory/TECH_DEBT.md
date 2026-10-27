@@ -2554,3 +2554,50 @@ Original approval-request note:
 
 Informational TD surfaced during the Ticket PP audit. `routers/service_reports.py::build_completion_sms_body` uses hand-rolled single-brace `str.format(first_name=…)` templating against a tenant-configurable Mongo-stored string, while the canonical merge-tag resolver (`services.marketing.merge_tags.render_template`) expects double-brace `{{first_name}}` shape. The two shapes are mutually incompatible, so converting the callsite is NOT a drop-in change. No active bug — tenants' stored templates are already single-brace and `str.format` resolves them correctly. Act only when a natural reason to touch `build_completion_sms_body` surfaces (e.g. adding a new merge token, or widening the i18n catalog). At that point: either (a) migrate the tenant-stored template strings from single-brace to double-brace in a dedicated migration + flip the callsite, or (b) teach the canonical resolver to accept both shapes. Prefer (a) for architectural cleanliness; prefer (b) if the migration blast radius is deemed too wide. Priority P3 (no active impact).
 
+
+## TD-qq-mobile-parity · NOT APPLICABLE · Feb-2026 (mobile surface absent)
+
+**Status:** CLOSED — mobile parity is not applicable; no mobile crew editor exists today.
+
+**Web ship referenced:** `179416da6` · `fix(ops-hub): surface silently-dropped crew members in save warning toast (QQ, Option A)` (OpsHub.jsx + `frontend/src/test/crew-save-dropped-members-warning.test.jsx`).
+
+**Mobile pre-audit findings (from `e1_expo_frontend_dev`, Feb-2026):**
+
+| # | Finding | Path |
+|---|---|---|
+| 1 | Crew edit screen is a placeholder (`ComingSoonPage`) since commit `d0db3ac0f` (Aug 2026). | `app/crews.tsx` |
+| 2 | No `POST /crews` or `PATCH /crews/:id` callers exist anywhere in `/app/mobile/`. | — |
+| 3 | Entry points lead only to the placeholder. | `app/operations.tsx:38` · `src/nav/adminNav.ts:142` |
+| 4 | Read-only consumers of crew data exist and don't need the warning. | `app/(app)/schedule/calendar.tsx:345` · `src/components/schedule/CrewFilterBar.tsx` · `app/(app)/dispatch/board.tsx` |
+| 5 | Toast provider only ships `success | error | info` tones today; `warning` tone does not exist. | `src/components/ToastProvider.tsx:31` |
+
+**FE source-regex lock pattern to mirror when the mobile crew editor is eventually built** (from `frontend/src/test/crew-save-dropped-members-warning.test.jsx` · QQ Case 4):
+
+1. Save handler captures the api response: `const _res = editing ? await api.patch(...) : await api.post(...)`.
+2. Diffs submitted vs persisted: `_droppedIds = _submitted.filter((x) => !_persisted.includes(x))`.
+3. Warning copy (exact string): `Saved, but these members couldn't be added: X, Y, Z`.
+4. `tone: "warning"` on the dropped-member branch (NOT success).
+5. Name lookup precedence: `scopedTechs.find` → `incomingMembers.find` → `id.slice(0, 8)` fallback.
+6. Preserves the existing 400 / `foreign_tenant` error branch (TD-86 categorised chips) exactly as-is.
+
+### TD-qq-info-mobile-crew-editor-must-include-dropped-member-warning (P3 · informational · parked)
+
+Informational TD parked at the time the mobile parity track was closed as N/A. When a mobile crew editor is eventually built (i.e. `app/crews.tsx` is lifted off `ComingSoonPage`), the implementer MUST mirror the web's QQ Option-A observability pattern BEFORE shipping, to avoid re-introducing the pre-QQ silent-drop UX gap on the mobile surface.
+
+**Checklist for the mobile crew editor implementer:**
+
+- [ ] On a 2xx response from `POST /crews` or `PATCH /crews/:id`, diff the submitted `tech_ids` array against the returned doc's `tech_ids` array.
+- [ ] If the diff is non-empty, resolve each dropped id to a display name via the mobile roster lookup first, the crew-doc `members` embedded join second, and the first 8 chars of the id as the final fallback.
+- [ ] Surface the warning copy `Saved, but these members couldn't be added: X, Y, Z` (match the exact web string for consistency across surfaces).
+- [ ] Add a `warning` tone variant to `src/components/ToastProvider.tsx` (currently only `success | error | info` per the pre-audit at line 31). Keep the mobile parity semantic: `warning` is NOT success — it indicates partial-success-with-dropped-members. Do not reuse `error` tone (the BE did not error; it 2xx'd).
+- [ ] Preserve the BE's intentional silent-drop contract on the mobile side as well — the diff-and-warn is the client's observability concern, not a BE-contract change.
+- [ ] Mirror the web source-regex lock pattern (see QQ Case 4 locks listed above) in a vitest/jest sibling test file so a future refactor can't silently sever the diff branch.
+
+**Canonical reference for whoever implements this:**
+- Source: `frontend/src/pages/ops/OpsHub.jsx` (Crews.save handler).
+- Test: `frontend/src/test/crew-save-dropped-members-warning.test.jsx` (12 cases, 6 of which are source-regex locks reusable verbatim against the mobile source).
+- Commit: `179416da6` (Feb-2026).
+- Backing BE posture: `TD-crew-silently-drop-orphan-members-and-backfill · Feb-2026` (operator-reversed Ticket G's strict-reject at `routers/ops.py:268-279`).
+
+**Priority:** P3 (no active impact — mobile crew editor doesn't exist today). Elevate to P1 the moment the placeholder is removed from `app/crews.tsx`.
+
