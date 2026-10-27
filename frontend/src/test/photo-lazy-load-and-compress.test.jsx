@@ -55,9 +55,25 @@ beforeEach(() => {
 // ═══════════════════════════════════════════════════════════════════
 describe("PhotoUploader · thumbnail rendering", () => {
   it("renders <img> with the /thumb URL and loading='lazy'", () => {
+    // ZZ-A · Feb-2026 — TD-88 fixture shape. ``PhotoUploader`` was
+    // swapped (TD-88) from ``jobId``-based URL composition to
+    // consuming the BE-emitted canonical URL ladder
+    // (``thumb_url || url || data || data_url`` — see
+    // ``PhotoUploader.jsx:146-158``). Test fixtures must carry
+    // ``thumb_url`` so the ladder resolves to it; the ``data``
+    // base64 is kept too so the "must NOT leak into the DOM"
+    // negative lock still exercises the no-base64 invariant.
+    // Mirrors the shape in the sibling TD-88 suite
+    // ``PhotoUploader.canonicalUrl.test.jsx:45``.
     const photos = [
-      { id: "p-1", data: "data:image/jpeg;base64,AAAA", label: "one" },
-      { id: "p-2", data: "data:image/jpeg;base64,BBBB", label: "two" },
+      { id: "p-1",
+        thumb_url: "/api/public/job-photo/j-thumb/p-1/thumb",
+        data: "data:image/jpeg;base64,AAAA",
+        label: "one" },
+      { id: "p-2",
+        thumb_url: "/api/public/job-photo/j-thumb/p-2/thumb",
+        data: "data:image/jpeg;base64,BBBB",
+        label: "two" },
     ];
     render(<PhotoUploader jobId="j-thumb" photos={photos}
                           onPhotosChange={() => {}} />);

@@ -3134,9 +3134,11 @@ Three atomic commits (option A), all in `mobile/app/(app)/schedule/calendar.tsx`
 - **No production code touched.** Test-only commit.
 - **Vitest confirmation:** 19/19 pass (was 18/19 pre-ZZ).
 
-### ZZ-A-2 (pending — ships next) · `photo-lazy-load-and-compress.test.jsx` rebaseline
-- **Root cause (previewing):** **TD-88 · Feb-2026** swapped `PhotoUploader` from `jobId`-based URL composition to consuming BE-emitted canonical URL fields (`thumb_url || url || data || data_url`). Test fixtures were not updated to carry `thumb_url`. The companion `PhotoUploader.canonicalUrl.test.jsx` ships correctly-shaped fixtures and passes.
-- Fix will update 2 fixtures to include `thumb_url` matching the TD-88 shape; preserves the `/^data:image/` negative assertion (base64 blob must not leak into the DOM).
+### ZZ-A-2 (SHA pending) · `photo-lazy-load-and-compress.test.jsx` rebaseline
+- **Root cause:** **TD-88 · Feb-2026** swapped `PhotoUploader` (`src/components/checklist/PhotoUploader.jsx:146-158`) from `jobId`-based URL composition to consuming BE-emitted canonical URL fields (fallback ladder `thumb_url || url || data || data_url`). The companion `PhotoUploader.canonicalUrl.test.jsx` ships correctly-shaped fixtures (6/6 green). This older `photo-lazy-load-and-compress.test.jsx` was NOT updated — its fixtures carried only `{ id, data, label }`, so the ladder correctly resolved to the base64 blob and the test's `jobId`-composed URL expectation failed.
+- **Fix:** added `thumb_url` to the 2 photo fixtures in the "renders <img> with the /thumb URL and loading='lazy'" case, matching the shape at `PhotoUploader.canonicalUrl.test.jsx:45`. Preserved the base64 `data` field so the `not.toMatch(/^data:image/)` negative-lock assertion still exercises the "base64 must NOT leak into the DOM" invariant — the TD-88 ladder's `thumb_url` wins ahead of `data`, so the img src is the URL path and the negative lock passes.
+- **No production code touched.** Test-only commit.
+- **Vitest confirmation:** 4/4 pass (was 3/4 pre-ZZ). TD-88 sibling `PhotoUploader.canonicalUrl.test.jsx` 6/6 green (regression-locked).
 
 ### Related Bucket C long-tail (not in scope for ZZ-A)
 - **#32 `task-l-mediastrip-thumb-swap.test.jsx`** — different source-grep guard against the TD-88 contract; same root cause as #22 but on a different component (`MediaStrip`). Not auto-fixed by ZZ-A-2.
