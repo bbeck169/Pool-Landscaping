@@ -2964,3 +2964,9 @@ Not touched. Reading A was approved — this fix is a resolver-flip only, no `cu
 
 A future reader comparing BE and FE resolvers has a clean one-stop reference.
 
+
+## TD-uu-mobile-schedule-bulk-reassign · mobile parity for UU (`1497ddd77`) · Feb-2026
+
+Three atomic commits (option A), all in `mobile/app/(app)/schedule/calendar.tsx`'s bulk-reassign modal:
+
+- **UU-mobile-1 · P0 payload field (`tech_id` → `new_tech_id`) — RESOLVED.** Mobile posted `{ job_ids, tech_id }`. BE `BulkReassignIn` (`backend/routers/jobs.py:4488`) has only `new_tech_id` / `new_crew_id`, so pydantic dropped the key and every mobile reassign returned 400 `"new_tech_id or new_crew_id is required"`. Verified live on preview with a fake job id; nothing was mutated. The fix is the key rename only. Locked by `__tests__/uu-mobile-bulk-reassign.test.ts`.

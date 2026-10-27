@@ -677,7 +677,7 @@ function ScheduleCalendarInner() {
     }
     setBusy(true);
     try {
-      await api.post("/jobs/bulk-reassign", { job_ids: [...checked], tech_id: reassignTechId });
+      await api.post("/jobs/bulk-reassign", { job_ids: [...checked], new_tech_id: reassignTechId });
       const techName = techs.find((t) => t.id === reassignTechId)?.name || "tech";
       Alert.alert("Reassigned", `${checked.size} job${checked.size === 1 ? "" : "s"} assigned to ${techName}.`);
       setChecked(new Set());
