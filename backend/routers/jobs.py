@@ -2540,6 +2540,50 @@ async def update_field_report(jid: str, body: FieldReportUpdate,
     update = {k: v for k, v in body.dict().items() if v is not None}
     if update:
         await db.jobs.update_one({"id": jid, "tenant_id": tenant["id"]}, {"$set": update})
+    # WW · Feb-2026 — ``closed_job_checklist_toggle`` audit for
+    # checklist edits on COMPLETED jobs via this legacy PUT path
+    # (the FE admin JobDetail.jsx still toggles here — the K6
+    # PATCH endpoint is the newer sibling). Shape mirrors
+    # ``closed_job_photo_add`` at the POST /jobs/{jid}/photos
+    # site below so the Communication Timeline + ops dashboards
+    # see a uniform ``db.job_edits`` row with a dedicated event
+    # discriminator. Open jobs stay silent to avoid
+    # double-logging routine field-report work.
+    if ("checklist" in update
+            and (job.get("status") or "").lower() == "completed"):
+        try:
+            await db.job_edits.insert_one({
+                "id": new_id(),
+                "tenant_id": tenant["id"],
+                "job_id": jid,
+                "event": "closed_job_checklist_toggle",
+                "edited_by": user.get("id"),
+                "edited_by_name": user.get("name") or user.get("email"),
+                "edited_by_role": (user.get("role") or "").lower(),
+                "edited_at": now_iso(),
+                "changes": {
+                    "checklist": {
+                        "before": job.get("checklist") or [],
+                        "after": update["checklist"],
+                    },
+                },
+                "reason": None,
+                "source": "web",
+            })
+            # WW · Feb-2026 — flip the ``edited_after_completion``
+            # denorm. ``$ne: True`` filter makes the write
+            # idempotent across all 4 completed-job write sites.
+            await db.jobs.update_one(
+                {"id": jid, "tenant_id": tenant["id"],
+                 "edited_after_completion": {"$ne": True}},
+                {"$set": {"edited_after_completion": True}},
+            )
+        except Exception as _audit_exc:  # pragma: no cover - defensive
+            logger.warning(
+                "[closed-job-edit] checklist-toggle audit soft-fail "
+                "tenant=%s job=%s err=%s",
+                tenant.get("id"), jid, _audit_exc,
+            )
     # Auto-bill: when chemicals are logged, accrue them onto the customer's monthly invoice.
     if "chemicals_added" in update:
         from routers.finances import accrue_chem_invoice
@@ -3921,6 +3965,12 @@ async def patch_job_edit_window(
 
     try:
         incoming["updated_at"] = now_iso()
+        # WW · Feb-2026 — flip the ``edited_after_completion`` denorm
+        # as part of the same atomic ``$set`` that applies the edit,
+        # so the denorm and the field changes land together (and roll
+        # back together via the audit delete-on-crash below).
+        # Idempotent — re-writing True is a no-op.
+        incoming["edited_after_completion"] = True
         await db.jobs.update_one(
             {"id": jid, "tenant_id": tenant["id"]}, {"$set": incoming},
         )
@@ -7659,6 +7709,16 @@ async def add_job_photo(jid: str, body: PhotoIn,
                 "reason": None,
                 "source": "web",
             })
+            # WW · Feb-2026 — flip the ``edited_after_completion``
+            # denorm. ``$ne: True`` filter makes the write
+            # idempotent (no-op once already True), satisfying the
+            # "flip exactly once" invariant across all 4
+            # completed-job write sites.
+            await db.jobs.update_one(
+                {"id": jid, "tenant_id": tenant["id"],
+                 "edited_after_completion": {"$ne": True}},
+                {"$set": {"edited_after_completion": True}},
+            )
         except Exception as _audit_exc:  # pragma: no cover - defensive
             logger.warning(
                 "[closed-job-edit] photo-add audit soft-fail "
@@ -7750,6 +7810,15 @@ async def delete_job_photo(jid: str, pid: str,
                 "reason": None,
                 "source": "web",
             })
+            # WW · Feb-2026 — flip the ``edited_after_completion``
+            # denorm. ``$ne: True`` filter makes the write
+            # idempotent across all 4 completed-job write sites
+            # (see photo-add site above for the invariant).
+            await db.jobs.update_one(
+                {"id": jid, "tenant_id": tenant["id"],
+                 "edited_after_completion": {"$ne": True}},
+                {"$set": {"edited_after_completion": True}},
+            )
         except Exception as _audit_exc:  # pragma: no cover - defensive
             logger.warning(
                 "[closed-job-edit] photo-delete audit soft-fail "
