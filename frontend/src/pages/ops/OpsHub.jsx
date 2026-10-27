@@ -666,13 +666,44 @@ function Crews() {
     // the structured ``detail`` payload the BE emits.
     setBeErrors([]);
     try {
-      if (editing) {
-        await api.patch(`/crews/${editing.id}`, form);
-      } else {
-        await api.post("/crews", form);
-      }
+      // TD-crew-silently-drop-orphan-members-and-backfill · Feb-2026
+      // observability (Ticket QQ · Option A, FE-only): capture the
+      // returned crew doc so we can diff ``form.tech_ids`` against
+      // ``_res.tech_ids`` below.  The BE may 2xx and still silently
+      // drop ``orphan`` / ``soft_deleted`` ids from the persisted
+      // list (operator-reversed Ticket G posture; see
+      // routers/ops.py L268-279).  Surfacing the diff lets the
+      // operator see what actually landed without reversing the
+      // BE's intentional silent-drop contract.
+      const _res = editing
+        ? await api.patch(`/crews/${editing.id}`, form)
+        : await api.post("/crews", form);
       setOpen(false); refresh();
-      setToast({ tone: "success", message: "Saved" });
+      const _submitted = Array.isArray(form.tech_ids) ? form.tech_ids : [];
+      const _persisted = Array.isArray(_res?.tech_ids)
+        ? _res.tech_ids : _submitted;
+      const _droppedIds = _submitted.filter(
+        (x) => !_persisted.includes(x));
+      if (_droppedIds.length > 0) {
+        // Resolve each dropped id to a display name — roster first
+        // (``scopedTechs`` is what the picker rendered), then the
+        // incoming crew-doc ``members`` join (covers legacy drift
+        // the roster filters out), finally fall back to the first
+        // 8 chars of the id so the operator can at least correlate
+        // against the BE INFO log.
+        const _nameLookup = (id) => {
+          const t = (scopedTechs || []).find((x) => x.id === id);
+          if (t && t.name) return t.name;
+          const m = (incomingMembers || []).find((x) => x.id === id);
+          if (m && m.name) return m.name;
+          return typeof id === "string" ? id.slice(0, 8) : String(id);
+        };
+        const _names = _droppedIds.map(_nameLookup).join(", ");
+        setToast({ tone: "warning",
+          message: `Saved, but these members couldn't be added: ${_names}` });
+      } else {
+        setToast({ tone: "success", message: "Saved" });
+      }
     } catch (e) {
       // The ``api`` client stashes the parsed response body on
       // ``e.data`` (see ``api.js`` request() wrapper).  Categorised
