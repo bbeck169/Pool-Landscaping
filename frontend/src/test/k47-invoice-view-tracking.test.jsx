@@ -96,7 +96,16 @@ describe("Phase K47 · Frontend web surface", () => {
 
   it("InvoicesList has the Viewed column with a per-row testID", () => {
     const src = R("frontend/src/pages/invoices/InvoicesList.jsx");
-    expect(src).toContain(">Viewed<");
+    // SS · Feb-2026 — de-staled the column-header assertion.  The
+    // pre-TD-95 raw ``<th>Viewed</th>`` shape was promoted to the
+    // sortable ``<_SortableTh label="Viewed" col="viewed" ...>``
+    // primitive (TD-95 Viewed-column sort-key resolver).  Match
+    // the sortable-primitive shape and additionally lock the sort
+    // ``col`` key so a future rename surfaces loudly.  Invariant
+    // preserved: there IS a Viewed column; it IS sortable by the
+    // ``viewed`` key; each row IS marked with the per-row testid;
+    // and the ``r.first_viewed_at`` denorm field is still read.
+    expect(src).toMatch(/label=['"]Viewed['"]\s+col=['"]viewed['"]/);
     expect(src).toContain("invoice-viewed-${r.id}");
     expect(src).toContain("r.first_viewed_at");
   });
