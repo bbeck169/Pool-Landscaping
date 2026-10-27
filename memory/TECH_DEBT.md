@@ -2601,3 +2601,56 @@ Informational TD parked at the time the mobile parity track was closed as N/A. W
 
 **Priority:** P3 (no active impact — mobile crew editor doesn't exist today). Elevate to P1 the moment the placeholder is removed from `app/crews.tsx`.
 
+
+## TD-invalidates-offline-bundle-forwardref-safe · RESOLVED (audit-moot + regression-lock shipped) · Feb-2026 (RR)
+
+**Status:** CLOSED — the bug does not reproduce in the current tree; a regression-lock pytest guards the audit-moot state so a future handler re-introducing the class of bug fails loudly before the openapi 500 reaches production.
+
+**Regression-lock test shipped:** `backend/tests/test_td_rr_invalidates_offline_bundle_forwardref_safe.py` (10 passing cases, incl. decoration-set equality lock, parameterised body-annotation ForwardRef resolution across all 7 handlers, and `app.openapi()` end-to-end build).
+
+**Sibling pre-existing test (same wall, patch_invoice angle):** `backend/tests/test_td_invoice_edit_openapi_build.py`.
+
+**Canonical fix reference (if this ever fails):** inline-helper sidestep at `backend/routers/invoice_edit.py:20-50` (`_invalidate_offline_bundle_for_user`), shipped as `TD-invoice-edit-forwardref · Feb-2026`.
+
+### Why the TD is moot in the current tree
+
+The decorator `invalidates_offline_bundle` at `backend/services/offline_bundle_cache.py:122-167` does NOT inspect type hints. It reads `kwargs.get("tenant")` and `kwargs.get("user")` at runtime and does an `isinstance(..., dict)` check. There is no `typing.get_type_hints`, no `inspect.signature(...).parameters[...].annotation`, no `ForwardRef` resolution path inside it.
+
+The original bug (`TD-invoice-edit-forwardref · Feb-2026`) was NOT in the decorator — it was in FastAPI's schema builder reacting to `@functools.wraps` applied to a handler whose body annotation was a locally-defined (closure-scoped) Pydantic model. The schema builder saw `Annotated[ForwardRef('InvoiceEditBody'), Body(...)]` and Pydantic raised `PydanticUserError` on every `/api/openapi.json` call.
+
+The 7 remaining decorated handlers all use **module-top-level** Pydantic body models, which the schema builder resolves cleanly:
+
+| # | File | Line | Handler | Body annotation shape |
+|---|---|---:|---|---|
+| 1 | `backend/routers/quotes.py` | 677 | `create_quote` | `body: QuoteIn` — module-top-level |
+| 2 | `backend/routers/quotes.py` | 2216 | `update_quote_status` | no body (query params only) |
+| 3 | `backend/routers/quotes.py` | 3552 | `delete_quote` | no body (query + path only) |
+| 4 | `backend/routers/jobs.py` | 1625 | `create_job` | `body: JobIn` — module-top-level |
+| 5 | `backend/routers/jobs.py` | 2581 | `update_job` | `body: JobUpdate` — module-top-level |
+| 6 | `backend/routers/jobs.py` | 3585 | `delete_job` | no body (path only) |
+| 7 | `backend/routers/jobs.py` | 3687 | `patch_job_edit_window` | `body: JobEditPatch` — module-top-level |
+
+Confirmation that the bug does not reproduce today: `pytest tests/test_td_invoice_edit_openapi_build.py` passes 2/2 (`app.openapi()` builds end-to-end). The RR regression-lock adds 10 more passing cases on top.
+
+### Why Option A (close with no code) was declined
+
+Option A (memory-only resolution record, mirroring Ticket PP) was functional but left the latent-risk class unprotected. A future handler added under `@invalidates_offline_bundle` with a locally-nested body model would re-introduce the original 500 at the next `/api/openapi.json` call, with no test-time surfacing. Option B's regression lock closes that gap at zero source-handler cost.
+
+### Why Option C (preemptively convert all 7 to inline-helper) was declined
+
+Option C would have reversed the shared-decorator abstraction operator approved in Lane D (`TD-offline-bundle-tenant-cache · Feb-2026`, commit `487c3e4d8`), broken the shared-tests pattern at `test_td_offline_bundle_tenant_cache.py:275-285`, and performed pre-emptive refactoring on 7 handlers whose current body annotations don't actually trigger the issue. High blast radius with no reproducing bug.
+
+### What the regression lock catches
+
+1. **Decoration-set drift** — any add / remove / move of an `@invalidates_offline_bundle` decoration in `backend/routers/` fails `test_decoration_set_matches_frozen_feb_2026_set` with a diff-style message naming the specific triples that changed. Line numbers are locked intentionally: a routine edit that shifts a decorated handler's position WILL fail this test, forcing a conscious review of whether the decoration shape itself (not just location) changed.
+2. **ForwardRef resolution regression** — `typing.get_type_hints(handler, include_extras=True)` is called on each of the 7 handlers (after `inspect.unwrap` to peel the `@functools.wraps` layer). A handler added under the decorator with a locally-nested Pydantic model will raise `NameError` here before reaching FastAPI's schema builder.
+3. **End-to-end openapi build** — final guard that the schema builds under all 7 decorations collectively.
+
+### Canonical fix pattern on test failure
+
+If `test_body_annotation_resolves_without_forwardref_error` ever fires:
+- Remove `@invalidates_offline_bundle` from the offending handler.
+- Add a module-private helper mirroring `_invalidate_offline_bundle_for_user` at `routers/invoice_edit.py:28-48`.
+- Call the helper at every success-return path.
+- Do NOT attempt to rewrite the decorator with `typing.get_type_hints` / `globalns` threading — the decorator does not inspect annotations and the root cause is FastAPI's schema builder, not the decorator's own reads.
+
