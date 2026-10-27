@@ -141,6 +141,24 @@ async def _resolve_tenant_members(
     ):
             resolved.add(t["id"])
 
+    # TD-crew-linked-technician-id · Oct-2026 — the crew picker
+    # (services.technicians_core) emits ``users.technician_id`` as the
+    # member id for field users that have no ``technicians`` row yet.
+    # Users created via the invite flow carry a ``technician_id`` that
+    # points at nothing, so the id matched neither ``users.id`` nor
+    # ``technicians.id`` above and was dropped as an orphan (silent
+    # "couldn't be added").  Accept it when it is the linked
+    # technician_id of a live user in this tenant.
+    if len(resolved) < len(ids):
+        _unresolved = [x for x in ids if x not in resolved]
+        async for u in db.users.find(
+            {"tenant_id": tenant_id, "technician_id": {"$in": _unresolved},
+             **_active_user},
+            {"_id": 0, "technician_id": 1},
+        ):
+            if u.get("technician_id"):
+                resolved.add(u["technician_id"])
+
     missing = [x for x in ids if x not in resolved]
     if not missing:
         return {"resolved": resolved, "missing": [], "errors": []}
@@ -162,6 +180,12 @@ async def _resolve_tenant_members(
         {"_id": 0, "id": 1},
     ):
         soft_deleted.add(t["id"])
+    async for u in db.users.find(
+        {"tenant_id": tenant_id, "technician_id": {"$in": missing}},
+        {"_id": 0, "technician_id": 1},
+    ):
+        if u.get("technician_id"):
+            soft_deleted.add(u["technician_id"])
 
     # Categorise each missing id — probe users + technicians across
     # ALL tenants so we can tell foreign_tenant from orphan.  Skips
@@ -244,6 +268,30 @@ async def list_crews(user: dict = Depends(get_current_user),
                 "tenant_id": tid,
                 "synthesized_from_users": True,
             })
+        # TD-crew-linked-technician-id · Oct-2026 — members stored by a
+        # user's linked ``technician_id`` (no technicians row).
+        _have = {t["id"] for t in techs}
+        _need = [x for x in tech_ids if x not in _have]
+        if _need:
+            async for u in db.users.find(
+                {"tenant_id": tid, "technician_id": {"$in": _need}},
+                {"_id": 0, "id": 1, "technician_id": 1, "email": 1,
+                 "first_name": 1, "last_name": 1, "name": 1, "phone": 1,
+                 "role": 1},
+            ):
+                techs.append({
+                    "id": u.get("technician_id"),
+                    "user_id": u.get("id"),
+                    "name": (u.get("name")
+                              or " ".join([u.get("first_name") or "",
+                                            u.get("last_name") or ""]).strip()
+                              or u.get("email") or "Unnamed"),
+                    "email": u.get("email"),
+                    "phone": u.get("phone"),
+                    "role": u.get("role"),
+                    "tenant_id": tid,
+                    "synthesized_from_users": True,
+                })
     tmap = {t["id"]: t for t in techs}
     for c in crews:
         c["members"] = [tmap[t] for t in (c.get("tech_ids") or []) if t in tmap]
@@ -405,6 +453,74 @@ async def update_crew(cid: str, body: dict, user: dict = Depends(require_admin),
     if r.matched_count == 0:
         raise HTTPException(404, "Crew not found")
     return await db.crews.find_one({"id": cid, "tenant_id": tenant["id"]}, {"_id": 0})
+
+
+@router.post("/crews/repair-technician-profiles")
+async def repair_technician_profiles(
+    dry_run: bool = False,
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """TD-crew-linked-technician-id · Oct-2026 — one-shot data repair.
+
+    Field users created via the invite flow carry a ``technician_id``
+    with no matching ``technicians`` row.  For every live, field-
+    assignable user in the caller's tenant whose ``technician_id``
+    resolves to no ``technicians`` row, insert one using that exact id
+    (so crews / jobs that already reference it stay valid).
+
+    Idempotent and tenant-scoped.  Never touches existing rows.  Pass
+    ``?dry_run=true`` to list what would be created without writing.
+    """
+    from services.technicians_core import ASSIGNABLE_ROLES
+    tid = tenant["id"]
+    _not_deleted = {"$or": [{"deleted_at": None},
+                            {"deleted_at": {"$exists": False}}]}
+    candidates = await db.users.find(
+        {"tenant_id": tid, "role": {"$in": ASSIGNABLE_ROLES},
+         "technician_id": {"$nin": [None, ""]},
+         "$and": [
+             _not_deleted,
+             {"$or": [{"is_active": {"$ne": False}}, {"is_active": None}]},
+             {"$or": [{"active": {"$ne": False}}, {"active": None}]},
+         ]},
+        {"_id": 0},
+    ).to_list(1000)
+    created, skipped = [], []
+    for u in candidates:
+        tech_id = u["technician_id"]
+        # Any row (any tenant, even soft-deleted) holding this id means
+        # it is NOT a dangling link — leave it alone.
+        if await db.technicians.find_one({"id": tech_id}, {"_id": 1}):
+            skipped.append({"user": u.get("name"), "technician_id": tech_id,
+                            "reason": "technicians row already exists"})
+            continue
+        name = (u.get("name")
+                or " ".join([u.get("first_name") or "",
+                              u.get("last_name") or ""]).strip()
+                or u.get("email") or "Unnamed")
+        doc = {
+            "id": tech_id,
+            "tenant_id": tid,
+            "user_id": u["id"],
+            "name": name,
+            "email": u.get("email"),
+            "phone": u.get("phone") or "",
+            "avatar": "",
+            "department": u.get("department"),
+            "display_color_hex": u.get("display_color_hex"),
+            "active": True,
+            "created_at": now_iso(),
+            "linked_at": now_iso(),
+            "linked_by_user_id": user.get("id"),
+        }
+        if not dry_run:
+            await db.technicians.insert_one(dict(doc))
+            logger.info("[crews] repaired missing technician profile "
+                        "tenant_id=%s user_id=%s technician_id=%s",
+                        tid, u["id"], tech_id)
+        created.append({"user": name, "technician_id": tech_id})
+    return {"dry_run": dry_run, "created": created, "skipped": skipped}
 
 
 @router.delete("/crews/{cid}")
