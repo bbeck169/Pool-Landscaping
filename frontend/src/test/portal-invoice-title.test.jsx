@@ -224,8 +224,17 @@ describe("TD-72b · PortalEstimates reuses resolvePortalInvoiceTitle", () => {
     // helper (same abstraction as /portal/invoices). Scope the
     // match to the PortalEstimates block by anchoring on the
     // ``navigate(`/portal/estimates/${r.id}`)`` click handler.
+    //
+    // SS · Feb-2026 — de-staled to accept both the pre-TD-72b bare-
+    // arg shape ``resolvePortalInvoiceTitle(r)`` AND the TD-72b-
+    // adjacent spread-and-override shape ``resolvePortalInvoiceTitle(
+    // { ...r, title: getInvoiceDisplayTitle(r) })`` (imported-
+    // placeholder title normalisation layered in front of the
+    // fallback chain).  The invariant is that the Estimates
+    // click-navigation row's title flows through the shared
+    // resolver — not the specific argument shape.
     expect(PP_SRC).toMatch(
-      /_displayTitle\s*=\s*resolvePortalInvoiceTitle\(r\)[\s\S]{0,500}?navigate\(`\/portal\/estimates\/\$\{r\.id\}`\)/,
+      /_displayTitle\s*=\s*resolvePortalInvoiceTitle\([\s\S]{0,160}?r[\s\S]{0,500}?navigate\(`\/portal\/estimates\/\$\{r\.id\}`\)/,
     );
     expect(PP_SRC).toMatch(/data-testid=\{`port-est-title-\$\{r\.id\}`\}/);
   });

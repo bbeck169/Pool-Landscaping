@@ -2757,3 +2757,8 @@ Separately: `tone: "danger"` call-sites exist widely (`JobsList.jsx`, `OpsHub.js
 - Earlier `tone: "warning"` sites on Toast surfaces (`CustomersList.jsx:542`, `1419`; `OpsHub.jsx:2688`) must have shipped before Toast rendering was tested with those tones, OR were on cold paths that an operator rarely hit (bulk-archive partial failures, bulk-portal-invite partial failures). The QQ ship at `179416da6` finally exposed the gap on a hot path (every crew save with a newly-added-then-dropped member) and the operator caught it immediately.
 - The 7-case regression lock in this hotfix locks every production tone (`success`, `error`, `info`, `warning`) AND the unknown-fallback path — so adding a future `tone: "danger"` / `tone: "pending"` to Toast would surface here before shipping.
 
+
+### TD-portal-invoice-title-test-regex-stale · RESOLVED · Feb-2026 (SS)
+
+Red test on `main`: `frontend/src/test/portal-invoice-title.test.jsx` · `TD-72b · PortalEstimates reuses resolvePortalInvoiceTitle > Estimates list row reads title via resolvePortalInvoiceTitle(r)` (L227-229). Stale regex expected the bare-arg shape `resolvePortalInvoiceTitle(r)`; the TD-72b-adjacent evolution at `PortalPages.jsx:387-389` now spreads `r` and overrides `title` via `getInvoiceDisplayTitle(r)` to normalise imported-placeholder titles before the fallback chain runs. Not a regression — feature enhancement. Narrowed the regex to accept both the bare-`r` and spread-and-override shapes while still anchoring to the Estimates `navigate(`/portal/estimates/${r.id}`)` click handler within 500 chars (invariant preserved: title flows through the shared resolver on the Estimates click-row). Ship: see commit header. Vitest confirmation: 25/25 pass post-fix.
+
