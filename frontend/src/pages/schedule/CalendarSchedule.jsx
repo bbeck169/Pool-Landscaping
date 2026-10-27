@@ -233,16 +233,29 @@ function _canonicalTechId(t) {
 //
 // ``laneId`` acts as an "All" pseudo-value when falsy — every job
 // passes. That matches the ``techId === ""`` "All techs" convention.
-export function jobMatchesLane(job, laneId) {
+export function jobMatchesLane(job, laneId, techCrewIds) {
   if (!laneId) return true;               // "All" pseudo-value.
   if (!job) return false;
-  return (
+  if (
     job.technician_id === laneId
     || job.assigned_technician_id === laneId
     || job.assigned_to === laneId
     || job.tech_user_id === laneId
     || job.crew_id === laneId
-  );
+  ) return true;
+  // XX · Feb-2026 — crew-member lane widening.  A crew-only job
+  // (``crew_id`` set, ``technician_id`` null) must appear in the
+  // lane of EVERY member of the assigned crew.  ``techCrewIds`` is
+  // the Set of ``crew.id`` values this tech is a member of;
+  // mirrors the BE admin-lane widening landed in the sibling
+  // commit at ``routers/jobs.py::scope_jobs_query`` (XX, BE).
+  // When the third arg is omitted (pre-XX callers), behaviour is
+  // identical to the pre-XX direct-field disjunction above —
+  // backward-compat regression lock.
+  if (techCrewIds && job.crew_id && techCrewIds.has(job.crew_id)) {
+    return true;
+  }
+  return false;
 }
 
 export function getStatusBorderColor(status) {
@@ -1086,6 +1099,23 @@ export default function CalendarSchedule() {
     return c ? (c.tech_ids || []) : [];
   }, [crewId, crews]);
 
+  // XX · Feb-2026 — derive the set of ``crew.id`` values that the
+  // currently-selected tech lane is a member of.  Passed as the
+  // third arg to ``jobMatchesLane`` so crew-only jobs (``crew_id``
+  // set, ``technician_id`` null — written by UU's ``new_crew_id``
+  // flow) surface on each member's lane.  Mirrors the BE
+  // admin-lane widening at ``routers/jobs.py::scope_jobs_query``
+  // sibling commit.  Plural semantics: a tech in multiple crews
+  // gets jobs from every crew they belong to.
+  const techCrewIds = useMemo(() => {
+    if (!techId) return null;
+    const _ids = new Set();
+    for (const c of crews || []) {
+      if ((c.tech_ids || []).includes(techId)) _ids.add(c.id);
+    }
+    return _ids;
+  }, [techId, crews]);
+
   const filteredJobs = useMemo(() => {
     const ql = q.trim().toLowerCase();
     return rawJobs.filter((j) => {
@@ -1113,7 +1143,11 @@ export default function CalendarSchedule() {
         // has to do work if a stale in-flight response arrived
         // AFTER the filter changed OR if the fetch fell back to
         // the cache-window (mostly-empty range hits).
-        if (!jobMatchesLane(j, techId)) return false;
+        //
+        // XX · Feb-2026 — third arg ``techCrewIds`` carries the
+        // crew-ids this lane's tech is a member of so crew-only
+        // jobs surface here.
+        if (!jobMatchesLane(j, techId, techCrewIds)) return false;
       }
       if (status && j.status !== status) return false;
       if (service && (j.service_type || "").toLowerCase() !== service.toLowerCase()) return false;

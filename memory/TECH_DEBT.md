@@ -2817,7 +2817,7 @@ Three preferences were considered:
 
 ## TD-xx-crew-only-jobs-invisible-on-schedule · OPEN (BE shipped; FE pending) · Feb-2026 (XX)
 
-**Status:** BE half shipped (SHA pending). FE sibling commit follows immediately. Entry will close when FE SHA lands.
+**Status:** BE half shipped at `6fec5af2c`. FE sibling commit SHA logged in the commit header below this block (`git log --grep="XX, FE"`). **Entry closes once FE SHA is captured; see "Status update · FE sibling landed" footer.**
 
 **Operator-reported P0:** Jobs assigned via UU's `new_crew_id` (crew-only; `technician_id` null) were invisible on BOTH:
 - The admin Schedule page per-tech filter (`?technician_id=X`).
@@ -2870,4 +2870,25 @@ The two halves must flip in lockstep to produce the operator-visible fix (BE ret
 ### Mobile parity
 
 **Not touched by XX.** Mobile Schedule has its own equivalent at `/app/mobile/` (if the surface exists); delegation to `e1_expo_frontend_dev` follows after both XX commits land. Note that the UU-mobile `tech_id` payload bug and `/users?role=tech` tech-list source bug flagged in the DEPLOY-RC health check are SEPARATE from XX — those are mobile-WRITE-path bugs, XX is a READ-path lane bug.
+
+
+### Status update · FE sibling landed · Feb-2026 (XX, FE)
+
+**FE sibling SHA pending in this same commit's log entry** (`fix(schedule): jobMatchesLane widens to crew-membership (XX, FE)`).
+
+The FE half extends `jobMatchesLane(job, laneId, techCrewIds)` with an optional third-arg Set of crew-ids the laneId tech is a member of. Pre-computed once at the call-site from the already-fetched `crews` state. Pre-existing callers that omit the third arg continue to behave identically to pre-XX (regression lock).
+
+**Vitest coverage** (`frontend/src/test/schedule-jobmatcheslane-crew-widening.test.jsx` — 7 passing cases):
+- (a) THE FIX: crew-only job matches a member's lane when `techCrewIds` includes the job's `crew_id`.
+- (b) backward-compat: no `techCrewIds` arg → false (plus explicit `null`); no throw.
+- (c) direct-field disjunction preserved on all five direct-match fields.
+- (d) negative lock: crew-only job does NOT match a non-member tech's lane.
+- (e) plural semantics: multi-crew `techCrewIds` matches jobs from any constituent crew; non-member crew still misses.
+- (sanity) all-pass pseudo-value (`laneId` falsy); null-job returns false.
+
+**Round-trip note:** BE sibling at `6fec5af2c` returns the previously-invisible rows for `?technician_id=<Wiley>` admin queries. FE's `jobMatchesLane` now accepts them. The operator's reproduction (Gina Glee's Monthly Yard Maintenance assigned to Landscaping Maintenance crew) should now render on both Wiley Pratt's and Joey Ruzovich's individual schedules AND on the crew-filtered schedule. Confirmed by eye against the resolver + source — no e2e required per the dispatch.
+
+**Scope hygiene:** Only `frontend/src/pages/schedule/CalendarSchedule.jsx` + new vitest file + this memory status update. `/app/mobile/` and `/app/backend/` untouched by Commit 2.
+
+TD-xx closed.
 
