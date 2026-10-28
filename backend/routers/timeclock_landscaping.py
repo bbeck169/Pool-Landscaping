@@ -212,6 +212,118 @@ async def punch(body: PunchIn, user: dict = Depends(get_current_user)):
     return doc
 
 
+def _flatten_time_entries_to_events(rows: list) -> list:
+    """TC · C1 (Feb-2026) — flatten paired ``time_entries`` docs into the
+    event-row shape the ``timeclock_punches`` + ``_sum_shifts`` + FE
+    ``pairPunches.js`` consumers already speak. Each paired doc emits one
+    ``in`` event; if ``clock_out_at`` is non-null a matching ``out``
+    event is emitted too.
+
+    This is the normalization half of the TD-landscape-time-clock-unify-
+    reads cash-in (see memory/TD-landscape-time-clock-unify-reads.md).
+    The FE pairs the merged flat events client-side via
+    ``frontend/src/lib/timeclock/pairPunches.js:68-96`` — keeping the
+    wire shape flat means the admin aggregation UI stays byte-stable
+    after this ticket.
+    """
+    events: list = []
+    for r in rows:
+        in_at = r.get("clock_in_at")
+        if not in_at:
+            continue
+        in_geo = r.get("clock_in_geo") or {}
+        events.append({
+            "id": r.get("id"),
+            "tenant_id": r.get("tenant_id"),
+            "user_id": r.get("user_id"),
+            "timestamp": in_at,
+            "punch_type": "in",
+            "lat": in_geo.get("lat"),
+            "lng": in_geo.get("lng"),
+            "accuracy_m": in_geo.get("accuracy"),
+            "job_id": r.get("job_id"),
+            "source": "time_entries",
+        })
+        out_at = r.get("clock_out_at")
+        if out_at:
+            out_geo = r.get("clock_out_geo") or {}
+            events.append({
+                # Synthesize a distinct id for the OUT event so FE row
+                # keys stay unique (the paired doc only carries one id).
+                "id": f'{r.get("id")}-out',
+                "tenant_id": r.get("tenant_id"),
+                "user_id": r.get("user_id"),
+                "timestamp": out_at,
+                "punch_type": "out",
+                "lat": out_geo.get("lat"),
+                "lng": out_geo.get("lng"),
+                "accuracy_m": None,
+                "job_id": r.get("job_id"),
+                "source": "time_entries",
+            })
+    return events
+
+
+async def _unified_events(tenant_id: str, user_id: str,
+                            start_iso: str, end_iso: str) -> list:
+    """TC · C1 (Feb-2026) — read both the ``timeclock_punches`` event
+    log and the ``time_entries`` paired-shift log for a single tech in
+    a time window, flatten + merge + sort by timestamp ascending.
+    Preserves tenant isolation. The returned list carries a ``source``
+    field (``"time_entries"`` or ``"timeclock_punches"``) so callers +
+    admin UIs can attribute each event to its underlying collection.
+
+    Window semantics mirror the pre-TC single-collection behavior:
+    each collection is filtered on its own primary-timestamp field
+    (``timestamp`` for punches, ``clock_in_at`` for time entries).
+    Overnight shifts whose ``clock_in_at`` lands in-window surface
+    their matching ``clock_out_at`` even when it rolls past
+    ``end_iso``, by design — the pairing then surfaces the full
+    shift. The 2-day UTC-rollover scan at ``/mine-today`` is
+    preserved on its caller.
+
+    Also logs orphan OUT events (an ``out`` with no preceding open
+    ``in`` for the same tech in-window) at ``logger.warning`` level —
+    matches the FE pairPunches.js:84 ``console.warn`` precedent so
+    admins can spot data-quality issues. Non-fatal.
+    """
+    tp_rows = await db.timeclock_punches.find(
+        {"tenant_id": tenant_id, "user_id": user_id,
+         "timestamp": {"$gte": start_iso, "$lte": end_iso}},
+        {"_id": 0},
+    ).to_list(5000)
+    for r in tp_rows:
+        # Preserve any pre-existing source (e.g. "mobile", "web");
+        # fall back to the collection name as the authoritative tag.
+        r["source"] = r.get("source") or "timeclock_punches"
+
+    te_rows = await db.time_entries.find(
+        {"tenant_id": tenant_id, "user_id": user_id,
+         "clock_in_at": {"$gte": start_iso, "$lte": end_iso}},
+        {"_id": 0},
+    ).to_list(5000)
+    te_events = _flatten_time_entries_to_events(te_rows)
+
+    merged = tp_rows + te_events
+    merged.sort(key=lambda e: str(e.get("timestamp") or ""))
+
+    # Orphan-OUT forensics walk. Non-fatal; _sum_shifts naturally skips
+    # orphan OUTs during pairing but the warning helps admins notice.
+    open_in = None
+    for p in merged:
+        if p.get("punch_type") == "in":
+            open_in = p
+        elif p.get("punch_type") == "out":
+            if open_in is not None:
+                open_in = None
+            else:
+                logger.warning(
+                    "[timeclock] orphan OUT punch user=%s tenant=%s ts=%s source=%s",
+                    user_id, tenant_id, p.get("timestamp"), p.get("source"),
+                )
+    return merged
+
+
 def _sum_shifts(punches: list) -> int:
     """Sum completed shift durations (seconds). Open shifts ignored."""
     total = 0
@@ -234,12 +346,15 @@ def _sum_shifts(punches: list) -> int:
 async def summary(start: str = Query(...), end: str = Query(...),
                    user: dict = Depends(get_current_user)):
     await _require_landscaping(user)
-    rows = await db.timeclock_punches.find({
-        "tenant_id": user["tenant_id"],
-        "user_id": user["id"],
-        "timestamp": {"$gte": f"{start}T00:00:00+00:00",
-                       "$lte": f"{end}T23:59:59+00:00"},
-    }).sort("timestamp", 1).to_list(1000)
+    # TC · C1 (Feb-2026) — unified read across ``timeclock_punches``
+    # + ``time_entries`` so widget-sourced shifts (which land in
+    # ``time_entries`` since TD-timeclock-tech-clock-out-flow) surface
+    # alongside page / mobile punches on the per-tech summary.
+    rows = await _unified_events(
+        tenant_id=user["tenant_id"], user_id=user["id"],
+        start_iso=f"{start}T00:00:00+00:00",
+        end_iso=f"{end}T23:59:59+00:00",
+    )
     by_day: dict = {}
     for p in rows:
         d = _day_key(datetime.fromisoformat(p["timestamp"]))
@@ -247,7 +362,7 @@ async def summary(start: str = Query(...), end: str = Query(...),
     days = [{"day": d, "seconds": _sum_shifts(ps)} for d, ps in sorted(by_day.items())]
     total = sum(d["seconds"] for d in days)
     return {"days": days, "total_seconds": total,
-            "punches": [{k: v for k, v in p.items() if k != "_id"} for p in rows]}
+            "punches": rows}
 
 
 @router.get("/mine-today")
@@ -270,11 +385,15 @@ async def today(user: dict = Depends(get_current_user)):
     # over a wider window).  The ``punches`` list + ``seconds``
     # keep today-only semantics so the UI's "today timeline"
     # affordance is unchanged byte-for-byte.
-    rows = await db.timeclock_punches.find({
-        "tenant_id": user["tenant_id"], "user_id": user["id"],
-        "timestamp": {"$gte": f"{yesterday}T00:00:00+00:00",
-                       "$lte": f"{today}T23:59:59+00:00"},
-    }).sort("timestamp", 1).to_list(50)
+    # TC · C1 (Feb-2026) — unified read across ``timeclock_punches``
+    # + ``time_entries`` so a shift opened via the widget / per-job
+    # /workforce/clock-in path surfaces here as the current open
+    # shift. 2-day scan window preserved (see rationale above).
+    rows = await _unified_events(
+        tenant_id=user["tenant_id"], user_id=user["id"],
+        start_iso=f"{yesterday}T00:00:00+00:00",
+        end_iso=f"{today}T23:59:59+00:00",
+    )
     open_in = None
     for p in rows:
         if p["punch_type"] == "in": open_in = p
@@ -284,7 +403,7 @@ async def today(user: dict = Depends(get_current_user)):
         if str(p.get("timestamp", "")).startswith(today)
     ]
     return {
-        "punches": [{k: v for k, v in p.items() if k != "_id"} for p in todays_rows],
+        "punches": todays_rows,
         "seconds": _sum_shifts(todays_rows),
         "clocked_in": open_in is not None,
         "open_job_id": (open_in or {}).get("job_id") if open_in else None,
@@ -313,12 +432,16 @@ async def mine_status(user: dict = Depends(get_current_user)):
     # Look back to yesterday's midnight so a rollover shift that
     # started at 22:00 and hasn't been closed still surfaces as an
     # open ``in``.  Latest punch wins.
-    rows = await db.timeclock_punches.find({
-        "tenant_id": user["tenant_id"], "user_id": user["id"],
-        "timestamp": {"$gte": f"{yesterday}T00:00:00+00:00",
-                       "$lte": f"{today}T23:59:59+00:00"},
-        "punch_type": {"$in": ["in", "out"]},
-    }, {"_id": 0, "punch_type": 1, "timestamp": 1}).sort("timestamp", 1).to_list(50)
+    # TC · C1 (Feb-2026) — unified read across ``timeclock_punches``
+    # + ``time_entries`` so a widget-opened shift is correctly
+    # reflected as ``clocked_in: true``. ``latest-wins`` semantics
+    # preserved from the pre-TC implementation.
+    rows = await _unified_events(
+        tenant_id=user["tenant_id"], user_id=user["id"],
+        start_iso=f"{yesterday}T00:00:00+00:00",
+        end_iso=f"{today}T23:59:59+00:00",
+    )
+    rows = [p for p in rows if p.get("punch_type") in ("in", "out")]
     latest_type = rows[-1]["punch_type"] if rows else None
     open_in = (latest_type == "in")
     # ``punch_count`` reports TODAY's activity only so the existing
@@ -400,15 +523,15 @@ async def admin_summary(start: Optional[str] = Query(None),
 
     out = []
     for tech in techs:
-        rows = await db.timeclock_punches.find(
-            {"tenant_id": tenant_id,
-             "user_id": tech["id"],
-             "timestamp": {
-                 "$gte": f"{start_s}T00:00:00+00:00",
-                 "$lte": f"{end_s}T23:59:59+00:00",
-             }},
-            {"_id": 0},
-        ).sort("timestamp", 1).to_list(5000)
+        # TC · C1 (Feb-2026) — unified read across ``timeclock_punches``
+        # + ``time_entries`` so widget-sourced shifts (which land in
+        # ``time_entries`` since TD-timeclock-tech-clock-out-flow)
+        # surface on the admin team-aggregation payroll table.
+        rows = await _unified_events(
+            tenant_id=tenant_id, user_id=tech["id"],
+            start_iso=f"{start_s}T00:00:00+00:00",
+            end_iso=f"{end_s}T23:59:59+00:00",
+        )
 
         total_seconds = _sum_shifts(rows)
         last = rows[-1] if rows else None
@@ -425,6 +548,9 @@ async def admin_summary(start: Optional[str] = Query(None),
                     "lat": last.get("lat"),
                     "lng": last.get("lng"),
                     "punch_type": last.get("punch_type"),
+                    # TC · C1 — expose source attribution so the admin UI
+                    # can show which collection the shift came from.
+                    "source": last.get("source"),
                 } if last else None
             ),
             "punches": [
@@ -435,6 +561,9 @@ async def admin_summary(start: Optional[str] = Query(None),
                     "lng": p.get("lng"),
                     "punch_type": p.get("punch_type"),
                     "job_id": p.get("job_id"),
+                    # TC · C1 — additive per-event source tag; FE's
+                    # pairPunches.js ignores unknown fields.
+                    "source": p.get("source"),
                 }
                 for p in rows
             ],

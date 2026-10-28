@@ -3359,3 +3359,64 @@ Phase 1 pre-audit confirmed **zero Bucket B** regressions and zero STOP-and-surf
 - **TD-zz-vitest-triage-wave-2 CLOSED** (superseded by Wave 3 lineage above).
 - **TD-zz-vitest-triage-wave-3 CLOSED** (this block).
 
+
+## TD-tc-timeclock-unify-reads-and-roster · IN PROGRESS · Feb-2026 (TC)
+
+Operator-reported P0: dual-collection fragmentation makes dashboard-widget
+punches invisible to the admin team-aggregation view. Cashes in the deferred
+`memory/TD-landscape-time-clock-unify-reads.md` (recommend Option 2 — union
+both collections on read). Shipping in two atomic BE commits (C1 unified
+read, C2 roster dept fallback + hide-list cleanup); C3 backfill deferred.
+
+### Operator decisions (Phase 1 STOP-and-surface loop)
+- **D1 · unify the 4 `/api/timeclock/*` handlers (admin-summary + mine-today
+  + mine-summary + mine-status).** `/workforce/*` endpoints untouched —
+  they already read `time_entries` which surfaces widget shifts for free
+  since `TD-timeclock-tech-clock-out-flow`. Confirmed Phase 1 inverted-
+  direction finding: widget writes to `time_entries` (not `timeclock_
+  punches` as the ticket wording said). Fix direction unchanged.
+- **D2a · remove `carlos@aquaterra.com` from `_AGGREGATION_HIDE_EMAILS`.**
+  TC supersedes the Phase 31 operator-ruling that suppressed carlos's
+  demo-preview punch history as "noise" — the TC ticket re-classifies
+  it as "real landscape tech punches hidden". Ships in C2 along with a
+  Phase 31 test-lock realignment (`.skip` the carlos-hide case with
+  `// TC · ruling-reversal · Phase 31 demo-noise suppression lifted per
+  TC Feb-2026`).
+- **D2b · retain `luis@aquaterra.com` in `_AGGREGATION_HIDE_EMAILS`.**
+  No code reference outside the hide list + its lock test; Phase 1
+  couldn't disambiguate between "historical demo account" and
+  "real tech on an unseeded tenant" from preview-DB alone.
+  Preserve-until-proven.
+- **D3 · defer C3 backfill.** C1 union-on-read makes it cosmetic
+  (readers see all history across both collections regardless of
+  write-site). Backfill is only needed if we also plan to retire
+  `timeclock_punches` within this ticket, which is out of TC's
+  stated BE-only scope. Defer to a follow-up migration ticket after
+  the 60-day stabilization window prior art mentions.
+
+### C1 · unified read · RESOLVED
+- **File:** `backend/routers/timeclock_landscaping.py` (handlers +
+  `_flatten_time_entries_to_events` + `_unified_events` helpers).
+- **New pytest:** `backend/tests/test_tc_timeclock_unified_read.py` — 9
+  cases (widget-only, page-only, mobile-only, mixed-source pairing,
+  tenant isolation, orphan OUT logged + dropped, mine-today open-shift
+  from `time_entries`, mine-status open-shift from `time_entries`,
+  mine-summary unions both for total_seconds). **9/9 pass.**
+- **Regression check:** `test_timeclock_admin_summary.py` (9) +
+  `test_landscape_timeclock_dept_both.py` (9) — **18/18 still green.**
+- **Shape stability:** admin-summary response's flat `punches[]` events
+  array preserved so `frontend/src/lib/timeclock/pairPunches.js:68-96`
+  pairs client-side without touching FE. Added additive `source` field
+  per event (ignored by FE today) so the admin UI can attribute each
+  shift to its underlying collection in a follow-up.
+- **Orphan OUT handling:** `logger.warning` tagged with
+  `user_id`/`tenant_id`/`ts`/`source` for admin forensics; naturally
+  skipped by `_sum_shifts` pairing — matches FE
+  `pairPunches.js:84` `console.warn` precedent.
+- **Window + isolation preserved:** 2-day UTC-rollover scan on
+  mine-today/mine-status (both branches), tenant_id filter in every
+  branch.
+- **No production FE touches.** No mobile touches.
+- See git log for ship SHA — `feat(timeclock): unify admin + mine-* reads
+  across time_entries + timeclock_punches (TC, C1)`.
+
