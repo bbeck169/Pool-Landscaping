@@ -36,9 +36,18 @@ vi.mock("react-router-dom", async () => {
 });
 
 function _mockResults(partial = {}) {
+  // ZZ-A wave 2 · Feb-2026 — ``useGlobalSearchResults`` was
+  // extended with a ``technicians`` lane (``GlobalSearchBar.jsx:115``:
+  // ``technicians.forEach(...)``).  The mock defaults MUST
+  // include every lane the real hook exposes or the component
+  // throws ``Cannot read properties of undefined (reading
+  // 'forEach')`` on first render, which was the root cause of
+  // all 7 red cases in this file during the deploy-readiness
+  // vitest sweep.
   useGlobalSearchResultsMock.mockReturnValue({
-    pages: [], customers: [], jobs: [], invoices: [],
-    quotes: [], leads: [], loading: false, ...partial,
+    pages: [], customers: [], jobs: [], technicians: [],
+    invoices: [], quotes: [], leads: [], loading: false,
+    ...partial,
   });
 }
 

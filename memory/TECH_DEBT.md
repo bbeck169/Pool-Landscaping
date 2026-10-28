@@ -3175,3 +3175,10 @@ Three atomic commits (option A), all in `mobile/app/(app)/schedule/calendar.tsx`
 - **Preserved exactly:** every other test in the file. The `resolveTechFirstName` + `resolveTechInitials` resolver-level tests (lines 71-196) continue to pin the pure resolver contract; the legend-row tests (lines 198-223) continue to pin the "FIRST NAME shows + no truncated-UUID leaks" invariant; the "no initials" fallback test (lines 237+) continues to pin the bare-stop-number fallback for techs with no name data.
 - **No production code touched.** Test-only commit.
 - **Vitest confirmation:** 20/20 pass (was 19/20 pre-ZZ-A-4). TD-87 contract locked.
+
+### ZZ-A-5 (SHA pending) · `universal-search-hero.test.jsx` extend mock with `technicians` lane
+- **Root cause:** `useGlobalSearchResults` (consumed by `GlobalSearchBar.jsx:103`) was extended during a sibling sprint with a `technicians` search lane. The component iterates `technicians.forEach(...)` at `GlobalSearchBar.jsx:115`. The test's `_mockResults` helper (`universal-search-hero.test.jsx:38-43`) returns `{ pages, customers, jobs, invoices, quotes, leads, loading, ...partial }` — **missing `technicians`**. Every render path hit the `forEach` on `undefined` and threw `Cannot read properties of undefined (reading 'forEach')`, which propagated as 7 failed cases (the entire `<GlobalSearchBar />` suite + partial sibling suites in the file).
+- **Fix:** added `technicians: []` to the `_mockResults` default dict. Caller sites that pass `{ technicians: [...] }` via the `partial` spread continue to work (the lane was never asserted on by individual cases — only the default needed widening).
+- **Preserved exactly:** the surrounding source-grep tests against `AppLayout.jsx` for `admin-hero-banner`, `universal-search-hero`, `universal-search-pill`, `data-bg-color="#1B1F5C"`, `global-search-bar-root/-input/-clear/-kbd-hint` testids — all 6 case contracts unchanged.
+- **No production code touched.** Test-only commit.
+- **Vitest confirmation:** 13/13 pass (was 6/13 pre-ZZ-A-5). All 7 originally-red `<GlobalSearchBar />` cases now green.
