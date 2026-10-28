@@ -148,7 +148,11 @@ describe("Phase 41.2 · LOC reduction gate", () => {
     // jobs is_active toggle + hard-delete modal + inactive badge``)
     // added the toggle, hint, hard-delete modal, and audit copy;
     // ceiling bumped from 650 → 800 to accommodate.
-    "app/finance/recurring-jobs.tsx": 800,
+    // ZZ-A mobile · Oct-2026 — 800 → 1050 for two shipped web-parity
+    // features: 88e3938de ('Next' date-range filter + preset chips) and
+    // 30a6a0849 (customer search + service-category filter). A split of
+    // the file is a separate ticket, not part of this test-only sweep.
+    "app/finance/recurring-jobs.tsx": 1050,
     "app/finance/vendor-bills.tsx": 220,
     "app/os/scorecards.tsx": 110,
     "app/os/roles.tsx": 110,

@@ -34,7 +34,9 @@ describe("Nav data · adminNav.ts (source of truth)", () => {
       "customers",
       "reports",
       "communications",
-      "reviews",
+      // ZZ-A mobile · "reviews" is no longer a top-level group — nested
+      // under Marketing by 84bd110b2 (mirrors web 7d34498; web adminNav.js
+      // has no top-level reviews group either).
     ];
     let lastIdx = -1;
     for (const g of groups) {
@@ -155,9 +157,9 @@ const T2_STUB_ROUTES = [
   "/admin/reviews/requests",
   "/admin/reviews/platforms",
   "/admin/reviews/widget",
-  "/admin/comms/email",
+  // ZZ-A mobile · /admin/comms/email + /admin/comms/templates moved to
+  // T2_REDIRECT_ROUTES (69ceb98e4 · P2 #11 C1 → native comms library).
   "/admin/comms/sms",
-  "/admin/comms/templates",
   "/admin/comms/automations",
   "/admin/comms/sends",
   // Phase Hygiene B · Feb-2026 — /admin/tags was promoted to a LIVE
@@ -186,6 +188,21 @@ describe("T2 stub route files exist and re-export ComingSoonPage", () => {
       const p = `mobile/app${r}.tsx`;
       expect(E(p)).toBe(true);
       expect(R(p)).toMatch(/from ["']@\/src\/components\/ComingSoonPage["']/);
+    });
+  }
+});
+
+// ZZ-A mobile · P2 #11 C1 (69ceb98e4) — drawer Email Builder / Templates
+// redirect to the native comms template library instead of a stub.
+const T2_REDIRECT_ROUTES = ["/admin/comms/email", "/admin/comms/templates"];
+
+describe("T2 redirect route files point at the native comms library", () => {
+  for (const r of T2_REDIRECT_ROUTES) {
+    it(`mobile/app${r}.tsx exists and redirects to /comms/templates`, () => {
+      const p = `mobile/app${r}.tsx`;
+      expect(E(p)).toBe(true);
+      expect(R(p)).not.toMatch(/from ["']@\/src\/components\/ComingSoonPage["']/);
+      expect(R(p)).toMatch(/<Redirect href="\/comms\/templates" \/>/);
     });
   }
 });

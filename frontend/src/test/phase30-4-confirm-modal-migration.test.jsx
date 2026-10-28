@@ -31,7 +31,8 @@ const MIGRATED_SITES = [
   ["mobile/src/components/customers/CustomerEquipmentLibrary.tsx", "Delete photo?", "showConfirm"],
   ["mobile/app/landscape.tsx", "Delete design?", "showConfirm"],
   ["mobile/app/payments/methods.tsx", "Remove card?", "showConfirm"],
-  ["mobile/app/income-categories.tsx", "Remove category", "showConfirm"],
+  // ZZ-A mobile · td81 (909fe15c9) — Remove → Archive (POST .../archive).
+  ["mobile/app/income-categories.tsx", "Archive category", "showConfirm"],
   // Feb-2026 · K55.a — SuperCool integration page removed as part
   // of the sunset (PHASE_K55_a_FRONTEND_REMOVAL.md).  This entry
   // used to lock in ``mobile/app/settings/integrations/supercool.tsx``
@@ -42,8 +43,10 @@ const MIGRATED_SITES = [
   ["mobile/app/aeo/library.tsx", "Delete template?", "showConfirm"],
   ["mobile/app/marketing/content-studio.tsx", "Delete image?", "showConfirm"],
   ["mobile/app/estimator/templates.tsx", "Delete template", "showConfirm"],
-  ["mobile/app/(app)/templates/index.tsx", "Delete Template", "showConfirm"],
-  ["mobile/app/(app)/templates/[id].tsx", "Delete this template?", "showConfirm"],
+  // ZZ-A mobile · Templates Phase 3 (77affb86c) — route files are now thin
+  // re-exports; the confirms live in the screen modules.
+  ["mobile/src/screens/templates/TemplatesLibraryScreen.tsx", "Delete template?", "showConfirm"],
+  ["mobile/src/screens/templates/TemplateFillScreen.tsx", "Delete this template?", "showConfirm"],
   ["mobile/app/(app)/schedule/calendar.tsx", "Delete", "showConfirm"], // template-literal title starts with "Delete"
 ];
 

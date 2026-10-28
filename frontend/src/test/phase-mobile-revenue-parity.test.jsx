@@ -104,37 +104,31 @@ describe("Phase (Feb-2026) · mobile revenue-tile parity", () => {
     const src = R("mobile/app/(app)/index.tsx");
     const reports = R("mobile/app/reports.tsx");
 
-    it("Dashboard mounts all three testIDs and routes each to the expected screen", () => {
-      expect(src).toMatch(/testID="admin-tile-revenue-by-category"[\s\S]{0,500}\/income-by-category/);
-      expect(src).toMatch(/testID="admin-tile-revenue-by-service"[\s\S]{0,500}\/reports\/revenue-by-service/);
-      expect(src).toMatch(/testID="admin-tile-forecast-revenue"[\s\S]{0,500}\/reports\/forecast/);
+    // ZZ-A mobile · Phase 39A (b9a3338c4) replaced the 3 shortcut tiles with
+    // the web-parity Revenue insights donuts; mobile jest
+    // phase39a-dashboard-revenue-insights.test.tsx locks them as gone. The 3
+    // screens stay reachable from the drawer (adminNav.ts).
+    it("Phase 39A · the three shortcut tiles are gone (screens stay drawer-reachable)", () => {
+      for (const id of ["admin-tile-revenue-by-category", "admin-tile-revenue-by-service", "admin-tile-forecast-revenue", "dashboard-revenue-tiles"]) {
+        expect(src).not.toContain(`testID="${id}"`);
+      }
+      const nav = R("mobile/src/nav/adminNav.ts");
+      expect(nav).toMatch(/route:\s*"\/income-by-category"/);
+      expect(nav).toMatch(/route:\s*"\/reports\/revenue-by-service"/);
+      expect(nav).toMatch(/route:\s*"\/reports\/forecast"/);
     });
 
-    it("tiles appear in the required order and BEFORE Budget Health / Weather / Hero", () => {
-      const idxCategory = src.indexOf('testID="admin-tile-revenue-by-category"');
-      const idxService  = src.indexOf('testID="admin-tile-revenue-by-service"');
-      const idxForecast = src.indexOf('testID="admin-tile-forecast-revenue"');
-      const idxBudget   = src.indexOf('<BudgetHealthCard');
-      const idxWeather  = src.indexOf('<WeatherWidget');
-      const idxHero     = src.indexOf('styles.hero');
-      expect(idxCategory).toBeGreaterThan(-1);
-      expect(idxService).toBeGreaterThan(idxCategory);
-      expect(idxForecast).toBeGreaterThan(idxService);
-      expect(idxBudget).toBeGreaterThan(idxForecast);
-      expect(idxWeather).toBeGreaterThan(idxForecast);
-      expect(idxHero).toBeGreaterThan(idxForecast);
+    it("Revenue insights section renders BEFORE Weather / Budget Health", () => {
+      const idxSection = src.indexOf('testID="revenue-tiles-section"');
+      expect(idxSection).toBeGreaterThan(-1);
+      expect(src.indexOf("<WeatherWidget")).toBeGreaterThan(idxSection);
+      expect(src.indexOf("<BudgetHealthCard")).toBeGreaterThan(idxSection);
     });
 
-    it("tiles are role-gated to super_admin / admin / manager", () => {
-      // The gate MUST include all three admin-like roles and no
-      // others; techs and customers are already redirected earlier
-      // in the render so this gate is the last line of defence.
-      expect(src).toMatch(
-        /user\?\.role\s*===\s*["']super_admin["'][\s\S]{0,80}user\?\.role\s*===\s*["']admin["'][\s\S]{0,80}user\?\.role\s*===\s*["']manager["']/,
-      );
-      // testID on the wrapper lets integration tests assert
-      // visibility per role.
-      expect(src).toMatch(/testID="dashboard-revenue-tiles"/);
+    it("Revenue insights section is gated to super_admin / admin (isRevenueAdmin)", () => {
+      // Phase 39A · backend revenue endpoints are admin / super_admin only.
+      expect(src).toMatch(/const isRevenueAdmin = user\?\.role === "super_admin" \|\| user\?\.role === "admin";/);
+      expect(src).toMatch(/\{isRevenueAdmin \? \(\s*<View style=\{styles\.revenueSection\} testID="revenue-tiles-section">/);
     });
 
     it("Reports page no longer references the three tile testIDs (moved, not duplicated)", () => {

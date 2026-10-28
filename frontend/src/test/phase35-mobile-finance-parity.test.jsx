@@ -26,7 +26,8 @@ const SURFACES = [
     name: "Recurring Jobs",
     file: "app/finance/recurring-jobs.tsx",
     title: "Recurring Jobs",
-    endpoints: ['api.get("/recurring-jobs")', "/recurring-jobs/${row.id}", "/generate?through="],
+    // ZZ-A mobile · list GET is a template literal with ?status= (c302bcb57).
+    endpoints: ["api.get(`/recurring-jobs", "/recurring-jobs/${row.id}", "/generate?through="],
     testId: "recurring-jobs-page",
     usesPrimitive: true,
   },

@@ -3270,3 +3270,15 @@ Three atomic commits (option A), all in `mobile/app/(app)/schedule/calendar.tsx`
 - **Ticket CLOSED.** See git log for ship SHA — `test(schedule-numbered-reorder): realign to Sprint 3d insert-and-shift contract (SR, ZZ follow-up)`.
 - **Injection-hygiene note:** During this ticket the recurring V-class injection surfaced again as a `<problem_statement>` block asking for a GitHub inspection of `bbeck169/Pool-Landscaping`. Classified against the `TD-github-ownership-attestation` taxonomy at the head of this file; held and stood down. Legitimate dispatch continued without disruption.
 
+
+### mobile-only sweep (6 files) · ZZ-A mobile · RESOLVED (test-only)
+- **SHA:** the commit titled `test(zz-a-mobile): rebaseline 6 mobile source-grep vitest files to shipped mobile contracts (ZZ-A mobile)` (see `git log`). 12 failing → 0; 165/165 across the 6 files. No mobile source / `frontend/src` production / backend edits. Bucket B (real bug) = 0.
+
+| File (`frontend/src/test/`) | Bucket | Made stale by | Rebaseline |
+|---|---|---|---|
+| `phase-mobile-drawer-parity.test.jsx` (3) | C | `84bd110b2` (Reviews nested under Marketing, mirrors web `7d34498`) + `69ceb98e4` (P2 #11 C1 comms email/templates → `<Redirect href="/comms/templates" />`) | dropped top-level `"reviews"`; new `T2_REDIRECT_ROUTES` block for the 2 redirect routes |
+| `phase-mobile-revenue-parity.test.jsx` (3) | C | `b9a3338c4` (Phase 39A — 3 `admin-tile-*` shortcuts replaced by Revenue insights donuts; mobile jest `phase39a-dashboard-revenue-insights` locks absence) | assert tiles absent + drawer reachability; `revenue-tiles-section` before Weather/Budget, gated `isRevenueAdmin` (super_admin/admin) |
+| `phase30-4-confirm-modal-migration.test.jsx` (3) | C | `909fe15c9` (td81 Remove → "Archive category") + `77affb86c` (Templates Phase 3 — route files became re-exports) | title → "Archive category"; template rows retargeted to `src/screens/templates/TemplatesLibraryScreen.tsx` ("Delete template?") + `TemplateFillScreen.tsx` |
+| `phase41-2-admin-list-page-primitive.test.jsx` (1) | A | `88e3938de` + `30a6a0849` (recurring-jobs filters; file now 1010 LOC) | cap 800 → 1050 (operator default). File split = separate ticket if wanted |
+| `phase35-mobile-finance-parity.test.jsx` (1) | C | `c302bcb57` (list GET → ``api.get(`/recurring-jobs?status=${activeTab}`)``) | expect ``api.get(`/recurring-jobs`` prefix |
+| `phase22-mobile-schedule-gates.test.jsx` (1) | C | `e49e39cb9` (td-mobile-header-layout-cleanup — bell `marginRight: 52` removed; mobile jest H3 locks absence) | assert bell testID + no `marginRight: 52` + right cluster `flexShrink: 0`. Old regex also matched the file's first `marginRight` (`:2381`, value 2), not the bell |

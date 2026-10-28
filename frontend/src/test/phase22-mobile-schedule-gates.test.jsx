@@ -56,7 +56,7 @@ describe("Phase 22 · Sub-item A — schedule bulk-action gate", () => {
 });
 
 describe("Phase 22 · Sub-item B — bell header padding", () => {
-  it("schedule/calendar.tsx wraps NotificationBell with marginRight >= 44", () => {
+  it("schedule/calendar.tsx bell sits in a non-shrinking right cluster (no fixed 52px margin)", () => {
     const src = fs.readFileSync(
       path.resolve(
         __dirname,
@@ -64,11 +64,12 @@ describe("Phase 22 · Sub-item B — bell header padding", () => {
       ),
       "utf-8",
     );
-    // The bell wrapper must include a marginRight that clears the
-    // hamburger tap target (44dp iOS HIG minimum).
-    const m = src.match(/marginRight:\s*(\d+)[^\d]/);
-    expect(m).not.toBeNull();
-    expect(Number(m[1])).toBeGreaterThanOrEqual(44);
+    // ZZ-A mobile · td-mobile-header-layout-cleanup (e49e39cb9) removed the
+    // bell's hard-coded marginRight: 52; the right cluster is flexShrink: 0
+    // so the title is the only ellipsizing element (live-checked 320/375/414).
+    // Mirrors mobile jest td-mobile-header-layout-cleanup.test.tsx H3.
+    expect(src).not.toContain("marginRight: 52");
+    expect(src).toMatch(/flexDirection: "row", alignItems: "center", gap: 8, flexShrink: 0/);
     // And the wrapper carries the diagnostic testID we spec'd.
     expect(src.includes('testID="schedule-header-bell"')).toBe(true);
   });
