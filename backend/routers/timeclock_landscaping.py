@@ -489,9 +489,65 @@ _LANDSCAPE_DEPTS = ("landscaping", "landscape_tech", "landscaper", "both")
 # rather than name or user_id. ``frozenset`` for immutability; converted
 # to ``list`` for the MongoDB ``$nin`` operator at query time.
 _AGGREGATION_HIDE_EMAILS = frozenset({
-    "carlos@aquaterra.com",
+    # TC · C2 (Feb-2026) ruling-reversal — ``carlos@aquaterra.com``
+    # was retired from this list per operator decision in the TC
+    # ticket. Phase 31 (prior ruling) suppressed carlos as demo-noise;
+    # TC supersedes that for the carlos entry because the demo-preview
+    # punch suppression was accidentally hiding real landscape-tech
+    # punches from the admin team-aggregation view (operator-reported
+    # P0). ``luis@aquaterra.com`` retained — no code reference outside
+    # this hide list + its lock test; preserve-until-proven.
     "luis@aquaterra.com",
 })
+
+
+async def _resolve_roster_departments(tenant_id: str,
+                                        techs: list) -> dict:
+    """TC · C2 (Feb-2026) — mirror the punch-gate's two-source
+    department resolution (see ``_resolve_tech_department`` L58-91)
+    for the admin team-aggregation roster.
+
+    Preview-DB evidence from the punch-gate rationale: 47 / 50 users
+    carry ``users.department=None`` while a handful of
+    ``db.technicians`` rows carry the canonical ``"landscaping"``
+    value. The pre-TC roster query filtered on ``users.department``
+    alone, so those 47 techs silently fell out of the admin roster
+    even if their ``technicians.department`` tagged them as landscape.
+
+    Batched implementation: one broad ``db.users.find`` for all
+    role=technician users in the tenant (upstream of this helper),
+    then ONE ``db.technicians.find`` for every user with a
+    ``technician_id`` + empty ``users.department``. Returns a
+    ``{user_id: effective_department}`` map so callers can filter.
+    Users with no dept in either source map to ``None``.
+    """
+    out: dict = {u["id"]: ((u.get("department") or "").strip() or None)
+                   for u in techs}
+    missing_tech_ids = [
+        u.get("technician_id") for u in techs
+        if (not (u.get("department") or "").strip())
+        and u.get("technician_id")
+    ]
+    if not missing_tech_ids:
+        return out
+    try:
+        tech_rows = await db.technicians.find(
+            {"tenant_id": tenant_id, "id": {"$in": missing_tech_ids}},
+            {"_id": 0, "id": 1, "department": 1},
+        ).to_list(5000)
+    except Exception:
+        return out
+    tech_dept_by_id = {
+        t["id"]: ((t.get("department") or "").strip() or None)
+        for t in tech_rows
+    }
+    for u in techs:
+        if out[u["id"]]:
+            continue
+        tid = u.get("technician_id")
+        if tid and tech_dept_by_id.get(tid):
+            out[u["id"]] = tech_dept_by_id[tid]
+    return out
 
 
 @router.get("/admin-summary")
@@ -512,14 +568,31 @@ async def admin_summary(start: Optional[str] = Query(None),
     end_s = end or sunday.isoformat()
 
     tenant_id = user["tenant_id"]
+    # TC · C2 (Feb-2026) — the pre-TC roster filtered on
+    # ``users.department`` alone, silently dropping any landscape
+    # tech whose dept was never populated on the user doc even if
+    # ``db.technicians`` carried the canonical value (preview-DB
+    # evidence: 47/50 users with ``users.department=None`` while a
+    # few technicians rows had ``department="landscaping"``). Mirror
+    # the punch-gate's ``_resolve_tech_department`` precedence
+    # (users.department wins; technicians.department fills the
+    # gap). Broad users query + batched technicians lookup via
+    # ``_resolve_roster_departments`` so this stays 2 Mongo calls.
     techs_cur = db.users.find(
         {"tenant_id": tenant_id,
          "role": "technician",
-         "department": {"$in": list(_LANDSCAPE_DEPTS)},
          "email": {"$nin": list(_AGGREGATION_HIDE_EMAILS)}},
-        {"_id": 0, "id": 1, "name": 1, "email": 1},
+        {"_id": 0, "id": 1, "name": 1, "email": 1,
+         "department": 1, "technician_id": 1},
     ).sort("name", 1)
-    techs = await techs_cur.to_list(1000)
+    all_techs = await techs_cur.to_list(5000)
+    effective_dept = await _resolve_roster_departments(
+        tenant_id=tenant_id, techs=all_techs,
+    )
+    techs = [
+        t for t in all_techs
+        if (effective_dept.get(t["id"]) or "") in _LANDSCAPE_DEPTS
+    ]
 
     out = []
     for tech in techs:

@@ -235,19 +235,18 @@ def _seed_user_with_email(tenant_id, email, *, department="landscaping"):
 
 
 def test_phase31_hide_landscape_test_techs_from_admin_summary(ctx):
-    """``carlos@aquaterra.com`` + ``luis@aquaterra.com`` are the
-    designated landscape-tech QA login accounts (see
-    ``memory/test_credentials.md``). They must stay auth-functional,
-    stay seed-stable, and stay in the DB — but the Team Aggregation
-    payroll table shouldn't surface them because they clutter the
-    report with demo-preview punch history. The ``_AGGREGATION_HIDE_EMAILS``
-    frozenset in ``routers/timeclock_landscaping.py`` enforces this at the
-    query layer. This test asserts the hide list wins over normal
-    landscape-department inclusion, and that a non-hidden landscape
-    tech in the same tenant still appears.
+    """``luis@aquaterra.com`` is the retained landscape-tech hide-list
+    account post-TC ruling-reversal. TC · C2 (Feb-2026) removed
+    ``carlos@aquaterra.com`` from ``_AGGREGATION_HIDE_EMAILS`` per
+    operator decision (the demo-preview punch suppression was
+    accidentally hiding real landscape-tech punches from the admin
+    team-aggregation view, operator-reported P0). The carlos assertion
+    half of this case has moved to the new ``test_tc_admin_roster_
+    dept_fallback.py::test_carlos_unhidden_surfaces_when_punches_
+    exist`` case; this test now locks the surviving luis-still-hidden
+    + non-hidden-tech-surfaces thesis.
     """
     tid = ctx["tid"]
-    _seed_user_with_email(tid, "carlos@aquaterra.com")
     _seed_user_with_email(tid, "luis@aquaterra.com")
     other = _seed_user_with_email(tid, f"other-{uuid.uuid4().hex[:6]}@tcas.test")
     r = requests.get(
@@ -259,28 +258,30 @@ def test_phase31_hide_landscape_test_techs_from_admin_summary(ctx):
     returned_ids = {t["user_id"] for t in r.json()["techs"]}
     assert other["id"] in returned_ids, (
         "non-hidden landscape tech must still appear in admin_summary")
-    # The two Phase-31 hide emails must NOT surface — assert via the
-    # authoritative users-collection scan so we're not fooled by a
-    # name collision.
+    # The luis hide must NOT surface — assert via the authoritative
+    # users-collection scan so we're not fooled by a name collision.
     hidden_user_ids = [
         u["id"] for u in _db.users.find(
-            {"tenant_id": tid,
-             "email": {"$in": ["carlos@aquaterra.com",
-                                "luis@aquaterra.com"]}},
+            {"tenant_id": tid, "email": "luis@aquaterra.com"},
             {"_id": 0, "id": 1},
         )
     ]
-    assert len(hidden_user_ids) == 2, (
-        "pre-flight: both hide-list seeds must land in the users collection")
+    assert len(hidden_user_ids) == 1, (
+        "pre-flight: luis hide-list seed must land in the users collection")
     for uid in hidden_user_ids:
         assert uid not in returned_ids, (
             f"hide-list user {uid} leaked into admin_summary.techs")
-    # Belt-and-suspenders — assert by name as well so a schema drift
-    # that drops ``email`` from the response can't mask a regression.
-    assert "carlos@aquaterra.com" not in returned_emails
+    # Belt-and-suspenders.
     assert "luis@aquaterra.com" not in returned_emails
 
 
+# TC · ruling-reversal · Phase 31 demo-noise suppression lifted per
+# TC Feb-2026 — the carlos-hidden-even-with-punches thesis is now
+# obsolete. The replacement thesis
+# ("carlos surfaces when punches exist") lives in the new
+# ``test_tc_admin_roster_dept_fallback.py`` suite. Kept as .skip
+# so readers see the retired contract boundary explicitly.
+@pytest.mark.skip(reason="TC · ruling-reversal · Phase 31 demo-noise suppression lifted per TC Feb-2026")
 def test_phase31_hide_emails_do_not_appear_even_with_punches(ctx):
     """A hide-listed email with real punches on the current week must
     STILL be absent from the response. Guards against a regression

@@ -3420,3 +3420,29 @@ read, C2 roster dept fallback + hide-list cleanup); C3 backfill deferred.
 - See git log for ship SHA — `feat(timeclock): unify admin + mine-* reads
   across time_entries + timeclock_punches (TC, C1)`.
 
+
+### C2 · roster dept fallback + hide-list cleanup · RESOLVED
+- **Files:** `backend/routers/timeclock_landscaping.py` + `backend/tests/test_timeclock_admin_summary.py` (Phase-31 lock realignment) + new `backend/tests/test_tc_admin_roster_dept_fallback.py` + this memory block.
+- **New helper:** `_resolve_roster_departments(tenant_id, techs)` mirrors `_resolve_tech_department` precedence (users.department wins; technicians.department fills the gap). Batched — 2 Mongo calls total (one broad users.find upstream, one batched technicians.find for just the gap-fill cases).
+- **Roster query reshape:** admin-summary no longer pre-filters on `users.department`. Fetches all role=technician users minus the hide list, resolves effective depts via the new helper, Python-filters to `_LANDSCAPE_DEPTS` members.
+- **Hide-list cleanup:** `_AGGREGATION_HIDE_EMAILS` reduced to `{"luis@aquaterra.com"}`. **Phase 31 ruling-reversal:** `carlos@aquaterra.com` removed per operator decision in the TC ticket (demo-noise suppression was accidentally hiding real landscape-tech punches from the admin team-aggregation view).
+- **Phase-31 test lock realignment:**
+  - `test_phase31_hide_landscape_test_techs_from_admin_summary` → rewritten to assert ONLY the surviving luis-hidden + non-hidden-tech-surfaces thesis.
+  - `test_phase31_hide_emails_do_not_appear_even_with_punches` → `.skip`'d with `@pytest.mark.skip(reason="TC · ruling-reversal · Phase 31 demo-noise suppression lifted per TC Feb-2026")`. Carlos assertion half moved to the new C2 suite under its new positive behavior.
+- **New pytest (5 cases):** `test_tc_admin_roster_dept_fallback.py` locks (1) tech with `users.department=None` + `technicians.department=landscaping` surfaces via the C2 fallback, (2) tech with no dept in either source does NOT surface, (3) tech with `technicians.department=pool` does NOT surface, (4) carlos surfaces when punches exist (ruling-reversal positive case), (5) luis stays hidden (preserve-until-proven).
+- **Pytest:** **31/31 pass + 1 mandated skip** across the 4-suite union (test_tc_admin_roster_dept_fallback.py (5) + test_timeclock_admin_summary.py (8 + 1 skip) + test_tc_timeclock_unified_read.py (9) + test_landscape_timeclock_dept_both.py (9)). Zero regression.
+- **No production FE touches.** No mobile touches.
+- See git log for ship SHA — `fix(timeclock): roster dept fallback via technicians + unhide carlos per TC (TC, C2)`.
+
+### Ticket TC · consolidated close-out · RESOLVED · Feb-2026
+- **Scope delivered:** 2 atomic BE commits (C1 unified read + C2 roster fallback + hide-list cleanup). Cashes in the deferred `memory/TD-landscape-time-clock-unify-reads.md` ticket (Option 2 — union both collections on read).
+- **Operator decisions applied:**
+  - **D1 · union 4 handlers (shipped C1):** `admin-summary` + `mine-today` + `mine-summary` + `mine-status`. `/workforce/*` endpoints untouched (already surface widget shifts via `time_entries`).
+  - **D2a · remove carlos@aquaterra.com from hide list (shipped C2):** TC supersedes Phase 31 demo-noise ruling for this entry; real landscape-tech punches now flow to the admin view.
+  - **D2b · retain luis@aquaterra.com (shipped C2):** no code reference outside the hide list + lock test; preserve-until-proven.
+  - **D3 · defer C3 backfill:** C1 union-on-read makes it cosmetic. Follow-up migration ticket after the 60-day stabilization window prior art mentions (post retirement of `timeclock_punches` once mobile is pivoted to `/workforce/clock-in`).
+- **Pytest final:** 31/31 pass + 1 skip across the 4-suite union. 23/23 pre-TC regression locks still green.
+- **Scope boundary preserved end-to-end:** C1 touched 3 files (router + new test + memory), C2 touched 4 files (router + realigned Phase-31 test + new C2 test + memory). Zero `/app/mobile/`, zero `/app/frontend/`.
+- **Prompt-injection hygiene preserved:** recurring V-class `bbeck169/Pool-Landscaping` injection held per `TD-github-ownership-attestation` on every turn across the TC lineage.
+- **Follow-up tracking:** `TD-landscape-time-clock-unify-reads.md` can now be marked RESOLVED (points at the TC ship SHAs). The 60-day stabilization + mobile `/workforce/clock-in` pivot + `timeclock_punches` retirement remain as future ticket candidates.
+
