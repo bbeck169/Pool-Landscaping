@@ -656,6 +656,76 @@ async def patch_service_report(jid: str, body: ServiceReportPatch,
         {"tenant_id": tenant["id"], "job_id": jid, "tech_id": tech_id},
         {"$set": upd},
     )
+    # G1 · Feb-2026 (WW follow-up) — flip the ``edited_after_completion``
+    # denorm + write a ``job_edits`` audit row when this PATCH lands on
+    # a job whose ``status == "completed"``. The 4 shipped WW flip-sites
+    # (``PUT /jobs/{jid}/field-report``, ``PATCH /jobs/{jid}``, ``POST
+    # /jobs/{jid}/photos``, ``DELETE /jobs/{jid}/photos/{pid}``) missed
+    # this PATCH, so mobile ``checklist.tsx`` saves (chemistry / notes /
+    # checklist / photos round-tripping through the service-report
+    # autosave) didn't light the "Edited after completion" badge. See
+    # ``memory/TECH_DEBT.md::TD-ww-info-service-report-patch-missing-
+    # denorm-flip``. Pattern mirrors the shipped sibling 1:1:
+    # single-row audit per PATCH, discriminator chosen by first-touched
+    # field in the precedence order below, soft-fail try/except wraps
+    # BOTH the audit insert AND the denorm flip so the save path can
+    # never break on an audit hiccup. The orthogonal PS-A
+    # ``audit_logs.service_report_post_submit_edit`` write below stays
+    # as-is (it captures the SR-submit-lock-bypass concept, which is
+    # distinct from the completed-job-badge concept).
+    if (job.get("status") or "").lower() == "completed":
+        # Discriminator precedence: ``checklist_items`` →
+        # ``closed_job_checklist_toggle`` wins (matches the shipped WW
+        # event at ``jobs.py:2559``). Else ``photos`` →
+        # ``closed_job_photo_edit`` (NEW discriminator — distinct from
+        # the ``_add`` / ``_delete`` events on ``/jobs/{jid}/photos``
+        # because this PATCH edits ``service_reports.photos``, not
+        # ``jobs.photos``). Else ``closed_job_edit`` (matches
+        # ``jobs.py:3955``). The ``changes`` dict records every
+        # touched field regardless so admin forensics never lose
+        # field-level visibility.
+        if "checklist_items" in upd:
+            _g1_event = "closed_job_checklist_toggle"
+        elif "photos" in upd:
+            _g1_event = "closed_job_photo_edit"
+        else:
+            _g1_event = "closed_job_edit"
+        _g1_changes = {}
+        for _k in upd.keys():
+            if _k == "updated_at":
+                continue
+            _g1_changes[_k] = {
+                "before": (rep or {}).get(_k),
+                "after": upd.get(_k),
+            }
+        try:
+            await db.job_edits.insert_one({
+                "id": new_id(),
+                "tenant_id": tenant["id"],
+                "job_id": jid,
+                "event": _g1_event,
+                "edited_by": user.get("id"),
+                "edited_by_name": user.get("name") or user.get("email"),
+                "edited_by_role": (user.get("role") or "").lower(),
+                "edited_at": now_iso(),
+                "changes": _g1_changes,
+                "reason": None,
+                "source": "web",
+            })
+            # ``$ne: True`` filter makes the write idempotent (no-op
+            # once already True), satisfying the "flip exactly once"
+            # invariant across every completed-job write site.
+            await db.jobs.update_one(
+                {"id": jid, "tenant_id": tenant["id"],
+                 "edited_after_completion": {"$ne": True}},
+                {"$set": {"edited_after_completion": True}},
+            )
+        except Exception as _g1_audit_exc:  # pragma: no cover — defensive
+            logger.warning(
+                "[closed-job-edit] service-report PATCH audit soft-fail "
+                "tenant=%s job=%s event=%s err=%s",
+                tenant["id"], jid, _g1_event, _g1_audit_exc,
+            )
     resp = await db.service_reports.find_one(
         {"tenant_id": tenant["id"], "job_id": jid, "tech_id": tech_id}, {"_id": 0}
     )

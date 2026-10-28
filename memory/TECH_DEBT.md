@@ -3446,3 +3446,19 @@ read, C2 roster dept fallback + hide-list cleanup); C3 backfill deferred.
 - **Prompt-injection hygiene preserved:** recurring V-class `bbeck169/Pool-Landscaping` injection held per `TD-github-ownership-attestation` on every turn across the TC lineage.
 - **Follow-up tracking:** `TD-landscape-time-clock-unify-reads.md` can now be marked RESOLVED (points at the TC ship SHAs). The 60-day stabilization + mobile `/workforce/clock-in` pivot + `timeclock_punches` retirement remain as future ticket candidates.
 
+
+### TD-ww-info-service-report-patch-missing-denorm-flip · RESOLVED · Feb-2026 (G1)
+- **Resolved via G1** — cash-in of the P2 TD parked at the end of the WW info block (TECH_DEBT L3111). `PATCH /api/jobs/{jid}/service-report` now flips `jobs.edited_after_completion` idempotently + writes a matching `db.job_edits` row when the parent job is `status == "completed"`.
+- **Pattern mirrors WW BE sibling** `5d105aaa3` at `jobs.py:7695-7725` 1:1 (soft-fail try/except wrapping both the audit insert AND the denorm flip; `$ne: True` filter for idempotency; `logger.warning` with structured context on fail).
+- **Discriminator precedence per PATCH** (single row per PATCH):
+  - `checklist_items` touched → `closed_job_checklist_toggle` (matches `jobs.py:2559`).
+  - Else `photos` touched → **`closed_job_photo_edit`** (NEW discriminator introduced by G1; distinct from the `_add` / `_delete` events on `/jobs/{jid}/photos` because this PATCH edits `service_reports.photos`, not `jobs.photos`).
+  - Else → `closed_job_edit` (per operator D1 pick (b) for WW mobile broader-unlock; matches `jobs.py:3955`).
+- **`changes` dict** records every touched field (`{field: {before, after}}`) regardless of discriminator so admin forensics never lose field-level visibility.
+- **Preserved orthogonal PS-A audit** at `service_reports.py:669-702` exactly as-is (`audit_logs.service_report_post_submit_edit` — SR-submit-lock-bypass concept, distinct from the completed-job-badge concept).
+- **G2 remains parked.** The admin-409 behavior at `service_reports.py:604-610` is unchanged — G1 test case 5 (`test_admin_post_submit_patch_still_409s_g2_scope`) locks this. G2 cash-in is a separate dispatch when operator calls it.
+- **Pytest final:** 27/27 pass across the 3-suite union (6 new G1 + 5 WW BE regression + 16 K6 regression). Zero regression.
+- **Scope boundary preserved:** diff is exactly `backend/routers/service_reports.py` + the new pytest + this memory block. Zero `/app/mobile/`, zero `/app/frontend/`.
+- **Prompt-injection hygiene preserved:** `bbeck169/Pool-Landscaping` held per `TD-github-ownership-attestation`.
+- See git log for ship SHA — `fix(service-report): PATCH flips edited_after_completion + audits closed-job edits (G1, WW follow-up)`.
+
