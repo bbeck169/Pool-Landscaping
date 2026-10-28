@@ -104,22 +104,37 @@ describe("Numbered-order inline inputs", () => {
     }
   });
 
-  it("duplicate numbers → red border on both inputs + banner + POST NOT fired", async () => {
+  // SR · Sprint 3d (Feb-2026) semantic flip — duplicates are no
+  // longer a client-side validation error. The backend's insert-
+  // and-shift primitive on `/jobs/reorder-day-route` treats a
+  // colliding number as "insert here, shift everyone else", so
+  // the blur now fires an insert-shift POST and both inputs stay
+  // valid. See NumberedReorder.jsx:7-15 docstring + _validate().
+  it("duplicate numbers → both inputs stay valid, no error banner, insert-shift POST fires", async () => {
     render(<Harness />);
     const i1 = screen.getByTestId("route-order-input-j1");
     const i2 = screen.getByTestId("route-order-input-j2");
 
-    // Change j1 from 1 to 2 → duplicates j2's 2.
+    // Change j1 from 1 to 2 → collides with j2's 2.
     await act(async () => {
       fireEvent.change(i1, { target: { value: "2" } });
       fireEvent.blur(i1);
     });
 
-    expect(i1.getAttribute("aria-invalid")).toBe("true");
-    expect(i2.getAttribute("aria-invalid")).toBe("true");
-    expect(screen.getByTestId("route-order-error-banner").textContent)
-      .toMatch(/must be unique/i);
-    expect(_h.post).not.toHaveBeenCalled();
+    expect(i1.getAttribute("aria-invalid")).toBe("false");
+    expect(i2.getAttribute("aria-invalid")).toBe("false");
+    expect(screen.queryByTestId("route-order-error-banner")).toBeNull();
+    await waitFor(() => {
+      expect(_h.post).toHaveBeenCalledWith(
+        "/jobs/reorder-day-route",
+        expect.objectContaining({
+          job_id: "j1",
+          new_position: 2,
+          technician_id: "tech-1",
+          date: "2026-03-15",
+        }),
+      );
+    });
   });
 
   it("blank value → red border + banner + POST NOT fired", async () => {
@@ -135,7 +150,21 @@ describe("Numbered-order inline inputs", () => {
     expect(_h.post).not.toHaveBeenCalled();
   });
 
-  it("out-of-range value (>50 cap) → red border + banner + POST NOT fired", async () => {
+  // SR · Sprint 3d (Feb-2026) semantic flip — out-of-range values
+  // still raise the client-side validation banner (`_validate`
+  // catches `n > MAX_ORDER_VALUE`), but the single-input blur
+  // path routes through `insertShift` without consulting
+  // `validation.valid` — only `blank`, `Number.isInteger`, and
+  // `n < 1` are gated at the hook level. Per the `insertShift`
+  // docstring: "the endpoint accepts any positive integer and
+  // clamps / shifts as needed", so the POST ships through for
+  // backend clamping. Phase 1 pre-audit classified this as a
+  // copy-regex rebaseline; verification revealed the second
+  // half of the assertion ("POST NOT fired") is a thesis
+  // obsoletion. Split: banner assertion stays (UI advisory
+  // intact); POST assertion is flipped to assert the
+  // insert-shift payload fires through to the backend.
+  it("out-of-range value (>50 cap) → banner fires but insert-shift POST still ships (backend clamps)", async () => {
     render(<Harness />);
     const i3 = screen.getByTestId("route-order-input-j3");
     await act(async () => {
@@ -144,8 +173,18 @@ describe("Numbered-order inline inputs", () => {
     });
     expect(i3.getAttribute("aria-invalid")).toBe("true");
     expect(screen.getByTestId("route-order-error-banner").textContent)
-      .toMatch(/unique positive integers .*1.*50/i);
-    expect(_h.post).not.toHaveBeenCalled();
+      .toMatch(/positive integers.*1.*50/i);
+    await waitFor(() => {
+      expect(_h.post).toHaveBeenCalledWith(
+        "/jobs/reorder-day-route",
+        expect.objectContaining({
+          job_id: "j3",
+          new_position: 51,
+          technician_id: "tech-1",
+          date: "2026-03-15",
+        }),
+      );
+    });
   });
 
   it("zero value → red border + banner + POST NOT fired", async () => {
@@ -157,7 +196,7 @@ describe("Numbered-order inline inputs", () => {
     });
     expect(i1.getAttribute("aria-invalid")).toBe("true");
     expect(screen.getByTestId("route-order-error-banner").textContent)
-      .toMatch(/unique positive integers .*1.*50/i);
+      .toMatch(/positive integers.*1.*50/i);
     expect(_h.post).not.toHaveBeenCalled();
   });
 
@@ -177,7 +216,13 @@ describe("Numbered-order inline inputs", () => {
     expect(i1.getAttribute("aria-invalid")).toBe("false");
   });
 
-  it("non-contiguous numbers (1, 5, 12) save cleanly — cap relaxed from 1..N to 1..50", async () => {
+  // SR · Sprint 3d (Feb-2026) semantic flip — the single-input
+  // blur path routes through `insertShift` → `POST /jobs/reorder-
+  // day-route` with `{job_id, new_position}` (not the legacy
+  // whole-list `/jobs/reorder` + `ordered_job_ids` payload). Only
+  // the blurred row's edit fires an API call; sibling drafts are
+  // local-only until their own blur.
+  it("non-contiguous numbers (1, 5, 12) save cleanly via insert-shift — cap relaxed from 1..N to 1..50", async () => {
     render(<Harness />);
     const i1 = screen.getByTestId("route-order-input-j1");
     const i2 = screen.getByTestId("route-order-input-j2");
@@ -187,27 +232,34 @@ describe("Numbered-order inline inputs", () => {
       fireEvent.change(i1, { target: { value: "1"  } });
       fireEvent.change(i2, { target: { value: "5"  } });
       fireEvent.change(i3, { target: { value: "12" } });
-      fireEvent.blur(i3);   // whole day is valid — auto-save fires
+      fireEvent.blur(i3);   // whole day is valid — insert-shift fires for j3
     });
 
-    // No validation banner while every value is unique + in range.
+    // No validation banner — every value is a positive integer in range.
     expect(screen.queryByTestId("route-order-error-banner")).toBeNull();
-    // Sorted by the typed numbers ascending — the id list is
-    // ``[j1, j2, j3]`` because 1 < 5 < 12.  If a user typed
-    // ``[9, 5, 12]`` the payload would be ``[j2, j1, j3]``.
+    // Only the blurred row (j3) fires a POST; j1 and j2 stay local
+    // until their own blur. Payload is the Sprint 3d insert-shift
+    // shape, not the retired whole-list `ordered_job_ids` shape.
     await waitFor(() => {
       expect(_h.post).toHaveBeenCalledWith(
-        "/jobs/reorder",
+        "/jobs/reorder-day-route",
         expect.objectContaining({
-          ordered_job_ids: ["j1", "j2", "j3"],
-          tech_user_id: "tech-1",
+          job_id: "j3",
+          new_position: 12,
+          technician_id: "tech-1",
           date: "2026-03-15",
         }),
       );
     });
   });
 
-  it("duplicate values 1,1,3 remain rejected", async () => {
+  // SR · obsolete per Sprint 3d · dropped uniqueness contract
+  // (duplicates now save cleanly via insert-and-shift — see the
+  // "duplicate numbers → both inputs stay valid" case above,
+  // which covers the new semantics. This case's thesis — "dups
+  // remain rejected" — is literally impossible to satisfy
+  // against the Feb-2026 _validate() contract).
+  it.skip("duplicate values 1,1,3 remain rejected", async () => {
     render(<Harness />);
     const i2 = screen.getByTestId("route-order-input-j2");
     await act(async () => {
@@ -219,30 +271,44 @@ describe("Numbered-order inline inputs", () => {
     expect(_h.post).not.toHaveBeenCalled();
   });
 
-  it("valid change on blur → POST /jobs/reorder with correctly-ordered job_ids", async () => {
+  // SR · Sprint 3d (Feb-2026) semantic flip — valid blur routes
+  // through `insertShift` → `POST /jobs/reorder-day-route` with
+  // `{job_id, new_position}` for the touched row only. The
+  // retired whole-list path (`/jobs/reorder` + `ordered_job_ids`)
+  // now only serves the drag-and-drop bulk modal (ReorderRoute
+  // Modal), not inline blur.
+  it("valid change on blur → POST /jobs/reorder-day-route with the touched job's new position", async () => {
     render(<Harness />);
     const i1 = screen.getByTestId("route-order-input-j1");
     const i3 = screen.getByTestId("route-order-input-j3");
 
-    // Swap j1 ↔ j3 in a single valid mutation.
+    // Edit both rows but only blur j1 — only j1 fires an API call.
     await act(async () => {
       fireEvent.change(i1, { target: { value: "3" } });
       fireEvent.change(i3, { target: { value: "1" } });
-      fireEvent.blur(i1);   // triggers auto-save (valid at this point)
+      fireEvent.blur(i1);   // triggers insert-shift for j1
     });
 
     await waitFor(() => {
       expect(_h.post).toHaveBeenCalledWith(
-        "/jobs/reorder",
+        "/jobs/reorder-day-route",
         expect.objectContaining({
-          ordered_job_ids: ["j3", "j2", "j1"],
-          tech_user_id: "tech-1",
+          job_id: "j1",
+          new_position: 3,
+          technician_id: "tech-1",
           date: "2026-03-15",
         }),
       );
     });
   });
 
+  // SR · Sprint 3d (Feb-2026) semantic flip — duplicates no longer
+  // invalidate the draft map, so the invariant "buildOrderedIds
+  // returns null when validation is invalid" must be exercised
+  // through a trigger Sprint 3d still rejects (out-of-range or
+  // blank). Thesis — "controller derives buildOrderedIds only
+  // when valid" — is preserved; only the invalidity trigger
+  // changes.
   it("cross-tech safety — controller derives buildOrderedIds only when valid", async () => {
     let currentValid = null;
     let currentIds = null;
@@ -263,9 +329,11 @@ describe("Numbered-order inline inputs", () => {
     expect(currentValid).toBe(true);
     expect(currentIds).toEqual(["j1", "j2", "j3"]);
 
-    // Introduce a duplicate — buildOrderedIds must go null.
+    // Introduce an out-of-range value (>MAX_ORDER_VALUE=50) —
+    // buildOrderedIds must go null. Duplicates would NOT trigger
+    // this anymore under Sprint 3d; out-of-range still does.
     await act(async () => {
-      fireEvent.change(screen.getByTestId("probe-in-1"), { target: { value: "2" } });
+      fireEvent.change(screen.getByTestId("probe-in-1"), { target: { value: "100" } });
       fireEvent.click(screen.getByTestId("bump"));
     });
     expect(currentValid).toBe(false);

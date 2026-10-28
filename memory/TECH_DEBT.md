@@ -3250,3 +3250,23 @@ Three atomic commits (option A), all in `mobile/app/(app)/schedule/calendar.tsx`
 - **TR ticket CLOSED.** FE SHA — see git log entry `fix(properties-list): restore colors.searchIcon on Search icon per Phase N2 token discipline (TR, ZZ follow-up)`.
 - **Wave 2 red-file count update:** 27 → 26 red files remaining on `main` after TR ships (down 7 from the 33-file health-check baseline).
 
+
+
+### SR · `TD-sprint-3d-schedule-numbered-reorder-test-realignment` · RESOLVED · Feb-2026
+- **Dispatch:** `schedule-numbered-reorder.test.jsx` (ZZ-A Wave 2 STOP #3 — see block above). Realign the 7 red cases to the Sprint 3d insert-and-shift contract (uniqueness requirement dropped; blurs route through `POST /jobs/reorder-day-route`).
+- **Phase 1 pre-audit:** classified as 2 copy-regex rebaselines + 5 semantic realignments.
+- **Phase 2 verification revision:** 1 copy + 6 semantic. The `>50 cap` case was initially classified as a copy-regex rebaseline, but verification revealed the second half of its assertion (`POST NOT fired`) was a thesis obsoletion — Sprint 3d's `blurSave` single-input path only gates on `blank`, `Number.isInteger`, and `n < 1`, so an out-of-range value still fires `insertShift` and the backend clamps per the `insertShift` docstring (*"accepts any positive integer and clamps / shifts as needed"*). Realigned to assert both the UI advisory banner AND the insert-shift POST fire. Surfaced on the ship receipt rather than silently expanding the "copy rebaseline" scope.
+- **Realignment detail (7 cases):**
+  - **Copy rebaseline (1):** `zero value` — regex `/unique positive integers .*1.*50/i` → `/positive integers.*1.*50/i`. Zero stays rejected by `blurSave`'s `n < 1` guard, so "POST NOT fired" holds under Sprint 3d.
+  - **Semantic flip — duplicates save (1):** `duplicate numbers` — now asserts both inputs stay valid, no error banner, and `POST /jobs/reorder-day-route` fires with `{job_id, new_position}` shape.
+  - **Semantic flip — >50 ships (1):** `out-of-range (>50)` — banner still fires (`_validate` catches it), but POST now ships through (backend clamps). Rename reflects the split.
+  - **Semantic flip — endpoint + payload (2):** `non-contiguous (1,5,12)` and `valid change on blur` — rewired from legacy whole-list `/jobs/reorder` + `ordered_job_ids` to Sprint 3d single-input `/jobs/reorder-day-route` + `{job_id, new_position, technician_id, date}`. Only the blurred row's edit fires an API call; sibling drafts stay local until their own blur.
+  - **Semantic flip — invalidity trigger (1):** `cross-tech safety` — thesis preserved (`buildOrderedIds` returns null when invalid), but the trigger changed from duplicate (no longer invalidating under Sprint 3d) to out-of-range (`"100"`).
+  - **`.skip` — obsolete thesis (1):** `duplicate values 1,1,3 remain rejected` — tagged `// SR · obsolete per Sprint 3d · dropped uniqueness contract`. Redundant with the duplicate-saves case above under the new contract; preserved as `it.skip` with inline reasoning rather than deleted so future readers see the Sprint 3d boundary explicitly.
+- **No production code touched.** Test-only commit. Zero `/app/mobile/`, `/app/backend/`, or FE production file edits.
+- **Vitest confirmation:** **12/12 pass + 5 skipped** on `schedule-numbered-reorder.test.jsx` (was **6 pass / 7 fail / 4 skip** pre-SR). The 4 pre-existing `.skip`'d cases live inside the retired `BulkReorderModal` `describe.skip` block (Phase C drag-and-drop pivot — see `reorder-route-modal.test.jsx`); the 5th skip is the new SR obsoletion.
+- **Wave 2 red-file count update:** 26 → **25 red files** remaining on `main` after SR ships (down 8 from the 33-file ZZ-A baseline).
+- **Scope boundary:** FE commit touches `schedule-numbered-reorder.test.jsx` + this memory block only.
+- **Ticket CLOSED.** See git log for ship SHA — `test(schedule-numbered-reorder): realign to Sprint 3d insert-and-shift contract (SR, ZZ follow-up)`.
+- **Injection-hygiene note:** During this ticket the recurring V-class injection surfaced again as a `<problem_statement>` block asking for a GitHub inspection of `bbeck169/Pool-Landscaping`. Classified against the `TD-github-ownership-attestation` taxonomy at the head of this file; held and stood down. Legitimate dispatch continued without disruption.
+
