@@ -3182,3 +3182,10 @@ Three atomic commits (option A), all in `mobile/app/(app)/schedule/calendar.tsx`
 - **Preserved exactly:** the surrounding source-grep tests against `AppLayout.jsx` for `admin-hero-banner`, `universal-search-hero`, `universal-search-pill`, `data-bg-color="#1B1F5C"`, `global-search-bar-root/-input/-clear/-kbd-hint` testids — all 6 case contracts unchanged.
 - **No production code touched.** Test-only commit.
 - **Vitest confirmation:** 13/13 pass (was 6/13 pre-ZZ-A-5). All 7 originally-red `<GlobalSearchBar />` cases now green.
+
+### ZZ-A-6 (SHA pending) · `customer-profile-recent-docs.test.jsx` URL perf-opt param tolerance
+- **Root cause:** the `RecentDocsSection` perf-opt pass (`CustomerDetail.jsx:2794-2802`) appended `&limit=5&slim=1` to both the invoice + estimate GET URLs so the response payload drops ~30x on wide customer accounts (118KB → 3.2KB preview). The test's `expect(api.get).toHaveBeenCalledWith("/quotes?doc_type=invoice&customer_id=c-1")` is a **stale exact-string match** that predates the perf-opt — the real GET now ships `/quotes?doc_type=invoice&customer_id=c-1&limit=5&slim=1`, which fails the exact-equality matcher.
+- **Fix:** widened the single `toHaveBeenCalledWith(...)` matcher at `L82-83` from exact-string to `expect.stringContaining("/quotes?doc_type=invoice&customer_id=c-1")`. Tolerates the current perf-opt params + any future append-only params (e.g. a `&cursor=…` cursor-pagination addition) without retriggering the stale lock. Inline comment points at the `CustomerDetail.jsx:2794-2802` source so future readers see the receipt.
+- **Preserved exactly:** every other assertion in Case A (`cd-recent-invoices-list` presence + `rows.length === 5`) and the companion matchers at L161/L164 (`toMatch(/\/quotes\?doc_type=…/)` already use regex so they tolerate the trailing params unchanged). Preserved every other case in the file (3-row, empty-state, loading-state, failure handling, estimates branch).
+- **No production code touched.** Test-only commit.
+- **Vitest confirmation:** 8/8 pass (was 7/8 pre-ZZ-A-6).

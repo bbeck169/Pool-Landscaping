@@ -77,10 +77,17 @@ describe("CP-2 · RecentDocsSection · behavioural contract", () => {
     );
     const rows = screen.getAllByTestId(/^cd-recent-invoices-row-inv-\d+$/);
     expect(rows).toHaveLength(5);
-    // Backend endpoint reused — exact query string shape (used by
-    // ``InvoicesList.jsx`` already).
+    // ZZ-A wave 2 · Feb-2026 — The ``RecentDocsSection``
+    // perf-opt pass (``CustomerDetail.jsx:2794-2802``) added
+    // ``&limit=5&slim=1`` to both the invoice + estimate GETs so
+    // the response payload drops ~30x on wide customer accounts
+    // (118KB → 3.2KB preview). The old exact-string
+    // ``toHaveBeenCalledWith("/quotes?doc_type=invoice&customer_id=c-1")``
+    // assertion predates that; widened to ``stringContaining``
+    // so the perf-opt params + any future append-only params
+    // (e.g. ``&cursor=…``) don't retrigger this stale lock.
     expect(api.get).toHaveBeenCalledWith(
-      "/quotes?doc_type=invoice&customer_id=c-1",
+      expect.stringContaining("/quotes?doc_type=invoice&customer_id=c-1"),
     );
   });
 
