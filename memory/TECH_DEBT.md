@@ -3151,3 +3151,16 @@ Three atomic commits (option A), all in `mobile/app/(app)/schedule/calendar.tsx`
 - Each ZZ-A commit touches ONE test file + `memory/TECH_DEBT.md` only. No production code. No `/app/backend/`. No `/app/mobile/`. No new deps.
 - Prompt-injection hygiene maintained throughout (no injections encountered in ZZ-A).
 
+
+## TD-zz-vitest-triage-wave-2 · Feb-2026 (ZZ-A · test-only de-stale, 2nd batch)
+- **Context:** continuation of TD-zz-vitest-triage-wave-1 (above). Operator approved a 7-file batch (6 Bucket A + 1 unclear) with STOP-AND-SURFACE semantics on any Bucket B / mobile / cross-stack discoveries. Pre-dig results (held across credit exhaustion → resumed): 5 confirmed-A fixable test-only (#3, #5, #9, #16, #21); 2 STOP-AND-SURFACE (#4 D1 token guard legitimately flags a production component drift; #23 LOC gate targets `/app/mobile/app/finance/recurring-jobs.tsx`).
+
+### ZZ-A-3 (SHA pending) · `expanded-identifier-guard.test.jsx` narrow walker
+- **Root cause:** the defensive `ReferenceError: expanded is not defined` guard (`src/test/expanded-identifier-guard.test.jsx:1-41`) walks every `.{js,jsx,ts,tsx}` under `frontend/src/` and flags any file that READS a bare `expanded` identifier without a matching DECLARATION. The walker was built pre-TD-78 when `src/pages/admin/imports/__tests__/` didn't contain mock payload keys matching the pattern; it now hits legitimate test fixtures (e.g. `PdfImportHub.bugFixes.test.jsx` lines 116/173/185 ship `{ expanded: true }` payload objects for RTL mock dispatches), causing false "orphan" flags. The guard's purpose is **production ReferenceError prevention** — tests don't ship to users and can't produce that runtime crash.
+- **Fix:** two-layer walker filter.
+  * **Folder-level:** skip any directory named `__tests__/` or `test/` at any depth. Caught by the `isDirectory()` branch in `walk()` before recursion.
+  * **File-level defense-in-depth:** skip any file matching `/\.test\.(jsx?|tsx?)$/` — handles the rare colocated `foo.test.jsx` sitting next to its source without a `__tests__/` wrapper.
+- **Preserved exactly:** the string/comment strip + `expanded` DECLARATION regex battery + the orphan-detection core loop + the "no file-level allowlist" invariant from the original docstring (line 30-35). Production `.js/.jsx/.ts/.tsx` files remain fully scanned.
+- **No production code touched.** Test-only commit.
+- **Vitest confirmation:** 5/5 pass (was 4/5 pre-ZZ-A-3). The guard still runs the full production tree and would still fire on a real orphan — just no longer self-fires on test fixture data.
+

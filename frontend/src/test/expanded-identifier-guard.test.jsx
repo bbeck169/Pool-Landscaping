@@ -55,8 +55,27 @@ function walk(dir) {
     for (const name of fs.readdirSync(cur)) {
       const full = path.join(cur, name);
       const st = fs.statSync(full);
-      if (st.isDirectory()) stack.push(full);
-      else if (/\.(jsx?|tsx?)$/.test(name)) out.push(full);
+      if (st.isDirectory()) {
+        // ZZ-A Wave 2 · Feb-2026 — exclude ``__tests__/`` folders +
+        // the top-level ``test/`` tree.  Tests legitimately
+        // reference ``expanded`` as mock payload keys / RTL
+        // assertion strings / fixture data; those are NOT the
+        // ReferenceError crash risk this guard was built for
+        // (production module code only).  Previously the guard
+        // walked every ``.test.jsx`` under ``src/pages/**/__tests__/``
+        // and ``src/test/`` and false-flagged mock-dict reads
+        // like ``{ expanded: true }`` as orphans.
+        if (name === "__tests__" || name === "test") continue;
+        stack.push(full);
+      }
+      else if (/\.(jsx?|tsx?)$/.test(name)) {
+        // Defense-in-depth · explicitly skip any ``*.test.*`` file
+        // that slipped past the folder-level filter (e.g. a
+        // colocated ``foo.test.jsx`` sitting NEXT to its source
+        // without a ``__tests__/`` wrapper).
+        if (/\.test\.(jsx?|tsx?)$/.test(name)) continue;
+        out.push(full);
+      }
     }
   }
   return out;
