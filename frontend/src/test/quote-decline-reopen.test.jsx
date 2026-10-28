@@ -259,23 +259,32 @@ describe("Phase 3 B2 · QuotesList — lifecycle view filter", () => {
     apiGet.mockResolvedValue(SAMPLE_ROWS);
     await renderList();
     await screen.findByTestId("quotes-list-filter");
+    // ZZ-A Wave 3-E · Feb-2026 — the ``converted`` lifecycle view
+    // was renamed to ``accepted`` (``LIFECYCLE_VIEWS = ["open",
+    // "accepted", "declined", "all"]`` at QuotesList.jsx:41; the
+    // URL ``?view=converted`` is silently rewritten to
+    // ``?view=accepted`` by the component — see QuotesList.jsx:
+    // L37-39 + L116 rationale). Flipped the Converted testid
+    // assertion to the Accepted replacement.
     expect(screen.getByTestId("quotes-list-filter-open")).toBeTruthy();
-    expect(screen.getByTestId("quotes-list-filter-converted")).toBeTruthy();
+    expect(screen.getByTestId("quotes-list-filter-accepted")).toBeTruthy();
     expect(screen.getByTestId("quotes-list-filter-declined")).toBeTruthy();
     expect(screen.getByTestId("quotes-list-filter-all")).toBeTruthy();
   });
 
-  it("clicking the Converted filter re-fetches with ?view=converted", async () => {
+  it("clicking the Accepted filter re-fetches with ?view=accepted", async () => {
+    // ZZ-A Wave 3-E · Feb-2026 — renamed from "Converted" per the
+    // lifecycle view rename (see case above + QuotesList.jsx:41).
     apiGet.mockResolvedValue(SAMPLE_ROWS);
     await renderList();
-    await screen.findByTestId("quotes-list-filter-converted");
+    await screen.findByTestId("quotes-list-filter-accepted");
     apiGet.mockResolvedValue(CONVERTED_ROWS);
     await act(async () => {
-      fireEvent.click(screen.getByTestId("quotes-list-filter-converted"));
+      fireEvent.click(screen.getByTestId("quotes-list-filter-accepted"));
     });
     await waitFor(() => {
       const calls = apiGet.mock.calls.map((c) => c[0]);
-      expect(calls.some((u) => /view=converted/.test(u))).toBe(true);
+      expect(calls.some((u) => /view=accepted/.test(u))).toBe(true);
     });
   });
 
@@ -312,7 +321,19 @@ describe("Phase 3 B2 · QuotesList — lifecycle view filter", () => {
     expect(screen.queryByTestId("quote-row-reopen-q-draft-1")).toBeNull();
   });
 
-  it("Decline on open row calls confirm() first, then POSTs decline", async () => {
+  // ZZ-A Wave 3-E · obsolete per QUOTES-OPEN-TAB-DECLINE-EXTEND
+  // (Feb-2026) — the ``window.confirm`` prompt was removed from
+  // the list-row Decline affordance per the DOC-LOCK-POLICY-RELAX
+  // "always editable" philosophy (see QuotesList.jsx:240-247
+  // "silent decline" rationale: Decline is reversible via Reopen,
+  // so a confirm modal is friction for no benefit). The list-row
+  // Decline button still exists + still POSTs; it just skips the
+  // confirm step. The sibling case "open view: Decline button
+  // renders on an open row…" (line ~282) continues to lock the
+  // button presence + testid. .skip the confirm-first assertion
+  // + the "no POST when dismissed" assertion since both theses
+  // are literally impossible to satisfy under silent-decline.
+  it.skip("Decline on open row calls confirm() first, then POSTs decline", async () => {
     apiGet.mockResolvedValue(SAMPLE_ROWS);
     apiPost.mockResolvedValue({});
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
@@ -332,7 +353,10 @@ describe("Phase 3 B2 · QuotesList — lifecycle view filter", () => {
     confirmSpy.mockRestore();
   });
 
-  it("Decline is a no-op (no POST) when confirm() is dismissed", async () => {
+  // ZZ-A Wave 3-E · obsolete per QUOTES-OPEN-TAB-DECLINE-EXTEND
+  // (Feb-2026) — silent decline shipped; the confirm-dismissal
+  // branch is unreachable (see sibling .skip above).
+  it.skip("Decline is a no-op (no POST) when confirm() is dismissed", async () => {
     apiGet.mockResolvedValue(SAMPLE_ROWS);
     apiPost.mockResolvedValue({});
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);

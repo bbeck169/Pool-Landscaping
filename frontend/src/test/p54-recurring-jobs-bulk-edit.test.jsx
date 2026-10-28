@@ -100,8 +100,15 @@ describe("Phase P54 · Recurring Jobs service-category filter", () => {
     // The memo's dep array must include serviceCategoryFilter
     // alongside items + searchQuery so the filter re-runs when
     // the dropdown flips.
+    //
+    // ZZ-A Wave 3-E · Feb-2026 — ``dateFilter`` was added as a
+    // fourth dep after ``serviceCategoryFilter`` (RecurringJobs.jsx
+    // :276 — current shape ``}, [items, searchQuery,
+    // serviceCategoryFilter, dateFilter]);``). Loosened the
+    // trailing anchor so the three required deps are checked
+    // in order but the array terminator can carry extra deps.
     expect(src).toMatch(
-      /\}, \[items, searchQuery, serviceCategoryFilter\]\);/,
+      /\}, \[items, searchQuery, serviceCategoryFilter[,\s\]]/,
     );
   });
 

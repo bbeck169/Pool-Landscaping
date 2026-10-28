@@ -37,8 +37,18 @@ describe("Task L+P · Commit 4 — MediaStrip URL swap contract", () => {
   it("grid <img> src funnels through _thumbSrc(t.url)", () => {
     // The photo branch of the grid thumb loop consumes
     // _thumbSrc — this is the URL swap itself.
+    //
+    // ZZ-A Wave 3-E · Feb-2026 — WorkstreamPage.jsx:140 now
+    // reads ``_thumbSrc(t.thumb_url || t.url)`` so SR entries
+    // (which may carry an explicit ``thumb_url`` short-circuit)
+    // prefer the stored thumb when present. The pre-Wave-3
+    // bare-``t.url`` regex no longer matches. Loosened to accept
+    // the optional ``t.thumb_url ||`` fallback prefix. Also
+    // widened the between-``<img``-and-``src=`` window
+    // (120 → 500 chars) to span the 7-line TD-76-ph2c rationale
+    // comment block that landed between the tag and the attr.
     expect(SRC).toMatch(
-      /<img[\s\S]{0,120}src=\{`\$\{BACKEND\}\$\{_thumbSrc\(t\.url\)\}`\}/
+      /<img[\s\S]{0,500}src=\{`\$\{BACKEND\}\$\{_thumbSrc\(t\.(?:thumb_url\s*\|\|\s*t\.)?url\)\}`\}/
     );
   });
 
@@ -46,8 +56,18 @@ describe("Task L+P · Commit 4 — MediaStrip URL swap contract", () => {
     // Lightbox image element renders inside the `preview.kind ===
     // "photo"` branch of the preview modal — must resolve to the
     // full-size URL so click-to-enlarge stays high-res.
+    //
+    // ZZ-A Wave 3-E · Feb-2026 — WorkstreamPage.jsx:193 now
+    // reads ``${preview.full_url || preview.url}`` so SR
+    // photos (which may carry a distinct ``full_url``) resolve
+    // to the explicit full-size path when present. Loosened the
+    // src regex to accept the optional ``preview.full_url ||``
+    // fallback prefix; widened the between-``<img``-and-``src=``
+    // window (120 → 300 chars) to span the TD-76-ph2c comment
+    // line that landed between the tag and the attr. The
+    // belt-and-braces anti-``_thumbSrc`` guard below is unchanged.
     expect(SRC).toMatch(
-      /preview\.kind === "photo"[\s\S]{0,300}<img[\s\S]{0,120}src=\{`\$\{BACKEND\}\$\{preview\.url\}`\}/
+      /preview\.kind === "photo"[\s\S]{0,300}<img[\s\S]{0,300}src=\{`\$\{BACKEND\}\$\{preview\.(?:full_url\s*\|\|\s*preview\.)?url\}`\}/
     );
     // Belt-and-braces: the lightbox img must NOT wrap
     // preview.url in _thumbSrc.
@@ -57,8 +77,15 @@ describe("Task L+P · Commit 4 — MediaStrip URL swap contract", () => {
   });
 
   it("lightbox <video> src still uses full-size preview.url (NOT thumb'd)", () => {
+    // ZZ-A Wave 3-E · Feb-2026 — WorkstreamPage.jsx:204 now
+    // wraps the video src in ``withAuthToken(..., token)`` so
+    // the signed-stream token rides on the request. The
+    // underlying URL template is unchanged
+    // (``${BACKEND}${preview.url}...``). Allowed the optional
+    // ``withAuthToken(`` wrapper in the src regex; the full-size
+    // thesis (preview.url, no thumb) is preserved.
     expect(SRC).toMatch(
-      /<video[\s\S]{0,400}src=\{`\$\{BACKEND\}\$\{preview\.url\}\$\{token/
+      /<video[\s\S]{0,400}src=\{(?:withAuthToken\()?`\$\{BACKEND\}\$\{preview\.url\}/
     );
   });
 

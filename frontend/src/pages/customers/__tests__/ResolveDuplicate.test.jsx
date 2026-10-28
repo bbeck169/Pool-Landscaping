@@ -263,7 +263,18 @@ describe("PortalInviteQuickAction · ResolveDuplicate Phase 1", () => {
     });
   });
 
-  it("Option B (merge) renders disabled with Coming soon marker + tooltip", async () => {
+  // ZZ-A Wave 3-E · obsolete per Option-B merge-feature ship
+  // (Feb-2026) — ``PortalInviteQuickAction`` originally rendered
+  // Option B (merge) as a disabled affordance with a "Coming
+  // soon" marker + tooltip during ResolveDuplicate Phase 1. The
+  // merge affordance has since shipped as a real feature (see
+  // the sibling ``customer-merge-wizard-*.test.jsx`` suites for
+  // the shipped-feature coverage), and the
+  // ``resolve-duplicate-option-b-coming-soon`` testid was
+  // retired alongside the placeholder. Keeping the case as
+  // ``.skip`` so readers see the retired "Coming soon" boundary
+  // explicitly rather than deleting the lineage.
+  it.skip("Option B (merge) renders disabled with Coming soon marker + tooltip", async () => {
     postSpy.mockRejectedValueOnce(_collisionError());
     _renderWithRouter(
       <PortalInviteQuickAction
