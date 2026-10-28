@@ -3164,3 +3164,14 @@ Three atomic commits (option A), all in `mobile/app/(app)/schedule/calendar.tsx`
 - **No production code touched.** Test-only commit.
 - **Vitest confirmation:** 5/5 pass (was 4/5 pre-ZZ-A-3). The guard still runs the full production tree and would still fire on a real orphan — just no longer self-fires on test fixture data.
 
+
+### ZZ-A-4 (SHA pending) · `schedule-map-tech-labels.test.jsx` TD-87 label format rebaseline
+- **Root cause:** **TD-87 · Feb-2026** explicitly dropped the on-pin `NN·II` suffix from the schedule-map numbered-route-stop pins (`ScheduleMap.jsx:461-474` docstring: *"The stop-number pin disc is tight on space; the pin COLOUR already identifies the technician (legend + stroke pairing), so the historical ``NN·II`` suffix (e.g. ``01·EM``) was redundant… label is now the pure zero-padded stop number (e.g. ``01``, ``04``, ``13``)"*). Tech initials remain accessible via the `data-tech-initials` DOM attribute on the OUTER pin button (`ScheduleMap.jsx:567`). The test's `expect(screen.getByTestId("schedule-map-pin-j-fn-svg-label").textContent).toBe("01·EM")` assertion predates TD-87.
+- **Fix:** rebaselined the single "numbered route-stop pins render" case:
+  * Renamed the case title from *"render ``NN·II``"* → *"render ``NN`` + ``data-tech-initials``"* so the invariant maps to the TD-87 contract.
+  * `.textContent` assertions now target the inner `-svg-label` text element and expect pure zero-padded stop numbers (`01`).
+  * NEW companion assertions read `data-tech-initials` from the OUTER pin button (`schedule-map-pin-${jobId}`) — the attribute is at `ScheduleMap.jsx:567`, not on the SVG `<text>` child.
+  * Preserved the EM / JD / E resolved values from the sibling `resolveTechInitials` test battery (fallback chain still works through `first_name + last_name` → `name` → `email`).
+- **Preserved exactly:** every other test in the file. The `resolveTechFirstName` + `resolveTechInitials` resolver-level tests (lines 71-196) continue to pin the pure resolver contract; the legend-row tests (lines 198-223) continue to pin the "FIRST NAME shows + no truncated-UUID leaks" invariant; the "no initials" fallback test (lines 237+) continues to pin the bare-stop-number fallback for techs with no name data.
+- **No production code touched.** Test-only commit.
+- **Vitest confirmation:** 20/20 pass (was 19/20 pre-ZZ-A-4). TD-87 contract locked.

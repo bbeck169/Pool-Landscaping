@@ -222,16 +222,31 @@ describe("<ScheduleMap /> · tech-label bug fix", () => {
     expect(legend.textContent).not.toMatch(/Tech a1b2c3/);
   });
 
-  it("numbered route-stop pins render ``NN·II`` when initials resolve", () => {
+  it("numbered route-stop pins render ``NN`` + ``data-tech-initials`` when initials resolve", () => {
     render(<ScheduleMap jobs={_jobsFixture()} techs={_techs}
                         techColorMap={_techColorMap} />);
+    // ZZ-A wave 2 · Feb-2026 — TD-87 (``ScheduleMap.jsx:461-474``)
+    // dropped the on-pin ``NN·II`` suffix; the visible pin label is
+    // now the pure zero-padded stop number (``01``, ``04``, ``13``)
+    // because the pin COLOUR already identifies the technician
+    // (legend + stroke pairing).  Tech initials are still exposed
+    // via the ``data-tech-initials`` DOM attribute on the OUTER
+    // pin button (``schedule-map-pin-<jobId>``) at
+    // ``ScheduleMap.jsx:567`` — the inner ``-svg-label`` text
+    // element only carries the stop number.
     // Ethan Miller → EM; Jane Doe → JD; email-only ethan.smith → E.
     expect(screen.getByTestId("schedule-map-pin-j-fn-svg-label")
-      .textContent).toBe("01·EM");
+      .textContent).toBe("01");
+    expect(screen.getByTestId("schedule-map-pin-j-fn")
+      .getAttribute("data-tech-initials")).toBe("EM");
     expect(screen.getByTestId("schedule-map-pin-j-nm-svg-label")
-      .textContent).toBe("01·JD");
+      .textContent).toBe("01");
+    expect(screen.getByTestId("schedule-map-pin-j-nm")
+      .getAttribute("data-tech-initials")).toBe("JD");
     expect(screen.getByTestId("schedule-map-pin-j-em-svg-label")
-      .textContent).toBe("01·E");
+      .textContent).toBe("01");
+    expect(screen.getByTestId("schedule-map-pin-j-em")
+      .getAttribute("data-tech-initials")).toBe("E");
   });
 
   it("pins for techs with NO name data fall back to the bare stop number", () => {
