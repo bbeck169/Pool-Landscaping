@@ -3307,3 +3307,11 @@ Phase 1 pre-audit confirmed **zero Bucket B** regressions and zero STOP-and-surf
 - **Vitest:** **42/42 pass** across the 4 suites (was 38/42 with 4 red).
 - **No production code touched.** Test-only commit.
 - See git log for ship SHA — `test(customer-detail): rebaseline 4 files to Phase 20→27 restyle sweep (ZZ-A Wave 3-B)`.
+
+### Wave 3-C · Portal pages drift · RESOLVED
+- **Files (4):** `k67-navy-green-gradient.test.js`, `phase30-portal-admin-avatar-coverage.test.jsx`, `portal-page-shell.test.jsx`, `portal-invoices-td77.test.jsx`
+- **Root cause themes:** PortalPageShell adoption (Phase 18b) dropped the PortalPages K67 hero gradient; TD-74 retired the next-visit TechAvatar chip from the PortalHome hero; PortalReviews adopted a `testid=` attribute on its shell wrap; Ticket FF replaced the PortalInvoices `<li>` card list with the shared `<InvoiceTable />` primitive, retiring the TD-71 title + Created-date helpers on this surface (the helpers remain in use on PortalEstimates).
+- **Fixes:** 2 obsolete theses `.skip`'d with retirement rationale inline (K67 PortalPages hero, TD-71-in-invoice-list regression lock); 4 cases rebaselined (TechAvatar next→last-only, shell-tag regex loosened for attrs, PortalServiceReports wraps count flipped to `>= exportCount` to allow state-branch wraps, TD-77 DOM wait swapped to the stable `portal-invoices` container testid).
+- **Vitest:** **59/59 pass + 5 skipped** across the 4 suites (was 53 pass / 6 fail / 3 skip pre-Wave-3-C).
+- **No production code touched.** Test-only commit.
+- See git log for ship SHA — `test(portal): rebaseline 4 files to PortalPageShell / K67 / TD-71 sweeps (ZZ-A Wave 3-C)`.

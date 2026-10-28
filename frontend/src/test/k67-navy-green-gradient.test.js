@@ -136,7 +136,19 @@ describe("K67 · Consumer migration audit", () => {
     expect(UI_KIT).not.toMatch(/#0284C7 0%, #16A34A 100%/);
   });
 
-  it("PortalPages hero banner resolves through gradients.navyToGreen", () => {
+  // ZZ-A Wave 3-C · obsolete per PortalPages PortalPageShell adoption
+  // (Phase 18b · Feb-2026) — ``PortalPages.jsx`` dropped its gradient
+  // hero banner when every sub-export adopted ``<PortalPageShell>``
+  // chrome (deep-navy page bg + white dashboard card). The
+  // ``gradients.navyToGreen`` token remains live across 13+ other
+  // consumers (ui-kit Chip + ChipRow, PaymentMethodTiles, KpiCard,
+  // OverviewStrip, QuickAddButton, SharePortalModal, SignaturePadModal,
+  // TemplateCard, TosGate, ProfileCompletionGate, NapDriftPreview
+  // Modal, CustomerChemistry's AI-dosing icon plate — see sibling
+  // assertions in this file). PortalPages was intentionally dropped
+  // from the K67 consumer audit set; keeping the case as `.skip` so
+  // readers see the retired audit boundary explicitly.
+  it.skip("PortalPages hero banner resolves through gradients.navyToGreen", () => {
     const src = readFile("pages/portal/PortalPages.jsx");
     expect(src).toMatch(/gradients\.navyToGreen\.css/);
     // Old inline literal is gone.

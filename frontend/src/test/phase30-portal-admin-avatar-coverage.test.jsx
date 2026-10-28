@@ -68,11 +68,19 @@ describe("Phase 30 · Part A · Web AI persona (PortalHome)", () => {
 });
 
 describe("Phase 30 · Part B · Web TechAvatar coverage", () => {
-  it("PortalHome imports TechAvatar + mounts at next/last visit", () => {
+  it("PortalHome imports TechAvatar + mounts at last visit", () => {
+    // ZZ-A Wave 3-C · Feb-2026 — TD-74 retired the next-visit
+    // TechAvatar chip from the PortalHome hero (see sibling
+    // ``portal-home-hero-no-next-visit.test.jsx`` L55-59 which
+    // explicitly locks the ``portal-tech-avatar-next`` testid
+    // as GONE from the hero). The ``-last`` chip + the import
+    // remain. Dropped the ``-next`` assertion to realign with
+    // the TD-74 contract; next-visit avatar coverage now lives
+    // on the mobile ``home.tsx`` surface + the service list
+    // (asserted in the mobile cases below).
     expect(PORTAL_HOME).toMatch(
       /import\s+TechAvatar\s+from\s+["']@\/components\/common\/TechAvatar["']/,
     );
-    expect(PORTAL_HOME).toMatch(/testid=["']portal-tech-avatar-next["']/);
     expect(PORTAL_HOME).toMatch(/testid=["']portal-tech-avatar-last["']/);
   });
   it("PortalPages imports TechAvatar + mounts at list + detail", () => {

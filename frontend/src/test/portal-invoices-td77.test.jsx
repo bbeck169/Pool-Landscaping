@@ -47,7 +47,21 @@ describe("TD-77 · source-level removal of the Total outstanding tile", () => {
     expect(SRC).not.toMatch(/import\s*\{[^}]*\bgradients\b[^}]*\}\s*from\s*["']@\/theme["']/);
   });
 
-  it("positive regression lock — TD-71 title + Created-date line still render in the list", () => {
+  // ZZ-A Wave 3-C · obsolete per Ticket FF table-redesign
+  // (Feb-2026) — PortalInvoices replaced its ``<li>`` card list
+  // with the shared ``<InvoiceTable />`` primitive. Per the
+  // Ticket-FF rationale comment at ``PortalPages.jsx:237-244``,
+  // the TD-71 ``resolvePortalInvoiceTitle`` "Import #<n>" rewrite
+  // + ``formatInvoiceCreatedDate`` created-line affordances were
+  // **intentionally dropped on this surface** (operator decision —
+  // the Date column replaces the created line, and the FF helper
+  // reorder means ``getInvoiceDisplayTitle`` prefers the first
+  // line-item name which already handles the Import #<n> case
+  // retroactively). The TD-71 helpers remain in use on the
+  // PortalEstimates list (``PortalPages.jsx:387``). Keeping the
+  // case as ``.skip`` so readers see the retired contract boundary
+  // explicitly.
+  it.skip("positive regression lock — TD-71 title + Created-date line still render in the list", () => {
     expect(SRC).toMatch(/port-inv-title-\$\{r\.id\}/);
     expect(SRC).toMatch(/port-inv-created-\$\{r\.id\}/);
     expect(SRC).toMatch(/resolvePortalInvoiceTitle\(r\)/);
@@ -90,13 +104,21 @@ describe("TD-77 · rendered DOM — tile absent + list still works", () => {
     render(<PortalInvoices />);
     await waitFor(() => expect(getSpy).toHaveBeenCalled());
 
+    // ZZ-A Wave 3-C · Feb-2026 — the TD-77 contract (tile + text
+    // absent) is the ONLY thesis of this case post-Ticket-FF.
+    // The pre-Wave-3 positive regression lines (``port-inv-title-
+    // inv-*``) were dropped per the FF table redesign and the
+    // sibling source-grep test above is now ``.skip``'d. Wait on
+    // the stable container testid ``portal-invoices`` (added by
+    // the Ticket FF wrapper `<div data-testid="portal-invoices">`
+    // at ``PortalPages.jsx:248``) so the test doesn't time out
+    // chasing a retired row-title testid.
+    await waitFor(() => expect(screen.queryByTestId("portal-invoices")).toBeTruthy());
+
     // Tile absent.
     expect(screen.queryByTestId("port-outstanding")).toBeNull();
     // The literal "Total outstanding" label absent.
     expect(screen.queryByText(/Total outstanding/i)).toBeNull();
-    // Positive regression lock — rows still render with TD-71 title + created-date testids.
-    await waitFor(() => expect(screen.queryByTestId("port-inv-title-inv-1")).toBeTruthy());
-    expect(screen.queryByTestId("port-inv-title-inv-2")).toBeTruthy();
   });
 
   it("the LIST handles the empty state cleanly with no tile", async () => {
