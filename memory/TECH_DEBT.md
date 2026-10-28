@@ -3299,3 +3299,11 @@ Phase 1 pre-audit confirmed **zero Bucket B** regressions and zero STOP-and-surf
 | `phase41-2-admin-list-page-primitive.test.jsx` (1) | A | `88e3938de` + `30a6a0849` (recurring-jobs filters; file now 1010 LOC) | cap 800 → 1050 (operator default). File split = separate ticket if wanted |
 | `phase35-mobile-finance-parity.test.jsx` (1) | C | `c302bcb57` (list GET → ``api.get(`/recurring-jobs?status=${activeTab}`)``) | expect ``api.get(`/recurring-jobs`` prefix |
 | `phase22-mobile-schedule-gates.test.jsx` (1) | C | `e49e39cb9` (td-mobile-header-layout-cleanup — bell `marginRight: 52` removed; mobile jest H3 locks absence) | assert bell testID + no `marginRight: 52` + right cluster `flexShrink: 0`. Old regex also matched the file's first `marginRight` (`:2381`, value 2), not the bell |
+
+### Wave 3-B · CustomerDetail restyle · RESOLVED
+- **Files (4):** `phase27-admin-customer-profile-dark-restyle.test.jsx`, `customer-detail-navy-command-strip.test.jsx`, `customer-detail-tabs-dropdown.test.jsx`, `customer-detail-action-row.test.jsx`
+- **Root cause themes:** Ticket HH relocated `<CustomerActionDropdowns />` out of `cd-tabs-row` + `cd-command-strip` into the new `cd-identity-header-actions` container in the identity card; Phase 28 repositioned `{/* Header card */}` ABOVE the command strip; TABS array retired `overview/tasks/notes` and added `chemical_history/warranties/payments/portal`.
+- **Fixes:** split block-containment assertions so each component is checked against its post-Ticket-HH home; flipped the strip-vs-header-card position invariant; rebaselined TABS set; rebaselined the strip-end bound from `{/* Header card */}` to `cd-command-strip-tabs`.
+- **Vitest:** **42/42 pass** across the 4 suites (was 38/42 with 4 red).
+- **No production code touched.** Test-only commit.
+- See git log for ship SHA — `test(customer-detail): rebaseline 4 files to Phase 20→27 restyle sweep (ZZ-A Wave 3-B)`.

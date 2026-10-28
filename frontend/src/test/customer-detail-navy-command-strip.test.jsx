@@ -64,13 +64,22 @@ describe("CustomerDetail · unified navy command strip", () => {
     expect(slice).toMatch(/rounded-2xl mb-4 px-3 py-3/);
   });
 
-  it("navy strip sits below Portal Access and above the header card", () => {
+  it("navy strip sits below the header card AND below the Portal Access panel", () => {
+    // ZZ-A Wave 3-B · Feb-2026 — Phase 28 repositioned the
+    // ``{/* Header card */}`` to render ABOVE the Phase-20 command
+    // strip + Phase-27 KPI tile grid (see CustomerDetail.jsx:1464
+    // + the Phase-28 rationale comment at L1478-83). Current page
+    // order is: breadcrumb → Header card → PortalInviteQuickAction
+    // panel → cd-command-strip → cd-command-strip-tabs. The
+    // pre-Wave-3 "strip above header card" invariant inverted.
+    const headerCardIdx = pageSrc.indexOf("{/* Header card */}");
     const portalIdx = pageSrc.indexOf("<PortalInviteQuickAction");
     const stripIdx = pageSrc.indexOf('data-testid="cd-command-strip"');
-    const headerCardIdx = pageSrc.indexOf("{/* Header card */}");
+    expect(headerCardIdx).toBeGreaterThan(-1);
     expect(portalIdx).toBeGreaterThan(-1);
+    expect(stripIdx).toBeGreaterThan(-1);
+    expect(portalIdx).toBeGreaterThan(headerCardIdx);
     expect(stripIdx).toBeGreaterThan(portalIdx);
-    expect(headerCardIdx).toBeGreaterThan(stripIdx);
   });
 
   it("Overview dropdown + action row both live inside cd-action-row", () => {

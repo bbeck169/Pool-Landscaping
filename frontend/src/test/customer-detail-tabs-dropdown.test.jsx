@@ -72,11 +72,18 @@ describe("CustomerDetail · I6 tabs-as-dropdown", () => {
   });
 
   it("TABS array still lists every existing customer section", () => {
-    // Regression guard: the dropdown should carry every entry
-    // that used to sit on the horizontal strip.
-    for (const k of ["overview", "properties", "jobs", "quotes",
-                          "invoices", "equipment", "tasks", "notes",
-                          "credits"]) {
+    // ZZ-A Wave 3-B · Feb-2026 — the TABS array was reshaped: the
+    // standalone ``overview`` / ``tasks`` / ``notes`` tabs were
+    // retired (their content was pulled into the always-visible
+    // identity header above the strip, or dropped entirely —
+    // see CustomerDetail.jsx:875-879 Overview-content-hoist
+    // rationale). New service-record tabs ``chemical_history``,
+    // ``warranties``, ``payments``, ``portal`` were added. The
+    // guard still exists as a regression lock on the final set.
+    for (const k of ["properties", "jobs", "chemical_history",
+                       "quotes", "invoices", "equipment",
+                       "warranties", "credits", "payments",
+                       "portal"]) {
       expect(CD_SRC).toMatch(new RegExp(`k:\\s*"${k}"`));
     }
   });

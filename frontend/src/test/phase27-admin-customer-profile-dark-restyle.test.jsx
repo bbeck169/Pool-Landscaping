@@ -238,16 +238,28 @@ describe("Phase 27 · Phase 20 regression preservation — tabs dropdown stays i
     }
   });
 
-  it("ResponsiveTabs dropdown + CustomerActionDropdowns still live inside cd-tabs-row", () => {
+  it("ResponsiveTabs dropdown stays inside cd-tabs-row + CustomerActionDropdowns moved to identity header actions", () => {
+    // ZZ-A Wave 3-B · Feb-2026 — Ticket HH relocated
+    // ``<CustomerActionDropdowns />`` from inside ``cd-tabs-row``
+    // (its Phase 20 home) UP into the identity card above the H1,
+    // wrapped by ``cd-identity-header-actions`` (see
+    // ``CustomerDetail.jsx:1577`` + the Ticket HH rationale comment
+    // at L1562-72). The ResponsiveTabs dropdown + its shell testid
+    // stay inside ``cd-tabs-row``. Split the assertion so each
+    // block is checked against its post-Ticket-HH home.
     const tabsRowIdx = SRC.indexOf('data-testid="cd-tabs-row"');
-    // Find next cd-command-strip to bound the block.
     const endIdx = SRC.indexOf("</div>\n          </div>", tabsRowIdx);
     expect(tabsRowIdx).toBeGreaterThan(-1);
     expect(endIdx).toBeGreaterThan(tabsRowIdx);
     const tabsBlock = SRC.slice(tabsRowIdx, endIdx);
-    expect(tabsBlock).toContain("<CustomerActionDropdowns");
     expect(tabsBlock).toContain('data-testid="cd-tabs-dropdown-shell"');
     expect(tabsBlock).toContain("<ResponsiveTabs");
+
+    const identityActionsIdx = SRC.indexOf('data-testid="cd-identity-header-actions"');
+    expect(identityActionsIdx).toBeGreaterThan(-1);
+    const identityActionsEnd = SRC.indexOf("</div>", identityActionsIdx);
+    const identityActionsBlock = SRC.slice(identityActionsIdx, identityActionsEnd);
+    expect(identityActionsBlock).toContain("<CustomerActionDropdowns");
   });
 
   it("action row precedes tabs row in source order (Phase 20 lock)", () => {
