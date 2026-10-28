@@ -76,8 +76,16 @@ describe("CustomersList · Never logged in filter (Feb-2026)", () => {
     // the effect body calls setPage(1). Match on co-occurrence
     // rather than a rigid neighbour tuple (hasCardFilter now sits
     // between noPaymentFilter and neverLoggedIn after CUS-perf v3).
+    //
+    // ZZ-A Wave 3-D · Feb-2026 — the P2#6 service-category chip
+    // URL sync (``CustomersList.jsx:888``) added
+    // ``serviceCategoryFilter`` as the final dep after
+    // ``signedInFilter``, so the pre-Wave-3 trailing-anchor
+    // ``signedInFilter])`` no longer closes the array literally.
+    // Rebaselined to assert the three mid-array deps appear in
+    // order without anchoring on the terminator.
     expect(SRC).toMatch(
-      /neverLoggedIn,\s*portalInvitedFilter,\s*signedInFilter\]\);/,
+      /neverLoggedIn,\s*portalInvitedFilter,\s*signedInFilter[,\s\]]/,
     );
   });
 

@@ -162,27 +162,33 @@ describe("Phase P11 · server-side tech scope on /jobs fetch", () => {
     expect(scheduleSrc).toMatch(
       /`&technician_id=\$\{encodeURIComponent\(techId\)\}`/,
     );
-    // The scope segment is spliced into the URL template.
+    // ZZ-A Wave 3-D · Feb-2026 — widened the between-segment
+    // window (120 → 200) AND dropped the trailing-backtick anchor.
+    // The URL template at ``CalendarSchedule.jsx:951`` now carries
+    // ``${_techScope}${_svcCatScope}`` (service-category scope was
+    // added after P11 shipped), so ``${_techScope}`` is no longer
+    // the last interpolation before the closing backtick.
     expect(scheduleSrc).toMatch(
-      /`\/jobs\?start=\$\{start\}&end=\$\{end\}[\s\S]{0,120}\$\{_techScope\}`/,
+      /`\/jobs\?start=\$\{start\}&end=\$\{end\}[\s\S]{0,200}?\$\{_techScope\}/,
     );
   });
 
   it("no /jobs URL is hardcoded WITHOUT the _techScope splice (regression net)", () => {
-    // Locate the ``api.get(...`/jobs?...`)`` call site directly and
-    // pull the ~500-char slab around it — the outer template literal
-    // interpolates an inner one for the ``crew_id`` param, so a
-    // naïve `` `/jobs?...` `` regex stops at the first nested
-    // backtick. Instead, scan the ``api.get`` args line-by-line for
-    // the ``/jobs?start=`` marker.
-    const idx = scheduleSrc.indexOf("api.get(\n          `/jobs?start=");
+    // ZZ-A Wave 3-D · Feb-2026 — Ticket OO (Feb-2026) added 9
+    // ``// ...`` comment lines between ``api.get(`` and the
+    // backticked URL template (see CalendarSchedule.jsx:940-951
+    // rationale), so the pre-Wave-3 ``indexOf("api.get(\n          `/
+    // jobs?start=")`` adjacency literal no longer matches. Scan
+    // for the template-literal start directly and verify the
+    // ``${_techScope}`` splice appears in the ~500-char slab that
+    // follows.
+    const idx = scheduleSrc.indexOf("`/jobs?start=");
     expect(idx).toBeGreaterThan(-1);
     const slab = scheduleSrc.slice(idx, idx + 500);
     // Every /jobs-URL construction MUST splice ``${_techScope}``
     // AFTER the ``&end=…`` segment. The pre-P11 regression removed
     // this splice entirely — that's what this test guards against.
     expect(slab).toContain("${_techScope}");
-    expect(slab).toMatch(/api\.get\(\s*`\/jobs\?start=/);
   });
 
   it("'All' (empty techId) yields no technician_id= query segment", () => {
@@ -210,7 +216,12 @@ describe("Phase P11 · client-side predicate is the K42-parity helper", () => {
     expect(start).toBeGreaterThan(-1);
     expect(end).toBeGreaterThan(start);
     const body = scheduleSrc.slice(start, end);
-    expect(body).toMatch(/jobMatchesLane\(j,\s*techId\)/);
+    // ZZ-A Wave 3-D · Feb-2026 — Ticket XX added a third
+    // ``techCrewIds`` arg to ``jobMatchesLane`` so crew-only jobs
+    // surface in a tech's lane (see CalendarSchedule.jsx:1147-50
+    // Ticket-XX rationale comment). Allow either the pre-XX
+    // 2-arg form or the current 3-arg form.
+    expect(body).toMatch(/jobMatchesLane\(j,\s*techId(?:\s*\)|\s*,)/);
     // Anti-pattern: bare single-field check must be gone from ACTUAL
     // code paths. The pre-P11 shape lives inside the P11 docstring
     // as a "here's what we removed" reminder, so strip block comments

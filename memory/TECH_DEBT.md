@@ -3315,3 +3315,11 @@ Phase 1 pre-audit confirmed **zero Bucket B** regressions and zero STOP-and-surf
 - **Vitest:** **59/59 pass + 5 skipped** across the 4 suites (was 53 pass / 6 fail / 3 skip pre-Wave-3-C).
 - **No production code touched.** Test-only commit.
 - See git log for ship SHA — `test(portal): rebaseline 4 files to PortalPageShell / K67 / TD-71 sweeps (ZZ-A Wave 3-C)`.
+
+### Wave 3-D · Schedule/URL-sync · RESOLVED
+- **Files (3):** `p11-schedule-tech-filter.test.jsx`, `customer-first-access-filter.test.jsx`, `task-b-schedule-cache-window.test.jsx`
+- **Root cause themes:** Ticket OO added 9 rationale comment lines between `api.get(` and the backticked `/jobs?start=` template (breaking adjacency literals); the URL template gained `${_svcCatScope}` after `${_techScope}` (breaking the trailing-backtick anchor); Ticket XX added a third `techCrewIds` arg to `jobMatchesLane`; the P2 #6 service-category chip added `serviceCategoryFilter` as a final dep to the CustomersList URL-sync effect.
+- **Fixes:** widened source-grep windows + dropped now-impossible adjacency anchors; loosened the `jobMatchesLane` arg regex to allow both 2- and 3-arg forms; replaced the dep-array trailing-anchor with a mid-array co-occurrence check.
+- **Vitest:** **38/38 pass** across the 3 suites (was 33/38 with 5 red).
+- **No production code touched.** Test-only commit.
+- See git log for ship SHA — `test(schedule-url-sync): rebaseline 3 files to Phase 30 _techScope + dep-array shapes (ZZ-A Wave 3-D)`.

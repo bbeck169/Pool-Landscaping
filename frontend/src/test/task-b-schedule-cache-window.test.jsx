@@ -86,7 +86,17 @@ describe("Task B · CalendarSchedule cache-window guard", () => {
     // onto three lines so the URL template + numeric timeout argument
     // could sit on their own lines. Allow optional whitespace/newline
     // between ``api.get(`` and the ``/jobs?start=`` template.
-    const matches = SRC.match(/api\.get\(\s*`\/jobs\?start=/g) || [];
+    //
+    // ZZ-A Wave 3-D · Feb-2026 — Ticket OO (Feb-2026) added 9
+    // ``// ...`` comment lines between ``api.get(`` and the
+    // backticked URL template (see CalendarSchedule.jsx:940-951
+    // rationale), so ``\s*`` between ``api.get(`` and the backtick
+    // no longer matches. Dropped the ``api.get(`` prefix — the
+    // ``/jobs?start=`` template is unique enough on its own to
+    // guard against duplicate-path regressions, and the sibling
+    // ZZ-A Wave 3-D rebaseline on ``p11-schedule-tech-filter.
+    // test.jsx`` confirms the single call site locates correctly.
+    const matches = SRC.match(/`\/jobs\?start=/g) || [];
     expect(matches).toHaveLength(1);
   });
 
