@@ -159,10 +159,13 @@ describe("Task A · sidebar role gating (all 5 roles, post-hotfix)", () => {
 
   it("keeps existing Reports-group Recurring Jobs entry available for backwards compat", () => {
     const reportsGroup = ADMIN_NAV_V2.find((g) => g.key === "reports");
-    // The Reports-group entry (if kept for backwards compat) has NO
-    // subsection field.
+    // ZZ-A Wave 3-A · Feb-2026 — the Reports-group backwards-compat
+    // entry now carries ``subsection: "Reports"`` after the group
+    // was reorganized into labelled subsections. Match on the
+    // Reports subsection directly instead of the pre-reorg "no
+    // subsection field" heuristic.
     const reports = reportsGroup?.entries?.find(
-      (e) => e.to === RECURRING_TO && !e.subsection,
+      (e) => e.to === RECURRING_TO && e.subsection === "Reports",
     );
     expect(reports).toBeTruthy();
     expect(reports.feature).toBe("scheduling");
@@ -172,7 +175,7 @@ describe("Task A · sidebar role gating (all 5 roles, post-hotfix)", () => {
     const vis = _visibleForRole("technician");
     const reports = vis.find((g) => g.key === "reports");
     if (!reports) return; // ok — feature gate hid the whole group
-    const entry = reports.entries.find((e) => e.to === RECURRING_TO && !e.subsection);
+    const entry = reports.entries.find((e) => e.to === RECURRING_TO && e.subsection === "Reports");
     expect(entry).toBeFalsy();
   });
 });

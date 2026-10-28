@@ -63,11 +63,19 @@ describe("AdminTopBar source · sprocket gate + placement", () => {
     // separated by more than a single component (protects against
     // e.g. someone dropping a giant menu between them).
     //
-    // We match: <SettingsSprocket /> …optional whitespace + at most
-    // one JSX element… <SignOutButton />. Repeat across all three
-    // action clusters.
+    // ZZ-A Wave 3-A · Feb-2026 — loosened the between-elements
+    // match to any content (including JSX comments / tone="navy"
+    // multi-attr forms) within a 300-char window. The pre-Wave-3
+    // regex only allowed one bare element with simple attrs and
+    // broke when AdminTopBar's three variants gained ``{/* …
+    // rationale … */}`` comments between ``<SettingsSprocket />``
+    // and ``<NotificationBell variant="inline" tone="navy" />``.
+    // The strict-adjacency / offset-ordering sibling test below
+    // (``sprocket sits LEFT of sign-out…``) remains the hard
+    // ordering invariant; this guard just confirms the pair
+    // co-locates in each of the three variants.
     const pairs = TOPBAR_SRC.match(
-      /<SettingsSprocket\s*\/>(?:\s*<[A-Z][A-Za-z]*(?:\s+[^>/]*)?\s*\/>)?\s*<SignOutButton\s*\/>/g,
+      /<SettingsSprocket\s*\/>[\s\S]{0,300}?<SignOutButton\s*\/>/g,
     ) || [];
     expect(pairs.length).toBeGreaterThanOrEqual(3);
   });

@@ -141,6 +141,13 @@ describe("Pricebook sidebar shortcut · role gating (all 5 roles)", () => {
       (e) => e.to === PRICEBOOK_TO && e.subsection === "Schedule & Dispatch",
     );
     expect(hit).toBeTruthy();
-    expect(hit.group).toBe("Operations");
+    // ZZ-A Wave 3-A · Feb-2026 — the OPS-NAV-FLATTEN pass changed
+    // NAV_FLAT's ``group`` key to prefer ``subsection`` (post-
+    // flatten) over the broader top-level ``g.label`` ("Operations").
+    // The command palette now groups the entry under "Schedule &
+    // Dispatch" so sibling schedule/dispatch entries cluster
+    // together rather than collapsing under the "Operations"
+    // bucket. See ``nav/adminNav.js`` OPS-NAV-FLATTEN comment.
+    expect(hit.group).toBe("Schedule & Dispatch");
   });
 });

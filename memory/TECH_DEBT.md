@@ -3252,6 +3252,23 @@ Three atomic commits (option A), all in `mobile/app/(app)/schedule/calendar.tsx`
 
 
 
+## TD-zz-vitest-triage-wave-3 · IN PROGRESS · Feb-2026
+Operator-approved 19-file Bucket C long-tail sweep. 5 clusters shipping sequentially A → B → C → D → E.
+Phase 1 pre-audit confirmed **zero Bucket B** regressions and zero STOP-and-surface candidates across the 19 files (production surfaces verified: QuotesList Decline moved to QuoteInvoiceDetail, PortalPages gradient dropped as PortalPageShell adopted, PortalReviews/PortalServiceReports shell IS still wrapped, Reports-group Recurring Jobs entry IS still present with new `subsection: "Reports"` field).
+
+### Wave 3-A · Nav/Sidebar evolution · RESOLVED
+- **Files (3):** `task-a-sidebar-recurring-jobs.test.jsx`, `settings-sprocket-visibility.test.jsx`, `sidebar-pricebook-shortcut.test.jsx`
+- **Root cause theme:** `ADMIN_NAV_V2` reorganization (Reports-group subsection labelling, OPS-NAV-FLATTEN `group` key rewrite) + AdminTopBar JSX comments landing between `<SettingsSprocket />` and `<NotificationBell />`.
+- **Fixes:**
+  - `task-a-sidebar-recurring-jobs.test.jsx` — 2 cases: swap `!e.subsection` filter → `e.subsection === "Reports"` (Reports-group entry at `adminNav.js:401` now carries explicit subsection label).
+  - `settings-sprocket-visibility.test.jsx` — 1 case: loosen the between-elements regex from a strict single-element pattern to `[\s\S]{0,300}?` so the three AdminTopBar variants (tech-wrap/narrow-wrap/wide-wrap) match through their inline JSX rationale comments. The sibling strict-offset test remains the hard ordering invariant.
+  - `sidebar-pricebook-shortcut.test.jsx` — 1 case: flip `expect(hit.group).toBe("Operations")` → `"Schedule & Dispatch"` (OPS-NAV-FLATTEN now prefers `subsection` over `g.label` as the palette group key).
+- **Vitest:** **35/35 pass** across the 3 suites (was 31/35 with 4 red).
+- **No production code touched.** Test-only commit.
+- See git log for ship SHA — `test(nav-sidebar): rebaseline 3 files to ADMIN_NAV_V2 subsection shape (ZZ-A Wave 3-A)`.
+
+
+
 ### SR · `TD-sprint-3d-schedule-numbered-reorder-test-realignment` · RESOLVED · Feb-2026
 - **Dispatch:** `schedule-numbered-reorder.test.jsx` (ZZ-A Wave 2 STOP #3 — see block above). Realign the 7 red cases to the Sprint 3d insert-and-shift contract (uniqueness requirement dropped; blurs route through `POST /jobs/reorder-day-route`).
 - **Phase 1 pre-audit:** classified as 2 copy-regex rebaselines + 5 semantic realignments.
