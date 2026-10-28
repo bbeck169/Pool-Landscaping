@@ -342,7 +342,7 @@ export default function PropertiesListPage() {
            }}>
         <div style={{ display: "flex", alignItems: "center",
                        gap: 8, flex: 1, minWidth: 240 }}>
-          <Search size={16} color={colors.onSurfaceMuted} />
+          <Search size={16} color={colors.searchIcon} />
           <input
             data-testid="properties-list-search"
             type="search"

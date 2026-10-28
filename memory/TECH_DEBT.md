@@ -3236,3 +3236,17 @@ Three atomic commits (option A), all in `mobile/app/(app)/schedule/calendar.tsx`
 - Bucket B confirmed at **0** (zero actual production regressions across all 33 files surveyed; #4 is a genuine token-discipline drift that needs component touch, but it's a code-hygiene regression, not a user-visible bug).
 - Remaining 27 red files: 3 operator-decision pending (#3, #4, #23), 5 mobile-only awaiting `e1_expo_frontend_dev` delegation, 1 D-flake (schedule-numbered-reorder non-contiguous case — subsumed by #3's full triage), and 18 Bucket C long-tail (source-grep guards against DOM/dep-array shapes that legitimately evolved — case-by-case rebaseline, non-blocking).
 
+
+### TR · `phase-n2-input-restyle-refinement` STOP-AND-SURFACE resolved · production component fix
+- **Operator decision:** fix the component (per the two options surfaced in Wave 2's #4 STOP block; option 1 chosen — restore the N2 token discipline, do NOT weaken the allowlist).
+- **Target:** `frontend/src/pages/admin/properties/PropertiesListPage.jsx:345` — the single-line `<Search size={16} color={colors.onSurfaceMuted} />` icon in the search-row above the properties list. Phase 1 pre-audit on Wave 2 located the drift here.
+- **Fix:** one-line swap — `color={colors.onSurfaceMuted}` → `color={colors.searchIcon}`. Restores the K52/N2 search-icon token discipline (`#0284C7` cyan brand token). The sibling `<input>` border + styling at `L352-358` were already on the N2 contract — this was a localised drift when the properties list was added (likely post-N2 sweep).
+- **Verified green:**
+  - `phase-n2-input-restyle-refinement.test.jsx` 11/11 (D1 "every <Search> uses colors.searchIcon" guard now passes).
+  - `k52-theming.test.js` 22/22 (parent K52 theming guard — the N2 search-icon token lives inside the broader K52 theme contract).
+  - `properties-list-page.test.jsx` 6/6 (PropertiesListPage's own suite — no visual regression on the shipped testids / rows / filters).
+- **No test-side touches.** Pure production component fix. The N2 test was correctly diagnosing a real drift; fixing the source restores the invariant.
+- **Scope boundary:** FE commit touches `PropertiesListPage.jsx` + this memory block only. No `/app/mobile/`, no `/app/backend/`, no other FE files.
+- **TR ticket CLOSED.** FE SHA — see git log entry `fix(properties-list): restore colors.searchIcon on Search icon per Phase N2 token discipline (TR, ZZ follow-up)`.
+- **Wave 2 red-file count update:** 27 → 26 red files remaining on `main` after TR ships (down 7 from the 33-file health-check baseline).
+
