@@ -161,6 +161,60 @@ class JobListItem(BaseModel):
         # same file.
         return _coerce_address_to_str(v)
 
+    # Schedule-500 hardening · Feb-2026 — defensive type coercers for
+    # imported / legacy job docs that may carry non-canonical scalar
+    # shapes (e.g. ``price="49.00"`` string, ``price={}`` dict blob,
+    # ``scheduled_date={"$date": "..."}`` BSON leak,
+    # ``customer_name`` as a dict with first/last keys).  Operator
+    # confirmed Schedule hits a prod 500 on an import path we can't
+    # inspect from preview — these are belt-and-braces guards so no
+    # single malformed field can crash list_jobs serialization.
+    #
+    # ``mode="before"`` runs ahead of Pydantic's own coercion so a
+    # dict / list input is normalized BEFORE lax-mode validation
+    # raises.  None is preserved as None end-to-end.  All non-fatal
+    # — the field becomes ``None`` on the wire when coercion fails,
+    # matching the "empty row stays rendered" invariant the schedule
+    # already relies on for missing enrichments.
+    @field_validator(
+        "scheduled_date", "customer_name", "technician_id",
+        "title", "status", "service_type",
+        mode="before",
+    )
+    @classmethod
+    def _coerce_scalar_str_fields(cls, v):
+        if v is None or isinstance(v, str):
+            return v
+        # Numbers / bools coerce to their string repr — preserves
+        # legacy docs that stored ``scheduled_date`` as an epoch int
+        # or ``technician_id`` as a numeric id.
+        if isinstance(v, (int, float, bool)):
+            return str(v)
+        # dict / list / anything else → None, logged once at the
+        # caller via the existing read-path WARN pattern (we don't
+        # have ``doc_id`` scope inside the validator; the warning
+        # happens upstream in the enrichment block when needed).
+        return None
+
+    @field_validator("price", mode="before")
+    @classmethod
+    def _coerce_price_field(cls, v):
+        if v is None:
+            return None
+        if isinstance(v, (int, float)):
+            return float(v)
+        if isinstance(v, str):
+            s = v.strip()
+            if not s:
+                return None
+            try:
+                return float(s)
+            except (TypeError, ValueError):
+                return None
+        # dict / list / anything else → None (defensive — Pydantic
+        # lax would otherwise ValidationError and 500 the request).
+        return None
+
 
 def _timer_seconds(start_iso: str, stop_iso: str) -> Optional[int]:
     """Return the elapsed seconds between the two ISO timestamps or
