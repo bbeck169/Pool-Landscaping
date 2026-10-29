@@ -3555,3 +3555,19 @@ Low. Hide-only path; no BE write-blocks. Mobile `time_entries` writes from pool 
 
 **Decision reference**
 - Operator Q1 = A (hide-only), Q2 = a (no payroll dependency), Q3 = a (clean skip on ServiceReport). All three apply to mobile too.
+
+## TD-mobile-customer-compose-screen-dead-endpoints · P2 · Oct-2026 (mobile)
+- **Surface:** `mobile/app/customer/[id]/compose.tsx` (Phase 29 full-screen template composer), reached from the customer-detail floating button → `src/components/customers/SendCreateSheet.tsx` "Send Email" / "Send SMS" (`router.push(/customer/${id}/compose?channel=…)`, L43-48).
+- **Dead POST sites (verified on preview as admin):**
+  - `POST /api/marketing/templates/preview-message` → **405** (route doesn't exist; real one is `POST /customers/{cid}/preview-message`).
+  - `POST /api/communications/send` → **405** (no such route; real ones are `POST /customers/{cid}/send-email` / `send-sms`).
+  - Effect: preview and send from that screen always fail. `GET /marketing/templates?channel=…` (template list) still works.
+- **Left as-is per operator D2(a)** while shipping the action-row Text + Email buttons (`d9bb4007d`).
+- **Scope stub (future sprint):** move the SendCreateSheet entries over. Email → open `src/components/customers/CustomerEmailComposeSheet.tsx` (gate `isAdmin && primaryEmail`). Text → native `Linking.openURL("sms:…")`, same as `customer-action-text`. Then delete `compose.tsx` and its route (or repoint it to the real endpoints), plus a jest lock.
+
+## TD-mobile-customer-email-compose-followups · P3 · Oct-2026 (mobile)
+- `CustomerEmailComposeSheet` (`d9bb4007d`) deliberately omits two parts of web `SendComposeModal` (D1a):
+  - **Attachments:** `marketing_media` upload, ≤5 per send, `attachments: [...ids]` on send-email.
+  - **AI draft:** `POST /ai/draft-reply {channel, recipient_type:"customer", recipient_id}` + Undo.
+- Mobile `customer-action-text` uses the native `sms:` handoff (operator decision), so those texts aren't logged in `communications_log`, skip BE consent checks, and come from the admin's own number. Web Text uses `POST /customers/{cid}/send-sms`.
+- Owner role can't see the Email button: mobile `isAdmin` = admin/super_admin, while BE `require_admin` also allows owner. Same class as `TD-mobile-category-owner-gap`.
