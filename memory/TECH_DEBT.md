@@ -3462,3 +3462,51 @@ read, C2 roster dept fallback + hide-list cleanup); C3 backfill deferred.
 - **Prompt-injection hygiene preserved:** `bbeck169/Pool-Landscaping` held per `TD-github-ownership-attestation`.
 - See git log for ship SHA — `fix(service-report): PATCH flips edited_after_completion + audits closed-job edits (G1, WW follow-up)`.
 
+
+
+### TD-single-job-crews-techs-merged-picker · OPEN · Feb-2026 (Backlog #4 drift)
+
+**Origin**: Backlog Item #4 ("Assign tech dropdown — add crews alongside technicians") pre-audit (Feb-2026) found this is **DONE-with-drift**. The bulk-reassign picker on the schedule board already merges crews above techs; the single-job New/Edit forms still render two separate dropdowns. Operator picked Q3 = (a) → ship bulk picker as DONE, file this follow-up for the single-job forms.
+
+**Scope**
+- `frontend/src/pages/jobs/JobNew.jsx` — currently has a separate TECHNICIAN `<select>` (around L719) and a separate CREW `<select>` (around L805). Replace both with a single merged picker that:
+  - Lists crews first (operator convention — see `AssignTechDropdown` in `CalendarSchedule.jsx`), each with a crew chip + member count tooltip.
+  - Lists technicians below, grouped by department (match the existing single-select grouping convention from the bulk picker).
+  - Emits a `{kind: "crew" | "tech", id}` tuple so the submit payload routes to `crew_id` OR `technician_id` on `POST /jobs` (never both).
+- `frontend/src/pages/jobs/JobEditPanel.jsx` — same merged picker; same `{kind, id}` → submit mapping to `PATCH /jobs/{jid}` (`new_crew_id` XOR `new_tech_id`, mirroring the bulk-reassign contract).
+- Shared component: lift the merged picker out of `CalendarSchedule.jsx` into `frontend/src/components/jobs/CrewTechMergedPicker.jsx` so bulk + single-job share one implementation. (Current bulk picker is inline inside `CalendarSchedule.jsx` around L3755-3830 — not reused.)
+
+**BE contract** — already supports the one-or-the-other model:
+- `POST /jobs` accepts either `crew_id` or `technician_id` (not both) per the K-series payload shape.
+- `PATCH /jobs/{jid}` accepts `new_crew_id` XOR `new_tech_id` per the bulk-reassign contract from Ticket U/UU.
+- No BE work needed; the drift is UI-only.
+
+**Testid plan** (new, stable for ops/e2e):
+- `job-assign-picker-{context}` — root (`context` ∈ `new` / `edit`).
+- `job-assign-crew-{crewId}` — each crew row.
+- `job-assign-tech-{techId}` — each tech row.
+- `job-assign-selected-label` — read-only label showing the active pick.
+
+**Mobile parity**
+- `/app/mobile/` has its own JobEditForm; **delegate** mobile-side parity to `e1_expo_frontend_dev` as a sibling ticket once the web version lands.
+- Do NOT touch `/app/mobile/` from this ticket.
+
+**Risk**
+- Low BE risk (zero BE edits). Medium FE risk — JobNew is a heavily-used flow; vitest must cover crew-pick, tech-pick, switch-between, and submit-payload shape before ship.
+- Pre-audit should grep for other callers of the current separate TECHNICIAN/CREW selects (e.g., Reschedule modal, bulk-create-from-recurring templates) and either (a) reroute them through the shared picker, or (b) explicitly scope them out with a receipt.
+
+**Test plan**
+- Vitest: 4+ cases on `CrewTechMergedPicker.jsx` isolated (crew render, tech render, kind-switch keeps dropdown closed between picks, empty-list fallback).
+- Vitest: 2+ cases on JobNew (submit payload maps crew-pick → `crew_id`; tech-pick → `technician_id`; mutually exclusive).
+- Pytest: no changes — BE contract untouched.
+
+**Status**: OPEN. Do NOT implement in this sprint — this block is a scope-locked chore so a future dispatch can resume with full context.
+
+**Pre-audit receipt** (greps that captured the drift):
+- `frontend/src/pages/schedule/CalendarSchedule.jsx:3758` — `<AssignTechDropdown techs={techs} crews={crews} onPick={...} />` (merged, DONE on bulk).
+- `frontend/src/pages/jobs/JobNew.jsx:719` — stand-alone TECHNICIAN `<select>`.
+- `frontend/src/pages/jobs/JobNew.jsx:805` — stand-alone CREW `<select>`.
+- `frontend/src/pages/jobs/JobEditPanel.jsx` — no single-field merged assign picker (uses `JobAssignmentSection` which also renders split pickers).
+
+**Decision reference**
+- Backlog #4 pre-audit · operator Q3 = (a): bulk DONE, single-job follow-up filed. Three-commit sprint lineage: Commit A (Item #1 BE), Commit B (Item #6 BE), Commit C (Item #6 FE), Commit D (this ticket file).
