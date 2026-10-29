@@ -7,6 +7,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from "react-router-dom";
 import { api } from "@/api";
+import { useAuth } from "@/auth";
+import { shouldShowTimeClock } from "@/lib/timeClockVisibility";
 // Phase P45 · Feb-2026 — client-side idempotency-key belt to the
 // backend atomic-stamp gate.  Same UUID on every submit for one
 // form session; regenerates on success so a reopen-and-resubmit
@@ -73,6 +75,14 @@ const useElapsed = (startIso) => {
 export default function ServiceReport() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { user } = useAuth();
+  // Ticket · Feb-2026 — pool techs must not clock in/out at all.
+  // ``shouldShowTimeClock(user)`` is the shared landscape-vs-pool
+  // predicate (BE-authoritative via ``show_time_clock`` on
+  // ``/auth/me`` with ``effective_department`` fallback).  Pool
+  // techs: skip the ``/workforce/clock-out`` call entirely on
+  // report submit (clean skip, not swallow-403).
+  const _tcVisible = shouldShowTimeClock(user);
   // Phase P45 · idempotency-key.  Stable across the session and
   // across retries after network errors.  ``regenerate()`` is
   // called on submit SUCCESS so a reopen-and-resubmit is treated
@@ -404,12 +414,18 @@ export default function ServiceReport() {
       // new key so a reopened form isn't blocked as a replay.
       regenerateIdempotencyKey();
       setReport({ ...report, ...submitted, submitted_at: submitted.submitted_at });
-      // Clock out best-effort (may already be clocked out if user is manually testing)
-      try {
-        await api.post("/workforce/clock-out", {});
-      } catch (e) {
-        // clock-out failure isn't fatal for submission
-        console.warn("clock-out skipped:", e.message);
+      // Clock out best-effort (may already be clocked out if user is manually testing).
+      //
+      // Ticket · Feb-2026 — pool techs are never clocked in via
+      // the time-clock surface, so skip this call entirely for
+      // them. Clean skip (not swallow-403) matches operator Q3.
+      if (_tcVisible) {
+        try {
+          await api.post("/workforce/clock-out", {});
+        } catch (e) {
+          // clock-out failure isn't fatal for submission
+          console.warn("clock-out skipped:", e.message);
+        }
       }
       if (submitted?.invoice_id) {
         const iid = String(submitted.invoice_id);

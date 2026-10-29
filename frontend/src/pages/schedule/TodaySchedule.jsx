@@ -9,6 +9,7 @@ import { api } from "@/api";
 import { colors, gradients } from "@/theme";
 import { useJsApiLoader } from "@react-google-maps/api";
 import { useAuth } from "@/auth";
+import { shouldShowTimeClock } from "@/lib/timeClockVisibility";
 import { BulkReorderModal } from "@/pages/schedule/NumberedReorder";
 // Phase 16C `<WeatherWidget5Day>` removed from tech home 2026-07 per
 // user request. File still exists at ``pages/aitools/`` — imported
@@ -81,6 +82,14 @@ export default function TodaySchedule() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const isTech = user?.role === "technician";
+  // Ticket · Feb-2026 — pool techs must not see or trigger any
+  // time-clock surface. ``shouldShowTimeClock(user)`` is the
+  // shared landscape-vs-pool predicate (BE-authoritative via
+  // ``show_time_clock`` on ``/auth/me`` with
+  // ``effective_department`` fallback). Pool techs: hide stat
+  // chips, hide "Clock In & Start Report" CTA, hide auto-GPS
+  // watcher + its toast. Admins + landscape techs: unchanged.
+  const _tcVisible = shouldShowTimeClock(user);
   // Feb-2026 · numbered-order reorder — admin/manager can open the
   // bulk reorder modal directly from the today view.  Techs never
   // see it.
@@ -147,9 +156,15 @@ export default function TodaySchedule() {
     return () => clearInterval(t);
   }, []);
 
-  // Phase 19 · Auto-clock-in via GPS (tech only, foreground schedule tab)
+  // Phase 19 · Auto-clock-in via GPS (tech only, foreground schedule tab).
+  //
+  // Ticket · Feb-2026 — pool techs must not trigger auto-clock-in
+  // at all. Short-circuit BEFORE registering the watchPosition
+  // handler so pool techs never see the GPS permission prompt
+  // either (operator Q1=A, hide-only).
   useEffect(() => {
     if (!isTech || !navigator.geolocation) return;
+    if (!_tcVisible) return;
     let lastCall = 0;
     let cancelled = false;
     const tryAuto = async (pos) => {
@@ -175,7 +190,7 @@ export default function TodaySchedule() {
       cancelled = true;
       navigator.geolocation.clearWatch(watchId);
     };
-  }, [isTech]);
+  }, [isTech, _tcVisible]);
 
   // 10-second grace window before we auto-navigate to the report.
   useEffect(() => {
@@ -493,7 +508,12 @@ export default function TodaySchedule() {
           onSaved={() => { setReorderOpen(false); load?.(); }}
         />
       ) : null}
-      {autoToast && (
+      {/* Ticket · Feb-2026 — defensive guard. The watcher at
+          L153 is already short-circuited for pool techs so
+          ``autoToast`` can never be set, but gate the render
+          too so a future bug can't surface the toast on a pool
+          tech's screen. */}
+      {_tcVisible && autoToast && (
         <div className="fixed top-4 right-4 z-50 rounded-xl shadow-xl p-4 max-w-sm"
              style={{ background: "#0F172A", color: "#fff" }}
              data-testid="auto-clockin-toast">
@@ -738,9 +758,17 @@ export default function TodaySchedule() {
           ) : null}
         </div>
         <Stat label="Scheduled" value={`${s.scheduled_hours ?? 0}h`} testId="stat-scheduled"/>
-        <Stat label="Clocked in" value={s.clocked_in ? "Yes" : "No"} testId="stat-clocked"/>
+        {/* Ticket · Feb-2026 — pool techs are hidden from time-
+            clock surfaces. Clocked-in + Hours-logged chips still
+            render for landscape techs + admins (who see the admin
+            dashboard aggregation elsewhere). */}
+        {_tcVisible && (
+          <Stat label="Clocked in" value={s.clocked_in ? "Yes" : "No"} testId="stat-clocked"/>
+        )}
         <Stat label="Miles today" value={`${s.miles_logged_today ?? 0}`} testId="stat-miles"/>
-        <Stat label="Hours logged" value={`${s.hours_logged_today ?? 0}h`} testId="stat-hours"/>
+        {_tcVisible && (
+          <Stat label="Hours logged" value={`${s.hours_logged_today ?? 0}h`} testId="stat-hours"/>
+        )}
       </div>
 
       {busy && !data && <div style={{ color: colors.muted }} data-testid="schedule-loading">Loading…</div>}
@@ -786,8 +814,15 @@ export default function TodaySchedule() {
                           isAdminTier={["admin", "super_admin"].includes(
                               (user?.role || "").toLowerCase())}
                           onOpen={(id) => navigate(`/jobs/${id}`)}
-                          onClockIn={async (job) => {
+                          onClockIn={!_tcVisible ? undefined : async (job) => {
                             // Try to grab GPS (best-effort); still clock-in without it.
+                            //
+                            // Ticket · Feb-2026 — pool techs: no
+                            // onClockIn prop ⇒ ScheduleCardList
+                            // hides the "▶ Clock In & Start
+                            // Report" CTA. See L1070-1072 — the
+                            // CTA block short-circuits on
+                            // ``onClockIn && isTech && …``.
                             const geo = await new Promise((res) => {
                               if (!navigator.geolocation) return res({});
                               navigator.geolocation.getCurrentPosition(
@@ -1333,13 +1368,22 @@ function ScheduleCardList({ jobs, tz, isTech, isAdminTier = false, onOpen, onClo
                       variant="compact"
                       testId={`on-my-way-btn-${j.id}`}
                     />
-                    <button
-                      onClick={(e) => { e.stopPropagation(); onClockIn && onClockIn(j); }}
-                      className="px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1"
-                      style={{ background: "#DC2626", color: "#fff" }}
-                      data-testid={`schedule-card-clockin-${j.id}`}>
-                      ▶ Clock In & Start Report
-                    </button>
+                    {/* Ticket · Feb-2026 — pool techs: parent
+                        passes ``onClockIn={undefined}`` so this
+                        CTA is hidden entirely. "Open Report"
+                        remains visible so pool techs can still
+                        file the report (clock-out is skipped
+                        inside ServiceReport.jsx for pool techs
+                        too). */}
+                    {onClockIn && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); onClockIn(j); }}
+                        className="px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1"
+                        style={{ background: "#DC2626", color: "#fff" }}
+                        data-testid={`schedule-card-clockin-${j.id}`}>
+                        ▶ Clock In & Start Report
+                      </button>
+                    )}
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
