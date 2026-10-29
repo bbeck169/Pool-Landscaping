@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Plus, FileText, Layers, Clock, TrendingUp, AlertCircle, Trash2, X as XIcon, CreditCard, Landmark, ArrowUp, ArrowDown, Eye, UploadCloud, Send } from "lucide-react";
+import { Plus, FileText, Layers, Clock, TrendingUp, AlertCircle, Trash2, X as XIcon, CreditCard, Landmark, ArrowUp, ArrowDown, Eye, UploadCloud, Send, Mail, MessageSquare } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/api";
 import { colors, money } from "@/theme";
@@ -143,6 +143,19 @@ const _STATUS_RANK = Object.freeze({
 // per TD-95 Phase-1 audit · decision #1.
 function _viewedSortValue(r) {
   return r.last_viewed_at || r.first_viewed_at || "";
+}
+
+// Backlog Item #6 · Feb-2026 — "Sent" column sort key resolver.
+//
+// The Sent column renders a composite value derived from
+// `last_sent_via` ("email" | "sms" | "both") + `last_sent_at`
+// (ISO).  Sort keys on `last_sent_at || ""` so "most recently
+// sent first" under desc click; empty string lex-sorts before
+// any ISO date so unsent / historical rows cluster at the top
+// under asc and at the bottom under desc — mirrors the Viewed
+// column convention above.
+function _sentSortValue(r) {
+  return r.last_sent_at || "";
 }
 
 
@@ -488,6 +501,7 @@ export default function InvoicesList() {
           case "due_date":       return r.due_date || "";
           case "total":          return Number(r.total || 0);
           case "viewed":         return _viewedSortValue(r);
+          case "sent":           return _sentSortValue(r);
           case "status":         return _STATUS_RANK[r.status] ?? 999;
           // Legacy bulk-pay sort col (pre-TD-95); preserved for
           // regression parity.
@@ -1053,6 +1067,14 @@ export default function InvoicesList() {
                     TD-95 · Feb-2026 — sort key resolves via
                     `_viewedSortValue` (last_viewed_at || first_viewed_at). */}
                 <_SortableTh label="Viewed"    col="viewed"         sort={sort} setSort={setSort} className="hidden lg:table-cell" />
+                {/* Backlog Item #6 · Feb-2026 — "Sent" indicator column.
+                    Renders channel icon(s) (email / sms / both) +
+                    relative "Nd ago" for any invoice with
+                    ``last_sent_at`` populated. Empty "—" for
+                    historical invoices without the denorm fields
+                    (operator spec · no backfill).  Sort key resolves
+                    via `_sentSortValue` (`last_sent_at`). */}
+                <_SortableTh label="Sent"      col="sent"           sort={sort} setSort={setSort} className="hidden lg:table-cell" />
                 <_SortableTh label="Status"    col="status"         sort={sort} setSort={setSort} align="right" />
               </tr>
             </thead>
@@ -1106,6 +1128,57 @@ export default function InvoicesList() {
                       </span>
                     ) : (
                       <span className="text-xs" style={{ color: colors.muted }}>—</span>
+                    )}
+                  </td>
+                  {/* Backlog Item #6 · Feb-2026 — "Sent" indicator.
+                      Reads the four denorm fields written by
+                      ``backend/services/invoice_sent_denorm.py``:
+                      ``last_sent_via`` ("email" | "sms" | "both"),
+                      ``last_sent_at`` + per-channel timestamps.
+                      Historical invoices without the denorm fields
+                      render as "—" (operator spec · no backfill).
+                      The title attribute surfaces per-channel
+                      timestamps on hover for ops debugging. */}
+                  <td
+                    className="px-3 py-3 hidden lg:table-cell"
+                    style={{ color: colors.onSurfaceSecondary }}
+                    onClick={() => navigate(`/invoices/${r.id}`)}
+                    data-testid={`invoice-sent-${r.id}`}
+                  >
+                    {r.last_sent_at ? (
+                      <span
+                        title={
+                          [
+                            r.last_email_sent_at ? `email: ${r.last_email_sent_at}` : null,
+                            r.last_sms_sent_at   ? `sms: ${r.last_sms_sent_at}`     : null,
+                          ].filter(Boolean).join("\n") || r.last_sent_at
+                        }
+                        className="inline-flex items-center gap-1 text-xs"
+                        data-testid={`invoice-sent-via-${r.id}`}
+                        data-sent-via={r.last_sent_via || "unknown"}
+                      >
+                        {r.last_sent_via === "both" ? (
+                          <>
+                            <Mail size={12} aria-hidden />
+                            <MessageSquare size={12} aria-hidden />
+                          </>
+                        ) : r.last_sent_via === "sms" ? (
+                          <MessageSquare size={12} aria-hidden />
+                        ) : r.last_sent_via === "email" ? (
+                          <Mail size={12} aria-hidden />
+                        ) : (
+                          <Send size={12} aria-hidden />
+                        )}
+                        {formatRelativeFromIso(r.last_sent_at) || "sent"}
+                      </span>
+                    ) : (
+                      <span
+                        className="text-xs"
+                        style={{ color: colors.muted }}
+                        data-testid={`invoice-sent-empty-${r.id}`}
+                      >
+                        —
+                      </span>
                     )}
                   </td>
                   <td className="px-3 py-3" onClick={() => navigate(`/invoices/${r.id}`)} data-testid={`invoice-card-${r.id}`}>
