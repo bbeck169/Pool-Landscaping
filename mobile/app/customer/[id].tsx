@@ -23,6 +23,7 @@ import AutomationsMuteSection from "@/src/components/customers/AutomationsMuteSe
 import CustomerTasks from "@/src/components/customers/CustomerTasks";
 import ServiceNotes from "@/src/components/customers/ServiceNotes";
 import SendCreateSheet from "@/src/components/customers/SendCreateSheet";
+import CustomerEmailComposeSheet from "@/src/components/customers/CustomerEmailComposeSheet";
 import SendServiceRecordsLinkModal from "@/src/components/customers/SendServiceRecordsLinkModal";
 import CustomerTagsSection from "@/src/components/customers/CustomerTagsSection";
 import CustomerIdentityCard from "@/src/components/customers/CustomerIdentityCard";
@@ -90,6 +91,7 @@ export default function CustomerDetail() {
   const [docs, setDocs] = useState<any[]>([]);
   const [uploading, setUploading] = useState(false);
   const [impersonating, setImpersonating] = useState(false);
+  const [emailComposeOpen, setEmailComposeOpen] = useState(false);
   const [confirmImp, setConfirmImp] = useState(false);
   const [requesting, setRequesting] = useState(false);
   const [actionSheetOpen, setActionSheetOpen] = useState(false);
@@ -504,6 +506,28 @@ export default function CustomerDetail() {
             >
               <Ionicons name="call-outline" size={16} color="#FFFFFF" />
               <Text style={[s2.actionBtnText, { color: "#FFFFFF" }]}>Call</Text>
+            </TouchableOpacity>
+          ) : null}
+          {/* Ticket 1 · Text → native SMS app (same visibility as Call). */}
+          {primaryPhone ? (
+            <TouchableOpacity
+              style={[s2.actionBtn, s2.actionBtnCall]}
+              onPress={() => Linking.openURL(`sms:${String(primaryPhone).replace(/[^\d+]/g, "")}`)}
+              testID="customer-action-text"
+            >
+              <Ionicons name="chatbubble-outline" size={16} color="#FFFFFF" />
+              <Text style={[s2.actionBtnText, { color: "#FFFFFF" }]}>Text</Text>
+            </TouchableOpacity>
+          ) : null}
+          {/* Ticket 1 · Email → in-app compose (BE send-email is require_admin). */}
+          {isAdmin && primaryEmail ? (
+            <TouchableOpacity
+              style={[s2.actionBtn, s2.actionBtnSteel]}
+              onPress={() => setEmailComposeOpen(true)}
+              testID="customer-action-email"
+            >
+              <Ionicons name="mail-outline" size={16} color="#FFFFFF" />
+              <Text style={[s2.actionBtnText, { color: "#FFFFFF" }]}>Email</Text>
             </TouchableOpacity>
           ) : null}
           {isAdmin && c.has_login ? (
@@ -1109,6 +1133,9 @@ export default function CustomerDetail() {
         onAddNote={() => setNoteComposerOpen(true)}
         onServiceRecordsLink={() => setServiceRecordsLinkOpen(true)}
       />
+      {emailComposeOpen && c && primaryEmail ? (
+        <CustomerEmailComposeSheet customer={c} to={primaryEmail} onClose={() => setEmailComposeOpen(false)} />
+      ) : null}
 
       {/* Task 6 · Send Service Records Link modal */}
       <SendServiceRecordsLinkModal
