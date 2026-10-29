@@ -118,3 +118,60 @@ async def attendance_report(technician_id: Optional[str] = Query(None),
     rows = await db.timesheets.find(q, {"_id": 0}).sort("date", -1).to_list(2000)
     total_hours = round(sum(float(r.get("hours") or 0) for r in rows), 2)
     return {"count": len(rows), "total_hours": total_hours, "rows": rows}
+
+
+# ─────────────────────────────────────────────────────────────────
+# Feb-2026 · Mobile Ticket 2 Part 2 — hard delete for
+# ``db.timesheets``.  Admin-tier only (mirrors
+# ``timeclock_admin._require_admin_strict`` = admin + super_admin
+# only).  Row is snapshotted into ``db.timesheets_hard_deletes``
+# before ``delete_one`` so a DB admin can recover a fat-finger.
+# Reason ≥ 3 chars required for the audit trail (no typed-CAPTCHA
+# UI per operator spec, server-side gate is enough).
+# ─────────────────────────────────────────────────────────────────
+def _require_admin_strict_attendance(user: dict = Depends(get_current_user)):
+    role = (user.get("role") or "").lower()
+    if role not in ("admin", "super_admin"):
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "forbidden",
+                    "msg": "Admin or super_admin role required."},
+        )
+    return user
+
+
+@router.delete("/attendance/timesheets/{row_id}")
+async def delete_timesheet(row_id: str,
+                           reason: str = Query(..., min_length=3),
+                           actor: dict = Depends(_require_admin_strict_attendance),
+                           tenant: dict = Depends(get_current_tenant)):
+    reason_clean = (reason or "").strip()
+    if len(reason_clean) < 3:
+        raise HTTPException(400, detail={
+            "code": "reason_required",
+            "msg": "A reason of at least 3 characters is required.",
+        })
+    row = await db.timesheets.find_one(
+        {"id": row_id, "tenant_id": tenant["id"]}, {"_id": 0},
+    )
+    if not row:
+        # 404 for missing-id AND cross-tenant miss (never leak
+        # the existence of another tenant's row).
+        raise HTTPException(404, detail={"code": "timesheet_not_found"})
+
+    now = now_iso()
+    await db.timesheets_hard_deletes.insert_one({
+        "id": new_id(),
+        "tenant_id": tenant["id"],
+        "collection": "timesheets",
+        "original_id": row_id,
+        "deleted_by": actor["id"],
+        "deleted_at": now,
+        "reason": reason_clean,
+        "original_row": row,
+    })
+    await db.timesheets.delete_one(
+        {"id": row_id, "tenant_id": tenant["id"]},
+    )
+    return {"deleted": True, "hard": True, "row_id": row_id,
+            "deleted_at": now}

@@ -560,6 +560,15 @@ async def delete_punch(shift_id: str,
                        reason: str = Query(..., min_length=3),
                        hard: int = Query(0),
                        actor: dict = Depends(_require_admin_strict)):
+    """Delete a timeclock shift.
+
+    Feb-2026 · Mobile Ticket 2 Part 1 — ``hard=1`` upgrade.
+    When ``hard=1`` the row(s) are permanently removed from
+    ``db.timeclock_punches`` after being snapshotted into
+    ``db.timeclock_hard_deletes`` (operator wants destructive-
+    but-recoverable-by-DB-admin semantics).  ``hard=0`` (default)
+    preserves the pre-ticket soft-delete contract byte-for-byte.
+    """
     tenant_id = actor["tenant_id"]
     reason = _validate_reason(reason)
     in_row, out_row = await _load_shift(tenant_id, shift_id)
@@ -571,8 +580,35 @@ async def delete_punch(shift_id: str,
         actor_id=actor["id"], action="delete", reason=reason,
         before=before, after=None,
     )
-    # Soft delete both rows (hard delete reserved for future payroll-
-    # finalization hook; spec intentionally defers hardening).
+
+    _hard = bool(hard)
+    if _hard:
+        # Snapshot the full row(s) BEFORE deleting so a fat-finger
+        # is recoverable by a DB admin.  Store the complete
+        # pre-delete doc (not the ``_shift_snapshot`` summary) so
+        # every field — audit_log, geo, edit history, etc. — is
+        # preserved verbatim.
+        for row in (in_row, out_row):
+            if not row:
+                continue
+            await db.timeclock_hard_deletes.insert_one({
+                "id": new_id(),
+                "tenant_id": tenant_id,
+                "shift_id": shift_id,
+                "collection": "timeclock_punches",
+                "original_id": row["id"],
+                "deleted_by": actor["id"],
+                "deleted_at": now,
+                "reason": reason,
+                "original_row": row,
+            })
+            await db.timeclock_punches.delete_one(
+                {"id": row["id"], "tenant_id": tenant_id},
+            )
+        return {"ok": True, "shift_id": shift_id, "deleted_at": now,
+                "hard": True}
+
+    # Soft delete (pre-ticket contract).
     if in_row:
         await db.timeclock_punches.update_one(
             {"id": in_row["id"], "tenant_id": tenant_id},
