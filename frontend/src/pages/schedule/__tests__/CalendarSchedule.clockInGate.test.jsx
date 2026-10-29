@@ -47,12 +47,16 @@ describe("CalendarSchedule · clock-in gate wiring", () => {
   it("every checklist opener routes through clockGate.openJob(id, cb)", () => {
     // Direct calls like ``setChecklistJobId(id)`` outside a
     // ``clockGate.openJob(...)`` callback would bypass the gate.
-    // The wiring pattern is:
-    //     clockGate.openJob(id, () => setChecklistJobId(id))
-    // At least two call sites exist on the schedule surface
-    // (top-level tap + <BulkGrid onOpenJob>).
+    //
+    // Ticket 1 · Feb-2026 — the opener signature evolved from
+    // ``() => setChecklistJobId(id)`` (view-only mode did not
+    // exist) to ``({readOnly}) => { setChecklistReadOnly(...);
+    // setChecklistJobId(id); }`` so off-clock techs can view the
+    // route without the dialog popping unprompted. Match the new
+    // destructured-arg shape; two call sites exist (top-level tap
+    // + <BulkGrid onOpenJob> prop).
     const wired = CAL.match(
-      /clockGate\.openJob\s*\(\s*[a-zA-Z_.[\]]+\s*,\s*\(\)\s*=>\s*setChecklistJobId/g,
+      /clockGate\.openJob\s*\(\s*[a-zA-Z_.[\]]+\s*,\s*\(\{\s*readOnly\s*\}\)\s*=>/g,
     ) || [];
     expect(wired.length).toBeGreaterThanOrEqual(2);
   });
@@ -67,13 +71,13 @@ describe("CalendarSchedule · clock-in gate wiring", () => {
     // Guards against a future refactor accidentally re-introducing
     // a direct opener that skips the gate.  Every occurrence of
     // ``setChecklistJobId(<jobId>)`` inside JSX / handler bodies
-    // must live INSIDE a ``clockGate.openJob`` arrow-function
+    // must live INSIDE a ``clockGate.openJob`` destructured-arg
     // callback — never as a standalone statement.
     //
     // Whitelist: setter declarations, ``setChecklistJobId(null)``
     // to close the modal, and calls whose immediate lexical
-    // context is inside a ``clockGate.openJob(..., () =>
-    // setChecklistJobId(...))`` arrow.
+    // context is inside a ``clockGate.openJob(..., ({readOnly}) =>
+    // { ... setChecklistJobId(id); })`` arrow body.
     const directCalls = [
       ...CAL.matchAll(/setChecklistJobId\s*\(\s*([^)\s]+)\s*\)/g),
     ];
@@ -81,12 +85,14 @@ describe("CalendarSchedule · clock-in gate wiring", () => {
       const arg = m[1];
       // Allowed: close-modal null-set + the useState setter.
       if (arg === "null") return false;
-      // Allowed: inside ``clockGate.openJob(id, () => setChecklistJobId(id))`` —
-      // detect by scanning the preceding 80 chars for the arrow-
-      // wrapping pattern.
-      const start = Math.max(0, m.index - 80);
+      // Allowed: inside a ``clockGate.openJob(id, ({readOnly}) =>
+      // { setChecklistReadOnly(...); setChecklistJobId(id); })``
+      // block. Scan a wider lexical window (240 chars) since the
+      // Ticket 1 callback body now contains two statements before
+      // the setChecklistJobId call.
+      const start = Math.max(0, m.index - 240);
       const window = CAL.slice(start, m.index);
-      if (/clockGate\.openJob\s*\([^,]+,\s*\(\)\s*=>\s*$/.test(window)) {
+      if (/clockGate\.openJob\s*\([^,]+,\s*\(\{\s*readOnly\s*\}\)\s*=>/.test(window)) {
         return false;
       }
       return true;

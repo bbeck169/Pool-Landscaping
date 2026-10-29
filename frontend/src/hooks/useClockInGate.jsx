@@ -132,21 +132,50 @@ export function useClockInGate(user) {
   const [error, setError] = useState("");
 
   const openJob = useCallback(async (jobId, cb) => {
+    // Ticket 1 · Feb-2026 — "landscape techs may VIEW routes while
+    // off the clock".  ``cb`` now receives a ``{readOnly}`` object
+    // so the opener can render the checklist modal in a view-only
+    // mode when the tech is not clocked in.  Mutations inside the
+    // modal pop the dialog via ``requestMutation`` below.
+    //
+    // Backward-compat: cb may be a zero-arg function from legacy
+    // callers; the object is passed as the first arg and ignored
+    // by callers that don't destructure it.
     if (!gated) {
-      cb ? cb() : navigate(`/jobs/${jobId}`);
+      cb ? cb({ readOnly: false }) : navigate(`/jobs/${jobId}`);
       return;
     }
     try {
       const clockedIn = await _fetchStatus(user?.id);
-      if (clockedIn) {
-        cb ? cb() : navigate(`/jobs/${jobId}`);
-        return;
-      }
-      setPendingJob({ jobId, cb: cb || (() => navigate(`/jobs/${jobId}`)) });
+      // Phase 56.3 kept the dialog here; Ticket 1 flips to view-only
+      // so the tech can still inspect the job + the day's route
+      // without being blocked.
+      cb
+        ? cb({ readOnly: !clockedIn })
+        : (clockedIn
+            ? navigate(`/jobs/${jobId}`)
+            : setPendingJob({ jobId, cb: () => navigate(`/jobs/${jobId}`) }));
     } catch {
-      cb ? cb() : navigate(`/jobs/${jobId}`);
+      cb ? cb({ readOnly: false }) : navigate(`/jobs/${jobId}`);
     }
   }, [gated, navigate, user?.id]);
+
+  // Ticket 1 · Feb-2026 — explicit mutation gate.  Callers invoke
+  // this when a user attempts to mutate inside a view-only
+  // checklist modal; the dialog pops with the same "Clock in
+  // required" copy as the pre-ticket flow.  On successful clock-
+  // in, ``onProceed`` runs (e.g. to flip ``readOnly`` to false on
+  // the already-open modal); on cancel, the modal stays view-only.
+  const requestMutation = useCallback((jobId, onProceed) => {
+    if (!gated) {
+      // Shouldn't happen (non-landscape callers never render the
+      // mutation-block path), but defensive — just run the proceed
+      // callback since no gate applies.
+      onProceed?.();
+      return;
+    }
+    setPendingJob({ jobId, cb: onProceed || (() => {}) });
+  }, [gated]);
 
   const clockInAndProceed = useCallback(async () => {
     if (!pendingJob) return;
@@ -197,7 +226,7 @@ export function useClockInGate(user) {
     setError("");
   }, [busy]);
 
-  return { openJob, pendingJob, clockInAndProceed, cancel, busy, error, gated };
+  return { openJob, requestMutation, pendingJob, clockInAndProceed, cancel, busy, error, gated };
 }
 
 /**

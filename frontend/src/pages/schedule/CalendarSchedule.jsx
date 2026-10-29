@@ -627,6 +627,13 @@ export default function CalendarSchedule() {
   // navigating away to /jobs/:id. Preserves the /schedule URL so the
   // grid/calendar toggle, filters, and range presets survive the close.
   const [checklistJobId, setChecklistJobId] = useState(null);
+  // Ticket 1 · Feb-2026 — view-only state for off-the-clock
+  // landscape techs. Set to ``true`` when the clock-in gate opens
+  // the checklist without the tech having clocked in; mutation
+  // attempts inside the modal pop the clock-in dialog, and a
+  // successful clock-in flips this back to ``false`` on the live
+  // modal via the ``requestMutation(..., onProceed)`` callback.
+  const [checklistReadOnly, setChecklistReadOnly] = useState(false);
   // Feb-2026 · Schedule-screen inline edit — admin+ opens the shared
   // ScheduleJobEditModal without leaving /schedule. On save we mutate
   // ``rawJobs`` in place so the affected card re-renders with the
@@ -1271,7 +1278,13 @@ export default function CalendarSchedule() {
     // Phase 56.3 follow-up — strict landscape techs must be clocked in
     // before we open the modal. Admins / super_admins / "All" role / pool
     // techs / customers are all bypassed inside the hook.
-    clockGate.openJob(ev.id, () => setChecklistJobId(ev.id));
+    // Ticket 1 · Feb-2026 — ``openJob`` now ALWAYS calls back
+    // with ``{readOnly}``. Off-clock landscape techs open the
+    // modal in view-only mode; mutations inside pop the dialog.
+    clockGate.openJob(ev.id, ({ readOnly }) => {
+      setChecklistReadOnly(!!readOnly);
+      setChecklistJobId(ev.id);
+    });
     // SO-A · Feb-2026 — auto-open MARCO Suggestions for admins so the
     // best-fit tech is one click away.  The panel is a right-side drawer
     // that layers under the centered checklist modal without conflicting.
@@ -2464,7 +2477,10 @@ export default function CalendarSchedule() {
           setMoveDate={setMoveDate}
           onConfirmMove={bulkMove}
           busy={busy}
-          onOpenJob={(id) => clockGate.openJob(id, () => setChecklistJobId(id))}
+          onOpenJob={(id) => clockGate.openJob(id, ({ readOnly }) => {
+            setChecklistReadOnly(!!readOnly);
+            setChecklistJobId(id);
+          })}
           onNewJob={canCreateJobs ? (() => navigate(`/jobs/new?date=${focusISO}`)) : undefined}
           onOpenCouldNotService={(j) => setCnsJob(j)}
           selectedJobIds={selectedJobIds}
@@ -2726,11 +2742,23 @@ export default function CalendarSchedule() {
         </div>
       ) : null}
 
-      {/* Phase 31 · Step 2b — checklist modal (Grid + Calendar tap target). */}
+      {/* Phase 31 · Step 2b — checklist modal (Grid + Calendar tap target).
+          Ticket 1 · Feb-2026 — view-only mode for off-clock landscape
+          techs; mutation attempts call ``clockGate.requestMutation``
+          which pops the clock-in dialog, and a successful clock-in
+          flips the modal back to full edit via the ``onProceed`` cb. */}
       <ChecklistModal
         jobId={checklistJobId}
         open={!!checklistJobId}
-        onClose={() => setChecklistJobId(null)}
+        readOnly={checklistReadOnly}
+        onMutationBlocked={() => clockGate.requestMutation(
+          checklistJobId,
+          () => setChecklistReadOnly(false),
+        )}
+        onClose={() => {
+          setChecklistJobId(null);
+          setChecklistReadOnly(false);
+        }}
         onSubmitted={() => { load(); }}
       />
       {/* Feb-2026 · Schedule-screen inline edit modal. Mutates

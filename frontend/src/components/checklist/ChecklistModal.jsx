@@ -182,10 +182,19 @@ export function buildFlushSavePayload(cur) {
 
 
 
-export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
+export default function ChecklistModal({ jobId, open, onClose, onSubmitted, readOnly = false, onMutationBlocked }) {
   const { user } = useAuth();
   const role = user?.role || "";
   const canWrite = role === "admin" || role === "super_admin" || role === "technician";
+  // Ticket 1 · Feb-2026 — view-only mode for landscape techs who
+  // open the checklist while OFF THE CLOCK. The modal still loads
+  // + renders (route visibility is unimpeded) but every mutation
+  // entry point short-circuits and surfaces the clock-in prompt
+  // via ``onMutationBlocked``. Clocking in flips ``readOnly`` to
+  // false on the live modal via the parent-level state wire.
+  const _blockMutation = useCallback(() => {
+    onMutationBlocked?.();
+  }, [onMutationBlocked]);
   // Phase P45 · idempotency-key.  Stable across the session and
   // across retries after network errors.  ``regenerate()`` is
   // called on submit SUCCESS below so a reopen-and-resubmit is
@@ -366,13 +375,21 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
   }, [flushSave]);
 
   const patchReport = useCallback((patch) => {
+    // Ticket 1 · Feb-2026 — view-only short-circuit. Mutation
+    // attempt pops the clock-in dialog via ``onMutationBlocked``
+    // and does NOT touch report state (so no stale optimistic
+    // flip remains on screen after the dialog cancels).
+    if (readOnly) {
+      _blockMutation();
+      return;
+    }
     setReport((prev) => {
       const next = { ...prev, ...patch };
       reportRef.current = next;
       return next;
     });
     scheduleAutosave();
-  }, [scheduleAutosave]);
+  }, [scheduleAutosave, readOnly, _blockMutation]);
 
   // Feb-2026 · Checklist reclassifier — invoked from the Chemical
   // Readings empty-state picker when the tech (or admin) retags a
@@ -382,6 +399,11 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
   // the reading-field matrix repopulates from the fresh template.
   const handleReclassify = useCallback(async (nextServiceType) => {
     if (!jobId || !nextServiceType) return;
+    // Ticket 1 · Feb-2026 — view-only short-circuit.
+    if (readOnly) {
+      _blockMutation();
+      return;
+    }
     // Flush any pending checklist edits before we swap in a new
     // report snapshot — otherwise the autosave-in-flight would race
     // the refetch and stomp the newly-hydrated `chemical_reading_fields`.
@@ -396,15 +418,27 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
     reportRef.current = r;
     dirtyRef.current = false;
     setSaveState("idle");
-  }, [jobId, flushSave]);
+  }, [jobId, flushSave, readOnly, _blockMutation]);
 
   const saveDraft = async () => {
+    // Ticket 1 · Feb-2026 — view-only short-circuit.
+    if (readOnly) {
+      _blockMutation();
+      return;
+    }
     dirtyRef.current = true;
     await flushSave();
   };
 
   const closeJob = async () => {
     if (!report || submitting) return;
+    // Ticket 1 · Feb-2026 — view-only short-circuit (close-job is
+    // the terminal mutation; must prompt clock-in before even
+    // confirming the dialog).
+    if (readOnly) {
+      _blockMutation();
+      return;
+    }
     // Phase 50.B — if any reading is an outlier vs recent median,
     // show a Radix confirm before the regular Close-job confirm.
     try {
@@ -644,7 +678,11 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
               <span>Save failed</span>
               <button
                 type="button"
-                onClick={() => { dirtyRef.current = true; flushSave(); }}
+                onClick={() => {
+                  if (readOnly) { _blockMutation(); return; }
+                  dirtyRef.current = true;
+                  flushSave();
+                }}
                 className="ml-1 underline"
                 style={{ background: "transparent", border: 0, color: "#fff", cursor: "pointer", font: "inherit" }}
                 data-testid="checklist-autosave-retry"
