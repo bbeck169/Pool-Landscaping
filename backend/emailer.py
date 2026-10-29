@@ -723,9 +723,30 @@ async def send_invoice_reminder_email(inv: dict) -> bool:
             audience="customer",
             context=CommsContext.SYSTEM,
         )
-        return res.get("provider_status") in (
+        ok = res.get("provider_status") in (
             "sent", "queued", "mocked", "dry_run",
         )
+        if ok:
+            # Backlog Item #6 · Feb-2026 — stamp the "Sent" denorm
+            # on the invoice doc so the invoice list page can
+            # render the Sent column without an N+1 lookup.  Only
+            # on a confirmed-successful send; failures do NOT
+            # advance the column (operator spec).
+            try:
+                from services.invoice_sent_denorm import (
+                    stamp_invoice_sent,
+                )
+                await stamp_invoice_sent(
+                    invoice_id=inv.get("id"),
+                    tenant_id=inv.get("tenant_id"),
+                    channel="email",
+                )
+            except Exception as _stamp_exc:  # noqa: BLE001
+                logger.warning(
+                    "[invoice-sent-denorm] stamp failed inv=%s: %s",
+                    inv.get("id"), _stamp_exc,
+                )
+        return ok
     except Exception as e:
         logger.warning(f"Reminder email failed: {e}")
         return False

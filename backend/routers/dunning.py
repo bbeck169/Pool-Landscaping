@@ -517,6 +517,28 @@ async def _send_reminder(invoice: Dict[str, Any], stage: Dict[str, Any],
                 "sent_at": now_iso(),
                 "triggered_by": triggered_by,
             }
+            # Backlog Item #6 · Feb-2026 — stamp the "Sent" denorm
+            # on the invoice doc for the dunning SMS leg.  Only on
+            # a confirmed-successful send ("sent" status); any
+            # other status (failed / skipped / blocked) does NOT
+            # advance the column per operator spec.
+            if (result.get("status") == "sent"
+                    and invoice.get("id") and invoice.get("tenant_id")):
+                try:
+                    from services.invoice_sent_denorm import (
+                        stamp_invoice_sent,
+                    )
+                    await stamp_invoice_sent(
+                        invoice_id=invoice["id"],
+                        tenant_id=invoice["tenant_id"],
+                        channel="sms",
+                    )
+                except Exception as _stamp_exc:  # noqa: BLE001
+                    logger.warning(
+                        "[invoice-sent-denorm] dunning sms stamp "
+                        "failed inv=%s: %s",
+                        invoice.get("id"), _stamp_exc,
+                    )
         else:
             continue
         await db.dunning_reminders.insert_one(dict(doc))

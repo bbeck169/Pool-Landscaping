@@ -2385,6 +2385,23 @@ async def send_reminder(qid: str,
         f"${balance:,.2f}. Please pay at your earliest convenience."
     )
     await notify_customer(doc["customer_id"], title, body, sms=True)
+    # Backlog Item #6 · Feb-2026 — stamp the SMS leg of the single
+    # invoice-reminder path.  ``notify_customer(sms=True)`` is
+    # best-effort (fire-and-forget on both the push + SMS legs),
+    # so we stamp unconditionally here to match the operator-named
+    # stamp site.  The denorm helper is idempotent via ``$max`` so
+    # a stamp without a real send-success-signal is still safe —
+    # ``last_sms_sent_at`` only moves forward.
+    try:
+        from services.invoice_sent_denorm import stamp_invoice_sent
+        await stamp_invoice_sent(
+            invoice_id=qid, tenant_id=tenant["id"], channel="sms",
+        )
+    except Exception as _stamp_exc:  # noqa: BLE001
+        logger.warning(
+            f"[invoice-sent-denorm] sms stamp failed qid={qid}: "
+            f"{_stamp_exc}",
+        )
     email_sent = await send_invoice_reminder_email(doc)
     count = int(doc.get("reminder_count") or 0) + 1
     await db.quotes.update_one(

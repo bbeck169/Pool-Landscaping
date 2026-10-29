@@ -299,6 +299,25 @@ async def _send_single_invoice(
 
     email_ok = (email_result.get("status") == "sent")
     sms_ok = (sms_result.get("status") == "sent")
+    # Backlog Item #6 · Feb-2026 — stamp the "Sent" denorm on the
+    # invoice doc for each successful channel.  Idempotent via
+    # ``$max``; failures swallowed internally so the bulk-send
+    # response is never affected by a denorm Mongo blip.
+    if email_ok or sms_ok:
+        try:
+            from services.invoice_sent_denorm import stamp_invoice_sent
+            if email_ok:
+                await stamp_invoice_sent(
+                    invoice_id=invoice_id,
+                    tenant_id=tenant_id, channel="email",
+                )
+            if sms_ok:
+                await stamp_invoice_sent(
+                    invoice_id=invoice_id,
+                    tenant_id=tenant_id, channel="sms",
+                )
+        except Exception:  # noqa: BLE001 — stamp is best-effort
+            pass
     # Automation-disabled email surfaces as its own skip even when
     # SMS succeeds — operator needs to see the per-channel reason.
     automation_blocked_email = (
