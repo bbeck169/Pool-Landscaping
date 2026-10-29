@@ -614,6 +614,55 @@ async def schedule_today(request: Request,
                 pass
     open_shift = next((e for e in entries if not e.get("clock_out_at")), None)
 
+    # Ticket 2 · Feb-2026 — unified clock-state read.  Pre-ticket
+    # the summary read ``clocked_in`` + ``hours_logged_today``
+    # from ``time_entries`` only, so a landscape tech who clocked
+    # in via the Time Clock page (writes ``timeclock_punches``
+    # only) saw a stale "Off the clock" chip + 0 hours on the
+    # schedule header even though ``/timeclock/mine-today`` +
+    # ``/timeclock/admin-summary`` (both unified post-TC)
+    # correctly reflected the open shift.
+    #
+    # ``_unified_events`` merges both collections for the window
+    # and tags each event with its source. ``_sum_shifts`` folds
+    # the merged in/out pairs the same way the landscape path
+    # already does, so pool techs who only ever write
+    # ``time_entries`` get an identical value (``_flatten_time_
+    # entries_to_events`` emits one in + one out per paired doc;
+    # ``_sum_shifts`` recomputes seconds from the pair's
+    # timestamps — equivalent to the legacy ``sum(duration_
+    # minutes)`` path for closed shifts).
+    #
+    # Fail-safe: if the import or Mongo read raises for any
+    # reason, keep the legacy values so this surface never 500s
+    # on a landscape helper hiccup.
+    _unified_clocked_in: Optional[bool] = None
+    _unified_hours: Optional[float] = None
+    try:
+        from routers.timeclock_landscaping import _unified_events, _sum_shifts
+        _unified_rows = await _unified_events(
+            tenant_id=tid, user_id=user["id"],
+            start_iso=start_iso, end_iso=end_iso,
+        )
+        _in_out = [r for r in _unified_rows
+                   if r.get("punch_type") in ("in", "out")]
+        # Latest in/out wins (same semantics as /mine-status).
+        _unified_clocked_in = bool(_in_out) and _in_out[-1]["punch_type"] == "in"
+        _unified_hours = _sum_shifts(_in_out) / 3600.0
+    except Exception as _tc_exc:  # noqa: BLE001 — never fail the surface
+        logger.warning(
+            "[schedule.mine-day] unified timeclock read failed "
+            "user=%s tenant=%s err=%s — falling back to time_entries-only",
+            user.get("id"), tid, type(_tc_exc).__name__,
+        )
+
+    _clocked_in = (_unified_clocked_in
+                   if _unified_clocked_in is not None
+                   else bool(open_shift))
+    _hours_logged = (round(_unified_hours, 2)
+                     if _unified_hours is not None
+                     else round(total_hours, 2))
+
     return {
         "date": today_yyyymmdd,
         "tz": tz_name,
@@ -638,9 +687,9 @@ async def schedule_today(request: Request,
                 if it["type"] == "job" and it.get("work_class") != "repair"
             ),
             "scheduled_hours": round(scheduled_hours, 2),
-            "hours_logged_today": round(total_hours, 2),
+            "hours_logged_today": _hours_logged,
             "miles_logged_today": round(total_miles, 2),
-            "clocked_in": bool(open_shift),
+            "clocked_in": _clocked_in,
             "open_entry_id": open_shift and open_shift.get("id"),
         },
     }
