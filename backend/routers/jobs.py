@@ -1219,10 +1219,14 @@ async def list_jobs(
     # flip together).
     def _re_sort_key(d: dict) -> tuple:
         sd = d.get("scheduled_date") or ""
-        day = sd[:10] if isinstance(sd, str) else ""
+        if not isinstance(sd, str):
+            sd = str(sd)
+        day = sd[:10]
         ri = d.get("route_index")
         ri_val = ri if isinstance(ri, (int, float)) else 999999
         ca = d.get("created_at") or ""
+        if not isinstance(ca, str):
+            ca = str(ca)
         return (day, ri_val, sd, ca)
     docs.sort(key=_re_sort_key, reverse=(sort == "scheduled_date_desc"))
     # Feb-2026 · P0 — bulk read-time cascade for the ``technician_name``
@@ -1326,9 +1330,16 @@ async def list_jobs(
                     # "Weekly Pool Service". Only the relevant snippet
                     # is returned so mobile payloads stay cheap.
                     from routers.customers import _resolve_service_note
-                    d["service_note"] = _resolve_service_note(
-                        c, d.get("service_type") or d.get("job_type"), user,
-                    )
+                    try:
+                        d["service_note"] = _resolve_service_note(
+                            c, d.get("service_type") or d.get("job_type"), user,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "[294654] service_note resolve failed job_id=%s customer_id=%s",
+                            d.get("id"), d.get("customer_id"),
+                        )
+                        d["service_note"] = None
                     # Phase 3 · Feb-2026 — expose pool + landscape
                     # customer-level notes under additive aliases so
                     # the schedule job card can render Customer /
@@ -1336,7 +1347,9 @@ async def list_jobs(
                     # blocks regardless of this job's service_type.
                     # ``service_note`` above remains the single-
                     # resolved legacy field.
-                    _sn = c.get("service_notes") or {}
+                    _sn = c.get("service_notes")
+                    if not isinstance(_sn, dict):
+                        _sn = {}
                     d["service_notes_pool"]      = _sn.get("pool") or None
                     d["service_notes_landscape"] = _sn.get("landscape") or None
                     # Feb-2026 · Schedule map pins — expose the customer's
@@ -1355,8 +1368,12 @@ async def list_jobs(
                     # higher rung fires.
                     lat = c.get("service_lat")
                     lng = c.get("service_lng")
-                    d["location_lat"] = float(lat) if lat is not None else None
-                    d["location_lng"] = float(lng) if lng is not None else None
+                    try:
+                        d["location_lat"] = float(lat) if lat is not None else None
+                        d["location_lng"] = float(lng) if lng is not None else None
+                    except (TypeError, ValueError):
+                        d["location_lat"] = None
+                        d["location_lng"] = None
                 else:
                     d["customer_is_vip"] = False
                     d["customer_gate_code"] = None
