@@ -3510,3 +3510,48 @@ read, C2 roster dept fallback + hide-list cleanup); C3 backfill deferred.
 
 **Decision reference**
 - Backlog #4 pre-audit · operator Q3 = (a): bulk DONE, single-job follow-up filed. Three-commit sprint lineage: Commit A (Item #1 BE), Commit B (Item #6 BE), Commit C (Item #6 FE), Commit D (this ticket file).
+
+
+### TD-mobile-pool-tech-timeclock-ui-hide · OPEN · Feb-2026 (pool-tech opt-out parity)
+
+**Origin**: Web commit `5ea96e73d` ("Pool-tech time-clock opt-out: hide 5 FE surfaces + skip clock-out on submit") shipped the hide-only path for 5 web surfaces. Mobile parity gap flagged by the operator in the same ticket; delegated here to `e1_expo_frontend_dev`.
+
+**Scope**
+Audit `/app/mobile/` for the parallel surfaces to the 5 web gates and apply the same `shouldShowTimeClock(user)` gate pattern. Mobile already has the shared helper at `/app/mobile/src/lib/timeClockVisibility.ts` (web parity via TD-64), so this is a wiring ticket, not a helper-port.
+
+| Web gate | Mobile parallel (expected) |
+|---|---|
+| S8 — TodaySchedule "Clocked in" + "Hours logged" chips | Mobile schedule header stat chips at `/app/mobile/app/(app)/schedule/*.tsx`. Audit which chips surface time-clock state. |
+| S9 — "▶ Clock In & Start Report" CTA on job card | Mobile schedule card CTA — likely in `/app/mobile/app/(app)/schedule/calendar.tsx` or a sibling card list. |
+| S10 — Auto-GPS watcher firing `/workforce/auto-clock-in` | Mobile may use `expo-location` instead of `navigator.geolocation`; audit for the auto-clock-in POST site. |
+| S11 — Auto-clockin success toast | Downstream of S10; defensive render-gate once S10 lands. |
+| SR — ServiceReport clock-out call on submit | Mobile ServiceReport screen — same `/workforce/clock-out` POST site; wrap in `if (shouldShowTimeClock(user))`. |
+
+**Shared predicate** (already in place on mobile — no helper work needed):
+- `/app/mobile/src/lib/timeClockVisibility.ts :: shouldShowTimeClock(user)` — mirrors web contract (BE-authoritative `show_time_clock` + `effective_department` fallback).
+- `/app/mobile/src/utils/clockInGate.ts :: useClockInStatus(enabled)` — the clock-gate hook already short-circuits on `enabled=false`.
+
+**BE contract** — unchanged. Operator Q1=A locked hide-only on both web and mobile; no BE 403s to anticipate.
+
+**Testid plan** (new, stable for ops/e2e):
+- `pool-tech-no-clock-chips` — assert absence on pool-tech schedule header.
+- `pool-tech-no-clockin-cta` — assert absence on pool-tech job card.
+- `pool-tech-no-auto-gps-request` — snapshot `expo-location` permission prompt is NOT invoked.
+
+**Risk**
+Low. Hide-only path; no BE write-blocks. Mobile `time_entries` writes from pool techs via `/workforce/clock-in` or `/workforce/auto-clock-in` continue to be reachable via direct API tooling (same as web).
+
+**Test plan**
+- Jest/jest-expo: 5+ cases on the mobile schedule screen (chips hidden, CTA hidden, auto-GPS watcher not registered, toast not rendered) + 1 on the mobile ServiceReport (clock-out POST not fired for pool techs).
+
+**Status**: OPEN. Explicit "do NOT implement from the web agent" directive — delegate to `e1_expo_frontend_dev`.
+
+**Pre-audit receipt** (web surfaces already locked by the shipped commit):
+- `frontend/src/pages/schedule/TodaySchedule.jsx:741-752` — S8 chips gate.
+- `frontend/src/pages/schedule/TodaySchedule.jsx:812-849` + `:1366-1382` — S9 onClockIn + CTA.
+- `frontend/src/pages/schedule/TodaySchedule.jsx:150-178` — S10 watcher short-circuit.
+- `frontend/src/pages/schedule/TodaySchedule.jsx:511-517` — S11 toast render-gate.
+- `frontend/src/pages/tech/ServiceReport.jsx:410-423` — SR clock-out skip.
+
+**Decision reference**
+- Operator Q1 = A (hide-only), Q2 = a (no payroll dependency), Q3 = a (clean skip on ServiceReport). All three apply to mobile too.
