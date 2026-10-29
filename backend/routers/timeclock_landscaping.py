@@ -167,13 +167,33 @@ async def punch(body: PunchIn, user: dict = Depends(get_current_user)):
     ts = datetime.now(timezone.utc)
     today = _day_key(ts)
 
-    # Find today's punches for this user.
-    day_start = f"{today}T00:00:00+00:00"
-    day_end   = f"{today}T23:59:59+00:00"
-    todays = await db.timeclock_punches.find({
-        "tenant_id": tenant_id, "user_id": user_id,
-        "timestamp": {"$gte": day_start, "$lte": day_end},
-    }).sort("timestamp", 1).to_list(50)
+    # Feb-2026 · AZ-TZ UTC-rollover + soft-delete bug fix.
+    #
+    # Pre-fix the open-shift lookup used a TODAY-only UTC window
+    # (``day_start``/``day_end`` scoped to today's UTC day), so a
+    # tech who punched IN at 5 pm AZ-local (= 00:00 UTC day N+1)
+    # could not clock OUT at 7 am AZ-local the next morning
+    # (= 14:00 UTC day N+1) because the pre-fix walker never saw
+    # the IN row — the UTC-day window had rolled over and the
+    # IN was in "yesterday" UTC.  POST ``/punch`` would 409 with
+    # ``no_open_shift`` even though ``/mine-status`` correctly
+    # reported ``clocked_in: true`` (``/mine-status`` scans the
+    # last 2 days precisely for this reason).
+    #
+    # Fix: resolve the open shift using the SAME 2-day
+    # ``_unified_events`` window ``/mine-status`` already uses so
+    # both endpoints see the same open-shift state.  DRY — reuse
+    # the helper, don't duplicate the date math.  Soft-delete
+    # exclusion (``deleted_at: None`` matches both missing field
+    # and explicit null — standard Mongo semantics) is baked into
+    # the helper, so a tombstoned IN row can't be mistaken for
+    # an open shift here either.
+    yesterday = (ts.date() - timedelta(days=1)).isoformat()
+    todays = await _unified_events(
+        tenant_id=tenant_id, user_id=user_id,
+        start_iso=f"{yesterday}T00:00:00+00:00",
+        end_iso=f"{today}T23:59:59+00:00",
+    )
 
     open_in = None
     for p in todays:
@@ -287,9 +307,17 @@ async def _unified_events(tenant_id: str, user_id: str,
     matches the FE pairPunches.js:84 ``console.warn`` precedent so
     admins can spot data-quality issues. Non-fatal.
     """
+    # Feb-2026 · AZ-TZ UTC-rollover + soft-delete bug fix.
+    # ``deleted_at: None`` matches BOTH missing-field AND explicit
+    # null (standard Mongo semantics) so a tombstoned punch
+    # (``deleted_at = <iso>``) is excluded uniformly across every
+    # unified reader: ``/mine-status``, ``/mine-today``,
+    # ``/mine-summary``, ``/admin-summary``, AND the open-shift
+    # lookup inside ``POST /timeclock/punch``.
     tp_rows = await db.timeclock_punches.find(
         {"tenant_id": tenant_id, "user_id": user_id,
-         "timestamp": {"$gte": start_iso, "$lte": end_iso}},
+         "timestamp": {"$gte": start_iso, "$lte": end_iso},
+         "deleted_at": None},
         {"_id": 0},
     ).to_list(5000)
     for r in tp_rows:
