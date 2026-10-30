@@ -168,3 +168,146 @@ async def patch_quiet_hours(
                        or fresh.get("timezone") or "America/Phoenix",
         "tenant_timezone": fresh.get("timezone") or "America/Phoenix",
     }
+
+
+# ─── Phase 2 UX — Queue viewer + per-row cancel ────────────────────
+# Feb-2026 · Operator Phase-2 (β scope) — expose the pending
+# ``outbound_deferred`` queue to admin/manager/super_admin so they
+# can inspect what's waiting + cancel individual rows. Mirrors the
+# ``_writer_only`` role gate already enforced on the PATCH path so
+# a technician never sees scheduled payloads for a tenant they
+# can't configure.
+_QUEUE_CHANNELS = {"email", "sms"}
+
+
+def _recipient_from_payload(channel: str, payload: dict) -> str:
+    """Best-effort recipient extraction from the frozen payload row
+    (payload shape differs by channel — see ``defer_send`` callers
+    in ``comms_email_adapter`` / ``comms_sms_adapter``)."""
+    if not isinstance(payload, dict):
+        return ""
+    if channel == "email":
+        to = payload.get("to")
+        if isinstance(to, list) and to:
+            return str(to[0] or "")
+        return str(to or "")
+    if channel == "sms":
+        return str(payload.get("to_phone") or "")
+    return ""
+
+
+def _subject_from_payload(channel: str, payload: dict) -> Optional[str]:
+    """Email subject if present; SMS has no subject."""
+    if channel != "email" or not isinstance(payload, dict):
+        return None
+    sub = payload.get("subject")
+    return str(sub) if sub else None
+
+
+@router.get("/quiet-hours/queue")
+async def list_quiet_hours_queue(
+    limit: int = 50,
+    offset: int = 0,
+    channel: Optional[str] = None,
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Pending ``outbound_deferred`` rows for the current tenant.
+
+    Returns ``count`` (total pending, independent of limit/offset),
+    ``next_release_at`` (earliest ``scheduled_for`` across all
+    pending rows, or ``None`` when empty), and ``items`` (up to
+    ``limit`` rows ordered by ``scheduled_for`` asc).
+    """
+    _writer_only(user)
+    if limit < 1 or limit > 500:
+        limit = 50
+    if offset < 0:
+        offset = 0
+    q: dict = {"tenant_id": tenant["id"], "status": "pending"}
+    if channel is not None:
+        ch = channel.strip().lower()
+        if ch not in _QUEUE_CHANNELS:
+            raise HTTPException(
+                status_code=400,
+                detail={"detail": "invalid_channel",
+                        "message": "channel must be 'email' or 'sms'."},
+            )
+        q["channel"] = ch
+
+    count = await db.outbound_deferred.count_documents(q)
+    next_doc = None
+    if count:
+        next_doc = await db.outbound_deferred.find_one(
+            {"tenant_id": tenant["id"], "status": "pending"},
+            {"_id": 0, "scheduled_for": 1},
+            sort=[("scheduled_for", 1)],
+        )
+    cursor = db.outbound_deferred.find(
+        q, {"_id": 0, "id": 1, "channel": 1, "payload": 1,
+            "scheduled_for": 1, "created_at": 1},
+    ).sort("scheduled_for", 1).skip(offset).limit(limit)
+    rows = await cursor.to_list(length=limit)
+    items: list[dict] = []
+    for r in rows:
+        ch = r.get("channel") or ""
+        pl = r.get("payload") or {}
+        items.append({
+            "id": r.get("id"),
+            "channel": ch,
+            "recipient": _recipient_from_payload(ch, pl),
+            "scheduled_release_at": r.get("scheduled_for"),
+            "deferred_at": r.get("created_at"),
+            "subject": _subject_from_payload(ch, pl),
+        })
+    return {
+        "count": count,
+        "next_release_at": (next_doc or {}).get("scheduled_for"),
+        "items": items,
+    }
+
+
+@router.delete("/quiet-hours/queue/{row_id}")
+async def cancel_quiet_hours_row(
+    row_id: str,
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+    request: Request = None,
+):
+    """Hard-delete a single pending ``outbound_deferred`` row.
+
+    Only pending rows are cancellable — a ``releasing`` row is
+    mid-dispatch and the release worker owns its lifecycle. 404 on
+    cross-tenant to avoid leaking existence.
+    """
+    _writer_only(user)
+    row = await db.outbound_deferred.find_one(
+        {"id": row_id, "tenant_id": tenant["id"], "status": "pending"},
+        {"_id": 0, "id": 1, "channel": 1},
+    )
+    if not row:
+        raise HTTPException(
+            status_code=404,
+            detail={"detail": "row_not_found",
+                    "message": "Pending row not found for this tenant."},
+        )
+    res = await db.outbound_deferred.delete_one(
+        {"id": row_id, "tenant_id": tenant["id"], "status": "pending"},
+    )
+    if res.deleted_count == 0:
+        raise HTTPException(
+            status_code=404,
+            detail={"detail": "row_not_found",
+                    "message": "Pending row not found for this tenant."},
+        )
+    try:
+        await _p27_write_audit(
+            event="quiet_hours_queue_cancel",
+            cid=tenant["id"], tenant_id=tenant["id"],
+            user=user, request=request,
+            extra={"row_id": row_id, "channel": row.get("channel")},
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[p34] cancel audit log write failed: %s", e)
+    return {"deleted": True, "row_id": row_id}
+
