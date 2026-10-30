@@ -2412,6 +2412,32 @@ function RecordPaymentModal({ open, onClose, invoice, user, onDone, onError }) {
       footer={<><Button variant="ghost" onClick={onClose}>Cancel</Button><Button onClick={submit} disabled={busy}>{busy ? "Saving…" : "Record"}</Button></>}>
       <TextInput label="AMOUNT" type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} />
       <p className="text-xs mt-2" style={{ color: colors.muted }}>Cash / check / other — recorded manually. Stripe checkout marks paid automatically.</p>
+      {/*
+        Feb-2026 · FIN-PAID-STATUS-PARITY · Commit 2a — info banner
+        clarifying that manual payments do NOT save a payment method
+        for future use. Operator Bug 2 report ("'Save card' on manual
+        payment doesn't persist") traced to a misreading of this
+        modal: no save-card toggle exists here because cash / check /
+        external card have no card number to tokenise. Point users
+        at the two paths that DO save a card.
+      */}
+      <div
+        className="mt-3 rounded-md px-3 py-2 text-xs"
+        style={{
+          backgroundColor: colors.surfaceAlt || colors.surface,
+          color: colors.onSurfaceSecondary || colors.muted,
+          border: `1px solid ${colors.border}`,
+        }}
+        data-testid="record-payment-save-card-info"
+      >
+        <span className="font-semibold">Not saving a card.</span>
+        {" "}
+        Manual payments (cash, check, external card) do not save a
+        payment method for future use. To save a card on file,
+        use the "Charge card" flow for an existing saved card, or
+        send the customer a payment link so they can save one from
+        their portal.
+      </div>
       {canBackfill ? (
         <div className="mt-3" data-testid="backfill-date-section">
           <details>
