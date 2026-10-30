@@ -3918,3 +3918,26 @@ Code-comment at L178: *"we only honour it when the customer has 0 saved PMs toda
 - Commit B `3ecde9990` — FE coerceTheme + themeToCssVars reference.
 - Commit C `f2001437a` — FE ThemePanel UI + ThemedFormShell renderer reference.
 - Vitest reference suite: `frontend/src/test/form-builder-phase5-ui-renderer.test.jsx` (7 renderer-honor cases to mirror in jest-expo).
+
+## TD-mobile-revenue-forecast-next-week-filter · OPEN · Feb-2026 (mobile parity)
+
+**Owner:** DELEGATE to `e1_expo_frontend_dev` (do not implement on web agent — out of surface bounds).
+
+**Context:** Web `RevenueForecastTile.jsx` gained a `next_week` quick-view
+tab between "This Week" and "This Month" (narrow→wide pill flow).
+Commits:
+  - `f3a690973` — FE helper (`nextWeekRange`) + TABS entry.
+  - `de9554598` — Vitest assertions (presence · order · forward-7-day fetch).
+
+**Mobile delta:** `/app/mobile/src/components/dashboard/RevenueForecastTile.tsx`
+mirrors the web tile but does NOT yet include `next_week`. Add parity:
+  - Add `nextWeekRange` helper mirroring web convention (Sunday→Saturday,
+    one week ahead, mobile browser-local).
+  - Insert `{ key: "next_week", label: "Next Week", build: nextWeekRange }`
+    between the `week` and `this_month` entries.
+  - Jest-expo spec for presence + order + forward-window URL assertion
+    (mirror `frontend/src/test/revenue-forecast-tile-tabs.test.jsx` new specs).
+
+**BE touch:** none — endpoint already accepts raw `start`/`end` ISO dates.
+
+**Priority:** P3 (feature parity; no user-visible breakage without it).
