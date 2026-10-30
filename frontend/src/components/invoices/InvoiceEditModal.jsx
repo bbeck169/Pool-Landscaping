@@ -134,6 +134,48 @@ export default function InvoiceEditModal({ invoice, signInfo, onClose, onSaved }
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
+  // Feb-2026 β — operator metadata-only paid bypass. Mirror of the
+  // BE ``_is_metadata_only_diff`` helper at
+  // ``routers/invoice_edit.py``. When ``paid`` AND the diff touches
+  // only metadata fields, we skip BOTH the ack flag AND the
+  // confirm dialog so admins can relabel line items without any
+  // friction. ``item_id``/``pricebook_item_id`` ride in the
+  // metadata set so a pricebook re-link stays no-ack.
+  const _METADATA_LINE_KEYS = new Set([
+    "category", "income_category_id",
+    "service_category", "service_category_id",
+    "description", "long_description",
+    "item_id", "pricebook_item_id",
+  ]);
+  const _isMetadataOnlyLineDiff = (origItems, newItems) => {
+    const o = origItems || []; const n = newItems || [];
+    if (o.length !== n.length) return false;
+    for (let i = 0; i < n.length; i++) {
+      const newLi = n[i] || {}; const oldLi = o[i] || {};
+      const keys = new Set([
+        ...Object.keys(newLi), ...Object.keys(oldLi),
+      ]);
+      for (const k of keys) {
+        if (k === "id" || k === "pricebook_writeback") continue;
+        const av = oldLi[k]; const bv = newLi[k];
+        const normalize = (x) => (
+          k === "quantity" || k === "unit_price" || k === "tax_rate"
+        ) ? Number(x || 0) : (x ?? "");
+        if (normalize(av) !== normalize(bv)
+             && !_METADATA_LINE_KEYS.has(k)) {
+          return false;
+        }
+      }
+    }
+    return true;
+  };
+  const isPaidMetadataOnlyDiff = paid && _isMetadataOnlyLineDiff(
+    invoice?.line_items || [], form.line_items,
+  ) && Number(form.tax_rate || 0)
+       === Number(invoice?.tax_rate || 0)
+    && Number(form.discount_amount || 0)
+       === Number(invoice?.discount_amount || 0);
+
   // ── Live totals (visual preview only) ────────────────────────
   const totals = useMemo(() => {
     const subtotal = (form.line_items || []).reduce(
@@ -211,7 +253,10 @@ export default function InvoiceEditModal({ invoice, signInfo, onClose, onSaved }
       // Feb-2026 · Editable Sent Docs · Phase 1 — attach the ack
       // flag whenever the doc is locked. Legacy fields are still
       // populated for back-compat with older backend builds.
-      if (isLocked) {
+      // Feb-2026 β — SKIP the ack flag entirely on the paid
+      // metadata-only path so the BE's new metadata-only short-
+      // circuit fires.
+      if (isLocked && !isPaidMetadataOnlyDiff) {
         payload.acknowledged_lock_bypass = true;
         if (sent) payload.confirm_edit_sent = true;
         if (paid) {
@@ -246,7 +291,10 @@ export default function InvoiceEditModal({ invoice, signInfo, onClose, onSaved }
 
   const submit = () => {
     if (!canSave) return;
-    if (isLocked) {
+    // Feb-2026 β — paid metadata-only edits skip the confirm
+    // dialog. Any mix with a financial field still routes through
+    // the shipped ack-dialog flow.
+    if (isLocked && !isPaidMetadataOnlyDiff) {
       setConfirmOpen(true);
       return;
     }
@@ -497,10 +545,15 @@ export default function InvoiceEditModal({ invoice, signInfo, onClose, onSaved }
                         <input
                           type="number" step="0.01"
                           className="w-full px-2 py-1 text-sm rounded text-right"
-                          style={{ background: colors.surface,
-                                    border: `1px solid ${colors.border}` }}
+                          style={{
+                            background: paid ? "#F3F4F6" : colors.surface,
+                            border: `1px solid ${colors.border}`,
+                            cursor: paid ? "not-allowed" : "text",
+                          }}
                           value={li.quantity}
                           onChange={(e) => patchItem(i, { quantity: e.target.value })}
+                          readOnly={paid}
+                          aria-readonly={paid ? "true" : undefined}
                           data-testid={`invoice-edit-line-${i}-qty`}
                         />
                       </td>
@@ -508,10 +561,15 @@ export default function InvoiceEditModal({ invoice, signInfo, onClose, onSaved }
                         <input
                           type="number" step="0.01"
                           className="w-full px-2 py-1 text-sm rounded text-right"
-                          style={{ background: colors.surface,
-                                    border: `1px solid ${colors.border}` }}
+                          style={{
+                            background: paid ? "#F3F4F6" : colors.surface,
+                            border: `1px solid ${colors.border}`,
+                            cursor: paid ? "not-allowed" : "text",
+                          }}
                           value={li.unit_price}
                           onChange={(e) => patchItem(i, { unit_price: e.target.value })}
+                          readOnly={paid}
+                          aria-readonly={paid ? "true" : undefined}
                           data-testid={`invoice-edit-line-${i}-price`}
                         />
                       </td>
