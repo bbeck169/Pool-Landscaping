@@ -1,9 +1,12 @@
 """Feb-2026 · Pool Service PS-D — Smart Portal Tiles endpoint.
 
 ``GET /api/portal/dashboard/next-visits`` — returns the SOONEST
-future scheduled job per service-type category, gated by the
-customer having an active recurring subscription for that
-category.
+future scheduled job per service-type category.  Eligibility is
+derived from the customer's own job history: any job (past,
+present, future, any status) in a given canonical category marks
+that category as "eligible".  Future scheduled jobs populate the
+tile; eligible categories without a future job surface a
+placeholder with ``next_visit_at: null``.
 
 Service-type categories (canonical set — new to PS-D, not tied
 to any existing enum since ``billing_plans.service`` and
@@ -13,26 +16,27 @@ codebase):
     * ``landscape``       → matches "landscape" / "landscaping"
     * ``filter_cleaning`` → matches "filter" / "cartridge"
 
-Eligibility rules (BOTH must hold per service type):
-    1. Active subscription — a row in ``db.billing_plans`` with
-       ``active: True`` whose ``service`` contains a category
-       keyword.  OR (Feb-2026 hybrid fallback) a value in
-       ``customers.service_category`` that maps to the category:
-       ``pool`` → ``pool``, ``landscaping`` → ``landscape``,
-       ``both`` → both.  ``filter_cleaning`` is NEVER derived
-       from ``service_category`` — it only lights up when a
-       filter/cartridge billing_plan row exists.
-    2. Future scheduled job — a row in ``db.jobs`` with
-       ``scheduled_at`` (or ``scheduled_date``) >= now AND
-       status in {scheduled, active, in_progress} whose
-       ``service_type`` / ``job_type`` / ``service_title``
-       contains a category keyword.  When no future job exists
-       for an eligible category, a placeholder tile with
-       ``next_visit_at: null`` is emitted (β1 contract).
+Eligibility rules (Feb-2026 · simplified jobs-driven gate — SHA
+to be inserted by caller; this comment preserves the audit trail
+noting that the previous ``billing_plans.active`` + ``customers
+.service_category`` hybrid gate was retired here):
+    1. Eligible category — ANY row in ``db.jobs`` for this
+       (tenant_id, customer_id) with a ``service_type`` /
+       ``job_type`` / ``service_title`` matching a canonical
+       category keyword.  Status + schedule are IGNORED at
+       this step; a draft or long-past job still marks the
+       category as eligible.
+    2. Future scheduled job (populates the tile) — a row in
+       ``db.jobs`` with ``scheduled_at`` (or ``scheduled_date``)
+       >= now AND status in {scheduled, active, in_progress}
+       whose category matches an eligible key.  When no future
+       job exists for an eligible category, a placeholder tile
+       with ``next_visit_at: null`` is emitted.
 
 Output is filtered to the three canonical categories and returned
 in the display order Pool → Landscape → Filter Cleaning.  Empty
-list if no category qualifies — the portal hides the tile row.
+list when the customer has no jobs matching ANY canonical
+category — the portal hides the tile row entirely.
 
 Tenant + customer isolation is enforced via the customer_id
 derived from the JWT session (never from body / query).  Cross-
@@ -75,6 +79,14 @@ def _match_category(text: Optional[str]) -> Optional[str]:
             if h in t:
                 return key
     return None
+
+
+def _job_category(job: Dict[str, Any]) -> Optional[str]:
+    """Resolve a job's canonical category via the shipped
+    service_type / job_type / service_title fallback chain."""
+    return (_match_category(job.get("service_type"))
+              or _match_category(job.get("job_type"))
+              or _match_category(job.get("service_title")))
 
 
 def _require_customer(user: dict) -> str:
@@ -126,55 +138,32 @@ async def portal_next_visits(
     cid = _require_customer(user)
     tid = tenant["id"]
 
-    # ── (1) Active subscriptions → set of eligible category keys.
-    active_keys: set = set()
+    # ── (1) Jobs-driven eligibility · Feb-2026 — ANY job on this
+    # (tenant, customer) marks its canonical category as eligible,
+    # regardless of status or schedule.  Replaces the retired
+    # ``billing_plans.active`` + ``customers.service_category``
+    # hybrid gate so a customer whose plans haven't been seeded
+    # (but whose jobs have been scheduled) still sees tiles.
+    eligible_keys: set = set()
     try:
-        async for plan in db.billing_plans.find(
-            {"tenant_id": tid, "customer_id": cid, "active": True},
-            {"_id": 0, "service": 1},
+        async for job in db.jobs.find(
+            {"tenant_id": tid, "customer_id": cid},
+            {"_id": 0, "service_type": 1, "job_type": 1,
+             "service_title": 1},
         ):
-            k = _match_category(plan.get("service"))
+            k = _job_category(job)
             if k:
-                active_keys.add(k)
+                eligible_keys.add(k)
     except Exception as exc:                                     # pragma: no cover
         logger.warning(
-            "[ps-d] billing_plans read failed for tenant=%s cid=%s"
-            ": %s", tid, cid, exc,
+            "[ps-d] jobs eligibility read failed for tenant=%s "
+            "cid=%s: %s", tid, cid, exc,
         )
         # Fail-quietly per portal UX standard — return empty and
         # the frontend hides the tile row.
         return {"next_visits": []}
 
-    # ── (1b) Hybrid fallback · Feb-2026 — when a customer hasn't
-    # had their billing_plans fully seeded yet, derive eligible
-    # category keys from ``customers.service_category`` as a
-    # secondary gate.  Set-union with the primary gate so a plan
-    # row wins its own category (populated tiles still outrank
-    # placeholder-only fallback tiles).  Mapping is intentionally
-    # narrow — ``filter_cleaning`` has no corresponding
-    # ``service_category`` value so it is NEVER derived here;
-    # null / missing / unrecognized values are a no-op.
-    try:
-        cust = await db.customers.find_one(
-            {"id": cid, "tenant_id": tid},
-            {"_id": 0, "service_category": 1},
-        )
-    except Exception as exc:                                     # pragma: no cover
-        logger.warning(
-            "[ps-d] customers read failed for tenant=%s cid=%s: %s",
-            tid, cid, exc,
-        )
-        cust = None
-    svc_cat = ((cust or {}).get("service_category") or "").strip().lower()
-    if svc_cat == "pool":
-        active_keys.add("pool")
-    elif svc_cat == "landscaping":
-        active_keys.add("landscape")
-    elif svc_cat == "both":
-        active_keys.add("pool")
-        active_keys.add("landscape")
-
-    if not active_keys:
+    if not eligible_keys:
         return {"next_visits": []}
 
     # ── (2) Future scheduled jobs (soonest-first).
@@ -209,32 +198,24 @@ async def portal_next_visits(
         return {"next_visits": []}
 
     # ── (3) Group by category → keep only the soonest job per
-    # category.  Rows already sorted ascending, so the first hit
-    # is the winner.
+    # eligible category.  Rows already sorted ascending, so the
+    # first hit is the winner.
     by_key: Dict[str, Dict[str, Any]] = {}
     for job in future_jobs:
-        k = (_match_category(job.get("service_type"))
-                or _match_category(job.get("job_type"))
-                or _match_category(job.get("service_title")))
-        if not k or k not in active_keys:
+        k = _job_category(job)
+        if not k or k not in eligible_keys:
             continue
         if k not in by_key:
             by_key[k] = job
 
-    # Feb-2026 · Portal β1 — operator ruling reversal on PS-D #8:
-    # we no longer fail-quietly when a subscribed service has no
-    # upcoming job.  Emit a placeholder tile (``next_visit_at=null``)
-    # so the FE can render a "No visit scheduled" state per
-    # eligible service.  Non-subscribed services still never surface
-    # here — ``active_keys`` remains the eligibility gate.
-
     # ── (4) Resolve tech names + emit in canonical display order.
-    # Placeholder rows (no future job) emit null datetime + null
-    # tech + null visit_id so the FE can distinguish real vs
-    # empty tiles.
+    # Placeholder rows (eligible category, no future job) emit
+    # null datetime + null tech + null visit_id so the FE can
+    # distinguish real vs empty tiles — β1 render-path contract
+    # preserved byte-identical.
     out: List[Dict[str, Any]] = []
     for key, _hits in _CATEGORY_MATCHERS:
-        if key not in active_keys:
+        if key not in eligible_keys:
             continue
         job = by_key.get(key)
         if job is None:
