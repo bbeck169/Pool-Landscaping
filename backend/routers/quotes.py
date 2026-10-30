@@ -2548,11 +2548,24 @@ async def record_payment(qid: str, body: RecordPaymentIn,
             entity_id=qid,
             log_level="info",   # partial deferrals must not spam WARN
         )
+        # Feb-2026 · FIN-PAID-STATUS-PARITY — flip ``status`` to
+        # ``"paid"`` (not ``"accepted"``) to match the Stripe-webhook
+        # ``_mark_invoice_paid`` Fix A at ``stripe_charge.py:1969``.
+        # Downstream filters (``payments_summary._LIVE_STATUSES``,
+        # ``reports`` paid-filter, ``referral_watcher``) key off
+        # ``status`` as the paid proxy; without this flip, manually-
+        # recorded payments stay in Outstanding + miss reports. The
+        # audit crumb ``previous_status_before_paid`` lets a future
+        # refund-restore flow (TD-stripe-refund-restore-prepaid-
+        # status) roll back cleanly. Only set the crumb on the
+        # actual transition — idempotent re-calls preserve it.
         update.update({
-            "status": "accepted",
+            "status": "paid",
             "paid_at": effective_paid_at,
             "payment_method": "manual",
         })
+        if doc.get("status") != "paid":
+            update["previous_status_before_paid"] = doc.get("status")
         if pa_by is not None:
             update["paid_at_override_by"] = pa_by
             update["paid_at_override_at"] = pa_at
@@ -2650,12 +2663,28 @@ async def pay_quote(qid: str,
     doc = await db.quotes.find_one({"id": qid, "tenant_id": tenant["id"]}, {"_id": 0})
     if not doc:
         raise HTTPException(404, "Quote not found")
+    # Feb-2026 · FIN-PAID-STATUS-PARITY — ``status: "paid"`` on
+    # fully-paid, mirroring ``record_payment`` and the Stripe-webhook
+    # ``_mark_invoice_paid`` Fix A. See ``routers/quotes.py``
+    # ``record_payment`` for the full rationale + the audit-crumb
+    # idempotency rules. ``previous_status_before_paid`` is only
+    # written on the real transition — never clobber it on a repeat
+    # call against an already-paid invoice.
+    prev_status = doc.get("status")
+    set_fields = {
+        "payment_status": "paid",
+        "status": "paid",
+        "amount_paid": float(doc.get("total") or 0),
+        "paid_at": now_iso(),
+        "payment_method": "manual",
+        "charge_failed": False,
+        "charge_error": "",
+    }
+    if prev_status != "paid":
+        set_fields["previous_status_before_paid"] = prev_status
     await db.quotes.update_one(
         {"id": qid, "tenant_id": tenant["id"]},
-        {"$set": {"payment_status": "paid", "status": "accepted",
-                  "amount_paid": float(doc.get("total") or 0),
-                  "paid_at": now_iso(), "payment_method": "manual",
-                  "charge_failed": False, "charge_error": ""}},
+        {"$set": set_fields},
     )
     if doc.get("customer_id"):
         await notify_customer(doc["customer_id"], "Payment received",

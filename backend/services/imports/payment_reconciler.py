@@ -204,16 +204,23 @@ async def reconcile_invoice_after_payment(
     # ReconcileResult (``new_amount_paid``) for audit / UI.
     persisted_amount_paid = min(total_paid, total)
 
-    # Status transition — only upgrade to "accepted" on the
+    # Status transition — only upgrade to "paid" on the
     # fully-paid boundary crossing. Never downgrade (partial
     # refund scenarios are out of scope).
+    #
+    # Feb-2026 · FIN-PAID-STATUS-PARITY — flipped the terminal
+    # value from "accepted" to "paid" to match the Stripe-webhook
+    # ``_mark_invoice_paid`` Fix A at ``stripe_charge.py:1969``.
+    # The guard accepts BOTH legacy ``"accepted"`` and the new
+    # ``"paid"`` as terminal so pre-backfill + post-backfill
+    # rows both no-op on repeat calls.
     new_status = prior_status
     is_new_full_pay = (
         new_payment_status == PAYMENT_STATUS_PAID
-        and prior_status != "accepted"
+        and prior_status not in ("paid", "accepted")
     )
     if is_new_full_pay:
-        new_status = "accepted"
+        new_status = "paid"
 
     # ── Build the transitions log ───────────────────────────
     transitions: List[str] = []
@@ -238,7 +245,14 @@ async def reconcile_invoice_after_payment(
         "payment_status": new_payment_status,
     }
     if is_new_full_pay:
-        update_fields["status"] = "accepted"
+        update_fields["status"] = "paid"
+        # Feb-2026 · FIN-PAID-STATUS-PARITY — audit crumb for a
+        # future refund-restore flow (TD-stripe-refund-restore-
+        # prepaid-status). Only stamped on the real transition
+        # because ``is_new_full_pay`` already excludes legacy
+        # terminal rows via the ``not in ("paid", "accepted")``
+        # guard above.
+        update_fields["previous_status_before_paid"] = prior_status
         # Prefer the earliest payment's paid_at; fall back to
         # now(). ``record_payment`` uses a date-override resolver
         # here — the reconciler stays out of that lane (PDF
