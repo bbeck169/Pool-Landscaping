@@ -3699,3 +3699,32 @@ The web FE renders these placeholders as "No visit scheduled" tiles (muted datet
 - Vitest regression suite: `frontend/src/components/invoices/__tests__/InvoiceEditModal.metadataBypass.test.jsx` (4 cases, 4/4 green).
 
 
+## TD-new-invoice-category-dropdown-persist · OPEN · Feb-2026 (P2 · stub — PRE-AUDIT REQUIRED)
+
+**Operator-reported symptoms (3 screenshots, Feb-2026 chat):**
+- Create a new invoice from the New Invoice form, pick a Category in the line-item category dropdown, save.
+- On the invoice detail / list view the line item shows up as **UNCATEGORIZED** instead of the picked category.
+- Open the shipped `InvoiceEditModal` on the same line → the modal's Category picker is **empty** (2 empty dropdowns — one for service_category, one for income_category); the user has to re-pick and re-save to persist the category.
+- The Edit modal path works fine for already-saved invoices; the bug is strictly in the CREATE path.
+
+**Scope-stub pointers (verified by grep only — DO NOT trust blind, pre-audit before implementing):**
+- Frontend new-invoice form: `frontend/src/pages/quotes/QuoteInvoiceNew.jsx` — the only "New Invoice" surface under `pages/quotes/`. Likely sends a single `category` string per line item rather than the `{ service_category_id, income_category_id }` pair the Edit modal uses.
+- Frontend edit modal (reference contract): `frontend/src/components/invoices/InvoiceEditModal.jsx` — already shipping `service_category_id` + `income_category_id` on the PATCH payload (per Commit A `_METADATA_ONLY_LINE_FIELDS` whitelist).
+- Backend create endpoint: `POST /quotes` at `backend/routers/quotes.py:676`. Category normalization + hard-block removal around L870-875 (`line_item_category_audit`). The create path's Pydantic model is the one to inspect — it likely accepts `category` (string) but doesn't bridge to the two-ID shape the detail view consumes.
+- Backend edit endpoint (reference contract): `backend/routers/invoice_edit.py` — the shipped PATCH flow stamps both IDs onto the line item.
+
+**Likely root-cause hypothesis (unverified, 1-shot grep only):**
+Create path writes `line_items[].category` (string, display name) and leaves the two `*_category_id` fields unset. The invoice detail view reads from the IDs, not the string, so it falls through to the UNCATEGORIZED default. The Edit modal re-populates the dropdowns from the IDs, so they come up empty. Fix is to teach the create handler to resolve the picked category name → both IDs the same way the Edit handler does (likely one shared helper on BE or FE).
+
+**Why this is NOT a blind-fix candidate:**
+- The create path has non-trivial surface area: it's shared between quotes and invoices (same `QuoteInvoiceNew.jsx`, same `POST /quotes` with `is_quote`/status variants), has a legacy single-string category field that may still be consumed by other screens (list filters, exports), and runs under the `invoice-category hard-block removal` tolerance mode (`line_item_category_audit` is non-fatal). Writing one-shot without a pre-audit risks (a) breaking quotes, (b) breaking category filters that still key off the string, (c) double-writing in a way that drifts from the Edit modal contract on round-trip.
+- At minimum the pre-audit needs: (1) a line-items-create payload trace from FE → BE → DB, (2) a diff against the Edit modal's payload shape, (3) a check that any shipped list/filter/export that reads `line_items[].category` keeps working if the string is dropped or re-derived.
+
+**Priority:** P2.
+
+**Status:** OPEN. **Fresh-session pre-audit required; do not implement blindly.** Expected pre-audit shape: three-path diff (create → edit → detail-read), root-cause hypothesis, scope recommendation, STOP-and-surface for operator steer before any code edit.
+
+**Cross-refs:**
+- Operator chat ticket (Feb-2026, 3 screenshots).
+- Edit-modal reference contract: Commit A `f1034dbfc` (BE), Commit B `f48245c89` + source payload under `2cd55eddd` (FE).
+
