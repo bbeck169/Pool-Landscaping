@@ -3616,6 +3616,8 @@ Low. Hide-only path; no BE write-blocks. Mobile `time_entries` writes from pool 
 
 **Context:** The web portal β1 shipped a ruling reversal on PS-D #8. The `GET /api/portal/dashboard/next-visits` endpoint now returns a row for every service the customer has an **active** `billing_plans` subscription for, even when no future job exists for that service. The placeholder shape is:
 
+> **Feb-2026 UPDATE · gate simplified** — The `billing_plans.active` eligibility gate was retired in commit `31dbe591b` (see `TD-mobile-portal-next-visit-gate-simplified` below). The endpoint now derives eligible categories purely from the customer's job history (any status, any schedule). The **placeholder row contract and testid conventions documented in this chore are UNCHANGED** — mobile still only needs to render `next_visit_at: null` rows as "No visit scheduled" tiles. Only the server-side eligibility derivation changed.
+
 ```json
 {
   "service_type": "pool" | "landscape" | "filter_cleaning",
@@ -3654,6 +3656,7 @@ The web FE renders these placeholders as "No visit scheduled" tiles (muted datet
 - Web FE commit `c2b08bb6a` — placeholder rendering + testid conventions web-side.
 - Pytest regression suite: `backend/tests/test_portal_next_visits.py` (12 cases).
 - Vitest regression suite: `frontend/src/test/portal-next-visit-placeholder-b1.test.jsx` (4 cases).
+- **Gate rewrite (Feb-2026):** BE commit `31dbe591b` retired the `billing_plans.active` + `customers.service_category` hybrid; eligibility is now jobs-driven. Pytest suite rewritten to 9 jobs-driven cases; FE 19 render-path cases unchanged.
 
 ## TD-mobile-paid-invoice-metadata-edit · OPEN · Feb-2026 (mobile parity)
 
@@ -3941,3 +3944,25 @@ mirrors the web tile but does NOT yet include `next_week`. Add parity:
 **BE touch:** none — endpoint already accepts raw `start`/`end` ISO dates.
 
 **Priority:** P3 (feature parity; no user-visible breakage without it).
+
+## TD-mobile-portal-next-visit-gate-simplified · OPEN · Feb-2026 (DELEGATE: `e1_expo_frontend_dev`)
+
+**Owner:** DELEGATE to `e1_expo_frontend_dev` — mobile-side regression verification only. No mobile code change is expected (BE gate change is server-side only).
+
+**Context:** Web BE commit `31dbe591b` replaced the `GET /api/portal/dashboard/next-visits` eligibility gate. Previous: active `billing_plans` + `customers.service_category` hybrid (cross-ref retired SHA `3a618bc5e`). New: ANY job on this (tenant, customer) marks its canonical category as eligible, regardless of status or schedule. Response shape, canonical order, and null-dated placeholder contract are preserved byte-identical — the FE β1 render path is untouched (19/19 web vitest cases pass unchanged).
+
+**Mobile verification scope:**
+
+1. Confirm the mobile portal's Next-Visit tile row still renders correctly for a customer with jobs but no `billing_plans` (would previously have shown an empty row; now shows per-category placeholder tiles).
+2. Confirm a customer with ONLY `billing_plans` and no jobs now shows an empty row (previously would have shown placeholder tiles). This is an intentional behavior change — mobile UX teams should flag it if it surprises any shipped help copy.
+3. No mobile code change is expected. If any mobile code assumed `billing_plans`-driven eligibility in parallel (e.g., offline-cached eligibility derived from `billing_plans` locally), file a sibling chore.
+
+**Downstream risk:** Low. The response shape is unchanged; only the server-side set of returned rows shifts for customers in edge states (plans without jobs, or jobs without plans).
+
+**Priority:** P3.
+
+**Cross-refs:**
+- BE commit `31dbe591b` — jobs-driven gate rewrite.
+- Retired BE commit `3a618bc5e` — hybrid `service_category` fallback (superseded).
+- Shipped BE commit `44024703f` — β1 null-dated placeholder contract (still live).
+- `TD-mobile-portal-next-visit-empty-state` — mobile placeholder-rendering chore (contract unchanged; update block appended above).
