@@ -184,6 +184,62 @@ function _coerceGradient(g) {
  * fields default to ``null`` (the "not set" sentinel) and are only
  * populated when the caller explicitly opts in.
  */
+// ── CUS-Marketing-Form-Builder · Feb-2026 — Phase 5 (α-delta) ──
+
+/** Allowed enum literals for the three Phase-5 enum fields. Kept
+ * as frozen arrays so a renderer that iterates for a visual tile
+ * picker renders them in a stable order; a renderer that only
+ * validates uses ``.includes(...)``. */
+export const FORM_LAYOUT_CONTAINER_OPTIONS = Object.freeze([
+  "left", "centered", "mixed",
+]);
+export const FORM_LAYOUT_HEADER_OPTIONS = Object.freeze([
+  "left_title", "full_banner",
+]);
+/** Order = picker order (xs → xxl, A-letter visual scale). */
+export const FORM_FONT_SIZE_SCALE_OPTIONS = Object.freeze([
+  "xs", "sm", "md", "lg", "xl", "xxl",
+]);
+
+/** Font-size scale multipliers — applied as a single CSS var
+ * ``--form-font-size-scale`` so every ``em``-sized element scales
+ * proportionally. The ``md`` bucket is 1.0 (today's baseline),
+ * so a Phase-5-aware form that picks ``md`` renders identically
+ * to a legacy K34 form. */
+export const FORM_FONT_SIZE_SCALE_MULTIPLIERS = Object.freeze({
+  xs: 0.75, sm: 0.875, md: 1.0, lg: 1.125, xl: 1.25, xxl: 1.5,
+});
+
+function _enumOrNull(value, options) {
+  return options.includes(value) ? value : null;
+}
+
+function _coerceLayout(raw) {
+  if (!raw || typeof raw !== "object") {
+    return { container: null, header: null };
+  }
+  return {
+    container: _enumOrNull(raw.container, FORM_LAYOUT_CONTAINER_OPTIONS),
+    header:    _enumOrNull(raw.header,    FORM_LAYOUT_HEADER_OPTIONS),
+  };
+}
+
+function _coerceFontBlock(raw) {
+  if (!raw || typeof raw !== "object") {
+    return { size_scale: null };
+  }
+  return {
+    size_scale: _enumOrNull(raw.size_scale, FORM_FONT_SIZE_SCALE_OPTIONS),
+  };
+}
+
+function _coerceImageSlot(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const url = typeof raw.image_url === "string" ? raw.image_url.trim() : "";
+  return url ? { image_url: url } : null;
+}
+
+
 export function coerceTheme(raw) {
   const src = raw && typeof raw === "object" ? raw : {};
   const preset = src.preset === "custom" ? "custom"
@@ -204,6 +260,17 @@ export function coerceTheme(raw) {
     preset, colors, font_family,
     gradient:        _coerceGradient(src.gradient),
     overlay_opacity: _clampInt(src.overlay_opacity, 0, 100),
+    // ── Phase 5 (α-delta) — padded defaults so renderers can
+    // read theme.layout.container / theme.font.size_scale without
+    // defensive null-checks. The BE storage posture is ABSENCE
+    // (see ``_coerce_theme_extras`` at ``backend/routers/
+    // marketing_forms.py``); this render-time pad is the sibling
+    // that lets ThemedFormShell + the ThemePanel UI treat the
+    // fields as always-present.
+    layout:    _coerceLayout(src.layout),
+    font:      _coerceFontBlock(src.font),
+    wallpaper: _coerceImageSlot(src.wallpaper),
+    banner:    _coerceImageSlot(src.banner),
   };
 }
 
@@ -249,6 +316,28 @@ export function themeToCssVars(theme) {
     // — makes source-lint regexes deterministic + matches CSS
     // convention.
     out["--form-overlay-opacity"] = (t.overlay_opacity / 100).toFixed(2);
+  }
+  // ── Phase 5 (α-delta) — CSS vars for the three new render-
+  // affecting fields. Emitted ONLY when set (same posture as the
+  // Phase-2 gradient / overlay vars) so a K34 theme's output is
+  // byte-identical to the pre-Phase-5 shape. Image slot URLs are
+  // emitted as ``url(...)`` strings ready to plug into
+  // ``background-image``.
+  if (t.layout.container) {
+    out["--form-layout-container"] = t.layout.container;
+  }
+  if (t.layout.header) {
+    out["--form-layout-header"] = t.layout.header;
+  }
+  if (t.font.size_scale) {
+    out["--form-font-size-scale"] =
+      String(FORM_FONT_SIZE_SCALE_MULTIPLIERS[t.font.size_scale]);
+  }
+  if (t.wallpaper && t.wallpaper.image_url) {
+    out["--form-wallpaper-url"] = `url("${t.wallpaper.image_url}")`;
+  }
+  if (t.banner && t.banner.image_url) {
+    out["--form-banner-url"] = `url("${t.banner.image_url}")`;
   }
   return out;
 }
