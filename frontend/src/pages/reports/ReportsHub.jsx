@@ -19,6 +19,7 @@ import {
   RefreshCw,
   TrendingUp,
   Hourglass,
+  Droplets,
 } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
@@ -310,6 +311,20 @@ export default function ReportsHub() {
       kpi: { loading: false, data: { headline: "BOC" } },
       renderKpi: () => "→",
       kpiSubtitle: () => "Rolling N-week",
+    },
+    // Feb-2026 · CYA Over-Threshold — pool chemistry chase list.
+    // Static tile (destination reads on mount with configurable
+    // threshold + optional date-range filter). Section badge: Others.
+    {
+      key: "cya-high",
+      icon: Droplets,
+      title: "CYA Over Threshold",
+      description: "Pools with Cyanuric Acid readings over 100 ppm.",
+      to: `/reports/cya-high`,
+      sectionBadge: "Others",
+      kpi: { loading: false, data: { headline: "CYA" } },
+      renderKpi: () => "→",
+      kpiSubtitle: () => "Chemistry chase",
     },
   ];
 

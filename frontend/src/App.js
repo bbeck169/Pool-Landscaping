@@ -472,6 +472,7 @@ const TimeToCloseReport = React.lazy(() => import(/* webpackChunkName: "p-report
 // Feb-2026 · Reports Gap Fill Phase 5b.2 — Labor Efficiency + Booked Out / Capacity.
 const LaborEfficiencyReport = React.lazy(() => import(/* webpackChunkName: "p-reports-laborefficiencyreport" */ "@/pages/reports/LaborEfficiencyReport"));
 const BookedOutCapacityReport = React.lazy(() => import(/* webpackChunkName: "p-reports-bookedoutcapacityreport" */ "@/pages/reports/BookedOutCapacityReport"));
+const CYAHighReport = React.lazy(() => import(/* webpackChunkName: "p-reports-cyahighreport" */ "@/pages/reports/CYAHighReport"));
 const Forecast = React.lazy(() => import(/* webpackChunkName: "p-reports-forecast" */ "@/pages/reports/Forecast"));
 const CustomerRetentionReport = React.lazy(() => import(/* webpackChunkName: "p-reports-customerretentionreport" */ "@/pages/reports/CustomerRetentionReport"));
 const GpsAutoStartAudit = React.lazy(() => import(/* webpackChunkName: "p-reports-gpsautostartaudit" */ "@/pages/reports/GpsAutoStartAudit"));
@@ -1456,6 +1457,8 @@ export default function App() {
             {/* Feb-2026 · Reports Gap Fill Phase 5b.2 — Labor Efficiency + Booked Out / Capacity. */}
             <Route path="reports/labor-efficiency" element={<AdminOnly><LaborEfficiencyReport /></AdminOnly>} />
             <Route path="reports/booked-out-capacity" element={<AdminOnly><BookedOutCapacityReport /></AdminOnly>} />
+            {/* Feb-2026 · CYA Over-Threshold report. */}
+            <Route path="reports/cya-high" element={<AdminOnly><CYAHighReport /></AdminOnly>} />
             <Route path="reports/forecast" element={<AdminOnly><Forecast /></AdminOnly>} />
             <Route path="reports/customer-retention" element={<AdminOnly><CustomerRetentionReport /></AdminOnly>} />
             {/* Feb-2026 · P37d — Dispatcher GPS Auto-Start audit. */}
