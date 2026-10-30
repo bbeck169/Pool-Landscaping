@@ -760,8 +760,19 @@ function NextVisitTile({ nv, onOpen }) {
   const meta = _NEXT_VISIT_META[nv?.service_type];
   if (!meta) return null;
   const Icon = meta.icon;
-  const dtLabel = _formatNextVisitDatetime(nv.next_visit_at);
-  const techLabel = nv.tech_name || "Tech to be assigned";
+  // β1 · Feb-2026 — a subscribed service with no future job
+  // surfaces a placeholder row (``next_visit_at: null``). Render
+  // "No visit scheduled" instead of the formatted date, suppress
+  // the tech line (no tech is assigned), and keep the chevron
+  // routing to the schedule screen so the portal still has a
+  // visible affordance.
+  const isPlaceholder = nv?.next_visit_at == null;
+  const dtLabel = isPlaceholder
+    ? "No visit scheduled"
+    : _formatNextVisitDatetime(nv.next_visit_at);
+  const techLabel = isPlaceholder
+    ? ""
+    : (nv.tech_name || "Tech to be assigned");
   return (
     <button
       type="button"
@@ -769,6 +780,7 @@ function NextVisitTile({ nv, onOpen }) {
       className="flex items-start gap-3 text-left rounded-xl p-3 bg-white border border-zinc-200 hover:border-blue-300 hover:shadow-sm transition"
       data-testid={`next-visit-tile-${nv.service_type}`}
       data-visit-id={nv.visit_id || ""}
+      data-placeholder={isPlaceholder ? "true" : "false"}
     >
       <div
         className="shrink-0 flex items-center justify-center w-10 h-10 rounded-lg text-white"
@@ -786,17 +798,19 @@ function NextVisitTile({ nv, onOpen }) {
         </div>
         <div
           className="text-sm font-semibold truncate mt-0.5"
-          style={{ color: "#111827" }}
+          style={{ color: isPlaceholder ? "#6B7280" : "#111827" }}
           data-testid={`next-visit-tile-datetime-${nv.service_type}`}
         >
           {dtLabel}
         </div>
-        <div
-          className="text-xs text-zinc-600 truncate mt-0.5"
-          data-testid={`next-visit-tile-tech-${nv.service_type}`}
-        >
-          {techLabel}
-        </div>
+        {techLabel ? (
+          <div
+            className="text-xs text-zinc-600 truncate mt-0.5"
+            data-testid={`next-visit-tile-tech-${nv.service_type}`}
+          >
+            {techLabel}
+          </div>
+        ) : null}
       </div>
       <ChevronRight
         className="w-4 h-4 shrink-0 mt-1"
