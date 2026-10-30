@@ -2,7 +2,10 @@ import React from "react";
 import {
   FORM_THEME_PRESETS, FORM_FONT_STACKS,
   presetByKey, coerceTheme, fontStackById,
+  FORM_LAYOUT_CONTAINER_OPTIONS, FORM_LAYOUT_HEADER_OPTIONS,
+  FORM_FONT_SIZE_SCALE_OPTIONS,
 } from "../../lib/formThemes";
+import { MediaLibraryPicker } from "../marketing/MediaLibraryPicker";
 
 /**
  * Phase K34 · Feb-2026 — shared theme editor for every form-builder
@@ -315,7 +318,217 @@ export default function ThemePanel({ value, onChange }) {
             </label>
           </div>
         )}
+
+        {/*
+          ── Phase 5 (α-delta) sub-sections ────────────────────
+          Additive on top of the shipped K34 + Phase-2 UX. Four
+          new groups: Container Layout tiles, Header Layout tiles,
+          Font Size buckets (6 A-letters), and the dual image
+          slots (Wallpaper + Banner).
+
+          Rendered OUTSIDE the Phase-2 "Advanced" expand so the
+          operator can set these without touching the gradient /
+          overlay flow. All controls dispatch through the same
+          ``onChange(theme)`` plumbing — no new state shape, no
+          new prop.
+        */}
+        <Phase5Sections theme={theme} onChange={onChange} />
       </div>
+    </div>
+  );
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+// Phase 5 (α-delta) — tile pickers + bucket picker + image slots.
+// Isolated as its own component so the main ThemePanel keeps its
+// shipped render tree untouched above; a future Phase 6 can lift
+// / regroup these sub-sections without disturbing K34 / Phase-2.
+// ═══════════════════════════════════════════════════════════════
+function Phase5Sections({ theme, onChange }) {
+  const [pickerFor, setPickerFor] = React.useState(null); // 'wallpaper' | 'banner' | null
+
+  const setLayout = (patch) => onChange({
+    ...theme, layout: { ...theme.layout, ...patch },
+  });
+  const setFont = (patch) => onChange({
+    ...theme, font: { ...theme.font, ...patch },
+  });
+  const setWallpaper = (url) => onChange({
+    ...theme, wallpaper: url ? { image_url: url } : null,
+  });
+  const setBanner = (url) => onChange({
+    ...theme, banner: url ? { image_url: url } : null,
+  });
+
+  const onPickMedia = (m) => {
+    const url = m?.cdn_url || m?.url || "";
+    if (!url) { setPickerFor(null); return; }
+    if (pickerFor === "wallpaper") setWallpaper(url);
+    else if (pickerFor === "banner") setBanner(url);
+    setPickerFor(null);
+  };
+
+  return (
+    <div className="pt-3 mt-3 border-t border-gray-200 space-y-4"
+          data-testid="theme-phase5-sections">
+      {/* Container Layout tiles — 3 options */}
+      <div data-testid="theme-layout-container-section">
+        <div className="text-xs font-semibold text-gray-700 mb-1">
+          Container layout
+        </div>
+        <div className="flex gap-2">
+          {FORM_LAYOUT_CONTAINER_OPTIONS.map((opt) => {
+            const active = theme.layout.container === opt;
+            return (
+              <button
+                key={opt}
+                type="button"
+                data-testid={`theme-layout-container-${opt}`}
+                aria-pressed={active}
+                onClick={() => setLayout({ container: active ? null : opt })}
+                className={`flex-1 px-2 py-2 text-[11px] font-semibold rounded border ${
+                  active
+                    ? "border-blue-500 bg-blue-50 text-blue-700"
+                    : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50"
+                }`}
+              >
+                {opt}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Header Layout tiles — 2 options */}
+      <div data-testid="theme-layout-header-section">
+        <div className="text-xs font-semibold text-gray-700 mb-1">
+          Header layout
+        </div>
+        <div className="flex gap-2">
+          {FORM_LAYOUT_HEADER_OPTIONS.map((opt) => {
+            const active = theme.layout.header === opt;
+            return (
+              <button
+                key={opt}
+                type="button"
+                data-testid={`theme-layout-header-${opt}`}
+                aria-pressed={active}
+                onClick={() => setLayout({ header: active ? null : opt })}
+                className={`flex-1 px-2 py-2 text-[11px] font-semibold rounded border ${
+                  active
+                    ? "border-blue-500 bg-blue-50 text-blue-700"
+                    : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50"
+                }`}
+              >
+                {opt.replace("_", " ")}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Font Size buckets — 6 A-letters, visually scaled */}
+      <div data-testid="theme-font-size-scale-section">
+        <div className="text-xs font-semibold text-gray-700 mb-1">
+          Font size
+        </div>
+        <div className="flex items-end gap-1">
+          {FORM_FONT_SIZE_SCALE_OPTIONS.map((opt, i) => {
+            const active = theme.font.size_scale === opt;
+            // Visual A-letter scale: 10px → 20px linearly across
+            // the 6 buckets so the picker reads as monotonic.
+            const px = 10 + i * 2;
+            return (
+              <button
+                key={opt}
+                type="button"
+                data-testid={`theme-font-size-scale-${opt}`}
+                aria-pressed={active}
+                aria-label={`Font size ${opt}`}
+                onClick={() => setFont({ size_scale: active ? null : opt })}
+                className={`flex-1 py-2 rounded border ${
+                  active
+                    ? "border-blue-500 bg-blue-50 text-blue-700"
+                    : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50"
+                }`}
+                style={{ fontSize: `${px}px`, lineHeight: 1 }}
+              >
+                A
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Wallpaper slot — full-bleed background */}
+      <ImageSlotRow
+        label="Wallpaper (full-bleed background)"
+        testid="theme-wallpaper"
+        value={theme.wallpaper}
+        onPick={() => setPickerFor("wallpaper")}
+        onRemove={() => setWallpaper(null)}
+      />
+
+      {/* Banner slot — header band image */}
+      <ImageSlotRow
+        label="Banner (header band)"
+        testid="theme-banner"
+        value={theme.banner}
+        onPick={() => setPickerFor("banner")}
+        onRemove={() => setBanner(null)}
+      />
+
+      {pickerFor ? (
+        <MediaLibraryPicker
+          open={true}
+          onClose={() => setPickerFor(null)}
+          onPick={onPickMedia}
+          testid={`theme-${pickerFor}-media-picker`}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+
+function ImageSlotRow({ label, testid, value, onPick, onRemove }) {
+  return (
+    <div data-testid={`${testid}-section`}>
+      <div className="text-xs font-semibold text-gray-700 mb-1">
+        {label}
+      </div>
+      {value && value.image_url ? (
+        <div className="flex items-center gap-2">
+          <img
+            src={value.image_url}
+            alt=""
+            className="w-16 h-10 object-cover rounded border border-gray-200"
+            data-testid={`${testid}-thumb`}
+          />
+          <button
+            type="button"
+            onClick={onPick}
+            className="text-xs font-semibold text-zinc-700 underline"
+            data-testid={`${testid}-replace-btn`}
+          >Replace</button>
+          <button
+            type="button"
+            onClick={onRemove}
+            className="text-xs font-semibold text-zinc-500"
+            data-testid={`${testid}-remove-btn`}
+          >Remove</button>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={onPick}
+          className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold text-zinc-700 bg-zinc-50 border border-zinc-200 hover:bg-zinc-100"
+          data-testid={`${testid}-pick-btn`}
+        >
+          Choose from Media Library
+        </button>
+      )}
     </div>
   );
 }

@@ -55,6 +55,17 @@ export default function ThemedFormShell({ theme, hero, children, testid, classNa
   const applied = theme ? themeToCssVars(coerceTheme(theme)) : {};
   const gradient = applied["--form-bg-gradient"];
   const overlay  = applied["--form-overlay-opacity"];
+  // ── Phase 5 (α-delta) — pull the five Phase-5 vars out of
+  // ``applied`` so we can compose them into the shell's background
+  // layering + render the banner band DOM. Each var is only
+  // present when the underlying theme field is set (same posture
+  // as the Phase-2 gradient / overlay vars) so legacy themes
+  // produce the exact pre-Phase-5 render.
+  const wallpaperUrl    = applied["--form-wallpaper-url"];     // "url(..)"
+  const bannerUrl       = applied["--form-banner-url"];        // "url(..)"
+  const layoutContainer = applied["--form-layout-container"];  // enum
+  const layoutHeader    = applied["--form-layout-header"];     // enum
+  const fontSizeScale   = applied["--form-font-size-scale"];   // decimal str
 
   let backgroundImage;
   if (gradient) {
@@ -70,18 +81,58 @@ export default function ThemedFormShell({ theme, hero, children, testid, classNa
       backgroundImage = gradient;
     }
   }
+  // ── Phase 5 wallpaper — layered BELOW the gradient so the
+  // gradient (if any) composes on top of the full-bleed image.
+  // When no gradient, the wallpaper IS the background. Matches
+  // the operator spec design image 1 (gradient wash over the
+  // paint-splash + book illustration wallpaper).
+  if (wallpaperUrl) {
+    backgroundImage = backgroundImage
+      ? `${backgroundImage}, ${wallpaperUrl}`
+      : wallpaperUrl;
+  }
 
   const style = backgroundImage
     ? { ...applied, backgroundImage }
-    : applied;
+    : { ...applied };
+  // Apply the font-size scale as a multiplier on the shell's
+  // base font-size. Em-sized children inherit the scale.
+  if (fontSizeScale) {
+    style.fontSize = `calc(1rem * ${fontSizeScale})`;
+  }
+
+  // Compose the className with Phase-5 layout flags so Tailwind /
+  // the host app's CSS can target them with
+  // ``[data-form-layout-container="centered"]`` or the className
+  // suffix.  Keeping both the data-attr AND the className is
+  // defensive against callers that only wire one of the two.
+  const classParts = [className || ""];
+  if (layoutContainer) classParts.push(`form-layout-container-${layoutContainer}`);
+  if (layoutHeader) classParts.push(`form-layout-header-${layoutHeader}`);
+  const composedClass = classParts.filter(Boolean).join(" ").trim() || undefined;
 
   return (
     <div
       data-testid={testid || "themed-form-shell"}
       data-themed={theme ? "true" : "false"}
-      className={className}
+      data-form-layout-container={layoutContainer || undefined}
+      data-form-layout-header={layoutHeader || undefined}
+      className={composedClass}
       style={style}
     >
+      {bannerUrl ? (
+        <div
+          data-testid="themed-form-banner"
+          style={{
+            width: "100%",
+            height: "120px",
+            backgroundImage: bannerUrl,
+            backgroundSize: "cover",
+            backgroundPosition: "center",
+            borderRadius: "12px 12px 0 0",
+          }}
+        />
+      ) : null}
       {hero ? <ThemedHeroBand hero={hero} /> : null}
       {children}
     </div>
