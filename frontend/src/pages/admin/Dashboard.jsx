@@ -718,7 +718,7 @@ export default function AdminDashboard() {
             <KpiCard
               icon={Home}
               label="Pool Customers"
-              sublabel="properties"
+              sublabel="customers"
               value={data.pool_properties_active_count}
               onClick={() => navigate(
                 "/customers?property_service_category=pool&is_active=true",
@@ -729,7 +729,7 @@ export default function AdminDashboard() {
             <KpiCard
               icon={Home}
               label="Landscaping Customers"
-              sublabel="properties"
+              sublabel="customers"
               value={data.landscaping_properties_active_count}
               onClick={() => navigate(
                 "/customers?property_service_category=landscaping&is_active=true",
@@ -740,7 +740,7 @@ export default function AdminDashboard() {
             <KpiCard
               icon={Home}
               label="Both Service Customers"
-              sublabel="properties"
+              sublabel="customers"
               value={data.both_properties_active_count}
               onClick={() => navigate(
                 "/customers?property_service_category=both&is_active=true",

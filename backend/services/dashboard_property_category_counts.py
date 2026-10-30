@@ -120,24 +120,51 @@ async def active_customer_ids_with_category(
     :func:`active_customer_ids` so divergence vs the aggregator
     is impossible by construction.
     """
-    match = _category_match(category)
-    if match is None:
+    key = (category or "").strip().lower()
+    if key not in _PROPERTY_CATEGORY_REGEX:
         return []
     active_cust_ids = await active_customer_ids(
         db=db, tenant_id=tenant_id,
     )
     if not active_cust_ids:
         return []
+    sets = await _category_customer_sets(
+        db=db, tenant_id=tenant_id, active_cust_ids=active_cust_ids,
+    )
+    return sorted(sets[key])
+
+
+async def _category_customer_sets(
+    *, db, tenant_id: str, active_cust_ids: List[str],
+) -> Dict[str, set]:
+    """T296674 - customer ids per category tile.
+
+    The customer profile selector writes ``customers.service_category``
+    while the tiles used to read only ``properties.service_category``,
+    so most customers never counted.  A customer now counts toward a
+    category when EITHER their own ``service_category`` OR any of
+    their active properties matches the inclusive rule
+    (pool|both / landscaping|both).  ``both`` = customers present in
+    both the pool and landscaping sets (so a customer with a pool
+    property and a landscaping profile is a Both customer).
+    """
+    active = set(active_cust_ids)
     base = active_property_match_base(tenant_id)
-    q = {
-        **base,
-        "customer_id": {"$in": active_cust_ids},
-        "service_category": match,
-    }
-    seen = await db.properties.distinct("customer_id", q)
-    # Mongo returns None entries for missing/empty customer_id
-    # fields on the matched docs — drop them.
-    return [cid for cid in seen if cid]
+    base["customer_id"] = {"$in": active_cust_ids}
+    out: Dict[str, set] = {}
+    for key in ("pool", "landscaping"):
+        match = _category_match(key)
+        from_props = set(await db.properties.distinct(
+            "customer_id", {**base, "service_category": match},
+        ))
+        from_custs = set(await db.customers.distinct(
+            "id",
+            {"tenant_id": tenant_id, "id": {"$in": active_cust_ids},
+             "service_category": match},
+        ))
+        out[key] = {c for c in (from_props | from_custs) if c in active}
+    out["both"] = out["pool"] & out["landscaping"]
+    return out
 
 
 _PERF_WARN_MS = _PERF_WARN_MS  # (preserve the pre-existing export)
@@ -183,27 +210,12 @@ async def compute_property_counts(
 
     active_accounts = await db.properties.count_documents(base)
 
-    pool_q = {
-        **base,
-        "service_category": {
-            "$regex": r"^(pool|both)$", "$options": "i",
-        },
-    }
-    pool_count = await db.properties.count_documents(pool_q)
-
-    landscape_q = {
-        **base,
-        "service_category": {
-            "$regex": r"^(landscaping|both)$", "$options": "i",
-        },
-    }
-    landscape_count = await db.properties.count_documents(landscape_q)
-
-    both_q = {
-        **base,
-        "service_category": {"$regex": r"^both$", "$options": "i"},
-    }
-    both_count = await db.properties.count_documents(both_q)
+    sets = await _category_customer_sets(
+        db=db, tenant_id=tenant_id, active_cust_ids=active_cust_ids,
+    )
+    pool_count = len(sets["pool"])
+    landscape_count = len(sets["landscaping"])
+    both_count = len(sets["both"])
 
     duration_ms = int((time.perf_counter() - t0) * 1000)
     if duration_ms > _PERF_WARN_MS:

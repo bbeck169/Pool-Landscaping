@@ -530,7 +530,7 @@ async def revenue_forecast(
             "scheduled", "confirmed",
             "pending", "requested", "in_progress",
         ]},
-        "scheduled_date": {"$gte": s_iso, "$lte": e_iso},
+        "scheduled_date": {"$gte": s_iso[:10], "$lte": e_iso},
     }
     if _excluded_ids:
         booked_q["customer_id"] = {"$nin": _excluded_ids}
@@ -601,7 +601,7 @@ async def revenue_forecast(
     # dedupe against these to avoid double-count.
     materialized = await db.jobs.find(
         {"tenant_id": tenant_id,
-         "scheduled_date": {"$gte": s_iso, "$lte": e_iso},
+         "scheduled_date": {"$gte": s_iso[:10], "$lte": e_iso},
          "recurring_template_id": {"$ne": None}},
         {"_id": 0, "recurring_template_id": 1, "scheduled_date": 1},
     ).to_list(5000)
