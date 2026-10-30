@@ -347,6 +347,15 @@ export default function ThemePanel({ value, onChange }) {
 // ═══════════════════════════════════════════════════════════════
 function Phase5Sections({ theme, onChange }) {
   const [pickerFor, setPickerFor] = React.useState(null); // 'wallpaper' | 'banner' | null
+  // Feb-2026 · TD-form-builder-accordion-ux-polish — accordion
+  // open-state. ``style`` expanded by default per operator design
+  // image 2; the other three collapsed. State is purely UX, NOT
+  // persisted on the theme (operator spec).
+  const [openSections, setOpenSections] = React.useState({
+    style: true, font: false, wallpaper: false, banner: false,
+  });
+  const toggle = (key) =>
+    setOpenSections((s) => ({ ...s, [key]: !s[key] }));
 
   const setLayout = (patch) => onChange({
     ...theme, layout: { ...theme.layout, ...patch },
@@ -370,114 +379,142 @@ function Phase5Sections({ theme, onChange }) {
   };
 
   return (
-    <div className="pt-3 mt-3 border-t border-gray-200 space-y-4"
+    <div className="pt-3 mt-3 border-t border-gray-200 space-y-1"
           data-testid="theme-phase5-sections">
-      {/* Container Layout tiles — 3 options */}
-      <div data-testid="theme-layout-container-section">
-        <div className="text-xs font-semibold text-gray-700 mb-1">
-          Container layout
-        </div>
-        <div className="flex gap-2">
-          {FORM_LAYOUT_CONTAINER_OPTIONS.map((opt) => {
-            const active = theme.layout.container === opt;
-            return (
-              <button
-                key={opt}
-                type="button"
-                data-testid={`theme-layout-container-${opt}`}
-                aria-pressed={active}
-                onClick={() => setLayout({ container: active ? null : opt })}
-                className={`flex-1 px-2 py-2 text-[11px] font-semibold rounded border ${
-                  active
-                    ? "border-blue-500 bg-blue-50 text-blue-700"
-                    : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50"
-                }`}
-              >
-                {opt}
-              </button>
-            );
-          })}
-        </div>
-      </div>
 
-      {/* Header Layout tiles — 2 options */}
-      <div data-testid="theme-layout-header-section">
-        <div className="text-xs font-semibold text-gray-700 mb-1">
-          Header layout
-        </div>
-        <div className="flex gap-2">
-          {FORM_LAYOUT_HEADER_OPTIONS.map((opt) => {
-            const active = theme.layout.header === opt;
-            return (
-              <button
-                key={opt}
-                type="button"
-                data-testid={`theme-layout-header-${opt}`}
-                aria-pressed={active}
-                onClick={() => setLayout({ header: active ? null : opt })}
-                className={`flex-1 px-2 py-2 text-[11px] font-semibold rounded border ${
-                  active
-                    ? "border-blue-500 bg-blue-50 text-blue-700"
-                    : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50"
-                }`}
-              >
-                {opt.replace("_", " ")}
-              </button>
-            );
-          })}
-        </div>
-      </div>
+      {/* Style accordion — container + header layout tiles */}
+      <AccordionSection
+        sectionKey="style"
+        title="Style"
+        isOpen={openSections.style}
+        onToggle={toggle}
+      >
+        <div className="space-y-4">
+          <div data-testid="theme-layout-container-section">
+            <div className="text-xs font-semibold text-gray-700 mb-1">
+              Container layout
+            </div>
+            <div className="flex gap-2">
+              {FORM_LAYOUT_CONTAINER_OPTIONS.map((opt) => {
+                const active = theme.layout.container === opt;
+                return (
+                  <button
+                    key={opt}
+                    type="button"
+                    data-testid={`theme-layout-container-${opt}`}
+                    aria-pressed={active}
+                    onClick={() => setLayout({ container: active ? null : opt })}
+                    className={`flex-1 px-2 py-2 text-[11px] font-semibold rounded border ${
+                      active
+                        ? "border-blue-500 bg-blue-50 text-blue-700"
+                        : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50"
+                    }`}
+                  >
+                    {opt}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
 
-      {/* Font Size buckets — 6 A-letters, visually scaled */}
-      <div data-testid="theme-font-size-scale-section">
-        <div className="text-xs font-semibold text-gray-700 mb-1">
-          Font size
+          <div data-testid="theme-layout-header-section">
+            <div className="text-xs font-semibold text-gray-700 mb-1">
+              Header layout
+            </div>
+            <div className="flex gap-2">
+              {FORM_LAYOUT_HEADER_OPTIONS.map((opt) => {
+                const active = theme.layout.header === opt;
+                return (
+                  <button
+                    key={opt}
+                    type="button"
+                    data-testid={`theme-layout-header-${opt}`}
+                    aria-pressed={active}
+                    onClick={() => setLayout({ header: active ? null : opt })}
+                    className={`flex-1 px-2 py-2 text-[11px] font-semibold rounded border ${
+                      active
+                        ? "border-blue-500 bg-blue-50 text-blue-700"
+                        : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50"
+                    }`}
+                  >
+                    {opt.replace("_", " ")}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
         </div>
-        <div className="flex items-end gap-1">
-          {FORM_FONT_SIZE_SCALE_OPTIONS.map((opt, i) => {
-            const active = theme.font.size_scale === opt;
-            // Visual A-letter scale: 10px → 20px linearly across
-            // the 6 buckets so the picker reads as monotonic.
-            const px = 10 + i * 2;
-            return (
-              <button
-                key={opt}
-                type="button"
-                data-testid={`theme-font-size-scale-${opt}`}
-                aria-pressed={active}
-                aria-label={`Font size ${opt}`}
-                onClick={() => setFont({ size_scale: active ? null : opt })}
-                className={`flex-1 py-2 rounded border ${
-                  active
-                    ? "border-blue-500 bg-blue-50 text-blue-700"
-                    : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50"
-                }`}
-                style={{ fontSize: `${px}px`, lineHeight: 1 }}
-              >
-                A
-              </button>
-            );
-          })}
+      </AccordionSection>
+
+      {/* Font accordion — size buckets */}
+      <AccordionSection
+        sectionKey="font"
+        title="Font"
+        isOpen={openSections.font}
+        onToggle={toggle}
+      >
+        <div data-testid="theme-font-size-scale-section">
+          <div className="text-xs font-semibold text-gray-700 mb-1">
+            Font size
+          </div>
+          <div className="flex items-end gap-1">
+            {FORM_FONT_SIZE_SCALE_OPTIONS.map((opt, i) => {
+              const active = theme.font.size_scale === opt;
+              const px = 10 + i * 2;
+              return (
+                <button
+                  key={opt}
+                  type="button"
+                  data-testid={`theme-font-size-scale-${opt}`}
+                  aria-pressed={active}
+                  aria-label={`Font size ${opt}`}
+                  onClick={() => setFont({ size_scale: active ? null : opt })}
+                  className={`flex-1 py-2 rounded border ${
+                    active
+                      ? "border-blue-500 bg-blue-50 text-blue-700"
+                      : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50"
+                  }`}
+                  style={{ fontSize: `${px}px`, lineHeight: 1 }}
+                >
+                  A
+                </button>
+              );
+            })}
+          </div>
         </div>
-      </div>
+      </AccordionSection>
 
-      {/* Wallpaper slot — full-bleed background */}
-      <ImageSlotRow
-        label="Wallpaper (full-bleed background)"
-        testid="theme-wallpaper"
-        value={theme.wallpaper}
-        onPick={() => setPickerFor("wallpaper")}
-        onRemove={() => setWallpaper(null)}
-      />
+      {/* Wallpaper accordion — full-bleed background slot */}
+      <AccordionSection
+        sectionKey="wallpaper"
+        title="Wallpaper"
+        isOpen={openSections.wallpaper}
+        onToggle={toggle}
+      >
+        <ImageSlotRow
+          label="Wallpaper (full-bleed background)"
+          testid="theme-wallpaper"
+          value={theme.wallpaper}
+          onPick={() => setPickerFor("wallpaper")}
+          onRemove={() => setWallpaper(null)}
+        />
+      </AccordionSection>
 
-      {/* Banner slot — header band image */}
-      <ImageSlotRow
-        label="Banner (header band)"
-        testid="theme-banner"
-        value={theme.banner}
-        onPick={() => setPickerFor("banner")}
-        onRemove={() => setBanner(null)}
-      />
+      {/* Banner accordion — header band slot */}
+      <AccordionSection
+        sectionKey="banner"
+        title="Banner"
+        isOpen={openSections.banner}
+        onToggle={toggle}
+      >
+        <ImageSlotRow
+          label="Banner (header band)"
+          testid="theme-banner"
+          value={theme.banner}
+          onPick={() => setPickerFor("banner")}
+          onRemove={() => setBanner(null)}
+        />
+      </AccordionSection>
 
       {pickerFor ? (
         <MediaLibraryPicker
@@ -487,6 +524,55 @@ function Phase5Sections({ theme, onChange }) {
           testid={`theme-${pickerFor}-media-picker`}
         />
       ) : null}
+    </div>
+  );
+}
+
+
+// Feb-2026 · TD-form-builder-accordion-ux-polish — reusable
+// accordion item for the four Phase-5 sections. Each item:
+//   * header is a <button type="button"> with aria-expanded,
+//     aria-controls, and a chevron that rotates 90° on expand.
+//   * content <div> uses the ``hidden`` attribute when
+//     collapsed (preserves DOM, avoids re-mount so image-slot
+//     state survives — mitigation for the risk flag filed in the
+//     original TD scope stub).
+//   * ``data-testid=theme-accordion-{key}-section`` on the
+//     wrapper + ``-header`` / ``-content`` suffixes for e2e.
+function AccordionSection({ sectionKey, title, isOpen, onToggle, children }) {
+  const headerId  = `theme-accordion-${sectionKey}-header`;
+  const contentId = `theme-accordion-${sectionKey}-content`;
+  return (
+    <div
+      className="border-t border-gray-100 first:border-t-0"
+      data-testid={`theme-accordion-${sectionKey}-section`}
+    >
+      <button
+        type="button"
+        id={headerId}
+        aria-expanded={isOpen}
+        aria-controls={contentId}
+        onClick={() => onToggle(sectionKey)}
+        data-testid={`theme-accordion-${sectionKey}-header`}
+        className="w-full flex items-center justify-between py-2 text-xs font-bold uppercase tracking-wider text-gray-700 hover:text-gray-900"
+      >
+        <span>{title}</span>
+        <span
+          aria-hidden="true"
+          className="inline-block transition-transform duration-150"
+          style={{ transform: isOpen ? "rotate(90deg)" : "rotate(0deg)" }}
+        >▸</span>
+      </button>
+      <div
+        id={contentId}
+        role="region"
+        aria-labelledby={headerId}
+        hidden={!isOpen}
+        data-testid={`theme-accordion-${sectionKey}-content`}
+        className="pb-3"
+      >
+        {children}
+      </div>
     </div>
   );
 }
