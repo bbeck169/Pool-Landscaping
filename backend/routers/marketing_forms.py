@@ -401,6 +401,95 @@ class SubmitConfig(BaseModel):
         return self
 
 
+# ─────────────────────────────────────────────────────────────────
+# Feb-2026 · CUS-Marketing-Form-Builder Phase 5 — "α-delta" theme
+# extras (layout tiles, font-size buckets, dual image slots).
+# ─────────────────────────────────────────────────────────────────
+# Shipped K34 keeps ``theme`` opaque (``Optional[Dict[str, Any]]``)
+# so the frontend can evolve the sub-schema without a BE bump. The
+# four new fields below layer additively on top of that contract —
+# unknown keys pass through untouched; the four known new keys are
+# NORMALISED (not rejected) so a bad client payload becomes a clean
+# ``None`` rather than a 422 that bricks the save. Mirrors the FE
+# ``coerceTheme`` posture at ``frontend/src/lib/formThemes.js``.
+#
+# Absence posture (byte-identity rule): a Phase-5 field that is
+# NOT present on the input dict stays NOT present on the output.
+# We never fabricate a default shape — that would break the K34
+# round-trip tests + add Phase-5 keys to every legacy form on
+# every save. The FE ``coerceTheme`` is the renderer-side pad.
+# ─────────────────────────────────────────────────────────────────
+_LAYOUT_CONTAINER_ENUM = {"left", "centered", "mixed"}
+_LAYOUT_HEADER_ENUM = {"left_title", "full_banner"}
+_FONT_SIZE_SCALE_ENUM = {"xs", "sm", "md", "lg", "xl", "xxl"}
+
+
+def _coerce_layout(raw: Any) -> Dict[str, Any]:
+    """Return a ``{container, header}`` dict with each value either
+    one of the allowed enum literals or ``None``. Never raises."""
+    if not isinstance(raw, dict):
+        return {"container": None, "header": None}
+    c = raw.get("container")
+    h = raw.get("header")
+    return {
+        "container": c if c in _LAYOUT_CONTAINER_ENUM else None,
+        "header": h if h in _LAYOUT_HEADER_ENUM else None,
+    }
+
+
+def _coerce_font_block(raw: Any) -> Dict[str, Any]:
+    """Return a ``{size_scale}`` dict with ``size_scale`` either one
+    of the allowed enum literals or ``None``.  A future font-family
+    override would land here too — kept as a nested object so the
+    schema stays extensible."""
+    if not isinstance(raw, dict):
+        return {"size_scale": None}
+    s = raw.get("size_scale")
+    return {"size_scale": s if s in _FONT_SIZE_SCALE_ENUM else None}
+
+
+def _coerce_image_slot(raw: Any) -> Optional[Dict[str, Any]]:
+    """Return ``{image_url}`` with a non-empty string URL, or
+    ``None`` when missing / malformed. Matches the shipped
+    ``hero.background.url`` posture — the BE does not validate the
+    URL contract (``MediaLibraryPicker`` on the FE is the trusted
+    source of valid URLs); we only enforce "is a non-empty string
+    when present". The slot itself is nullable so "remove image"
+    sends ``null`` without a format error."""
+    if not isinstance(raw, dict):
+        return None
+    url = raw.get("image_url")
+    if not isinstance(url, str) or not url.strip():
+        return None
+    return {"image_url": url.strip()}
+
+
+def _coerce_theme_extras(theme: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Normalise the four Phase-5 fields on a theme dict.
+
+    Absence posture: a field NOT present on input stays NOT present
+    on output. We never fabricate defaults. Fields that ARE present
+    get normalised (bad enum / malformed shape → ``None``).
+
+    ``None`` in → ``None`` out (legacy forms with no theme stay
+    legacy). Non-dict in → ``None`` out.
+    """
+    if theme is None:
+        return None
+    if not isinstance(theme, dict):
+        return None
+    out = dict(theme)  # shallow clone so unknown keys pass through
+    if "layout" in out:
+        out["layout"] = _coerce_layout(out["layout"])
+    if "font" in out:
+        out["font"] = _coerce_font_block(out["font"])
+    if "wallpaper" in out:
+        out["wallpaper"] = _coerce_image_slot(out["wallpaper"])
+    if "banner" in out:
+        out["banner"] = _coerce_image_slot(out["banner"])
+    return out
+
+
 class FormIn(BaseModel):
     name: str = Field(..., min_length=1, max_length=120)
     slug: Optional[str] = None
@@ -777,7 +866,12 @@ async def create_form(body: FormIn,
         "submission_count": 0,
         # K34 · Feb-2026 — untyped dict passthrough. None until the
         # builder picks a preset / customizes colors.
-        "theme": body.theme,
+        #
+        # Feb-2026 · Phase 5 (α-delta) — ``_coerce_theme_extras``
+        # normalises the four new fields (layout / font.size_scale /
+        # wallpaper / banner) when present on the input. Absent
+        # fields stay absent so K34 round-trip is byte-identical.
+        "theme": _coerce_theme_extras(body.theme),
         # CUS-Marketing-Form-Builder · Feb-2026 — Phase 1. Untyped
         # dict passthrough. None for legacy / pre-Phase-1 forms.
         "hero": body.hero,
@@ -861,6 +955,13 @@ async def patch_form(fid: str, body: FormPatch,
                        user: dict = Depends(require_admin),
                        tenant: dict = Depends(get_current_tenant)):
     updates = {k: v for k, v in body.dict(exclude_unset=True).items()}
+    # Feb-2026 · Phase 5 (α-delta) — normalise the four new theme
+    # fields on PATCH too. ``theme`` arrives as a full dict from
+    # the FE (ThemePanel always sends the whole shape via onChange)
+    # so the normaliser runs on the complete payload; absence-
+    # posture keeps K34-only themes byte-identical.
+    if "theme" in updates:
+        updates["theme"] = _coerce_theme_extras(updates["theme"])
     if "fields" in updates and updates["fields"] is not None:
         field_objs = [FormField(**f) if isinstance(f, dict) else f
                        for f in updates["fields"]]
