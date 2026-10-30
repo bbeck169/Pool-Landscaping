@@ -1875,6 +1875,7 @@ async def _mark_invoice_paid_from_session(
     fully_paid = amount_paid_new + 0.01 >= total
 
     now = datetime.now(timezone.utc).isoformat()
+    prev_status = inv.get("status")
     update = {
         "amount_paid": amount_paid_new,
         "payment_status": "paid" if fully_paid else "partial",
@@ -1883,7 +1884,19 @@ async def _mark_invoice_paid_from_session(
     }
     if fully_paid:
         update["paid_at"] = now
-        update["status"] = "accepted"
+        # Feb-2026 · FIN-PAID-STATUS-PARITY — flip ``status`` to
+        # ``"paid"`` (not ``"accepted"``) to match
+        # ``_mark_invoice_paid`` Fix A at L1969 + the native
+        # ``record_payment`` / ``pay_quote`` flip under commit
+        # ``faf27ad91``. The audit crumb
+        # ``previous_status_before_paid`` is only written on the
+        # real transition — guarded by the ``payment_status ==
+        # "paid"`` early-return at L1869 so repeat deliveries of
+        # the same ``checkout.session.completed`` event can't
+        # clobber it. See ``routers/quotes.py`` ``record_payment``
+        # for the full rationale on the audit crumb.
+        update["status"] = "paid"
+        update["previous_status_before_paid"] = prev_status
     if payment_intent_id:
         update["stripe_payment_intent_id"] = payment_intent_id
 

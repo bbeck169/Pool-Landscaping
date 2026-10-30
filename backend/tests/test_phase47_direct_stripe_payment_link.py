@@ -170,6 +170,7 @@ def test_webhook_checkout_completed_marks_invoice_paid_and_writes_charge():
     quotes = MagicMock()
     quotes.find_one = AsyncMock(return_value={
         "id": "inv-99", "total": 123.45, "amount_paid": 0.0,
+        "status": "sent",
     })
     quotes.update_one = AsyncMock(return_value=SimpleNamespace(modified_count=1))
     payment_events = MagicMock()
@@ -199,6 +200,12 @@ def test_webhook_checkout_completed_marks_invoice_paid_and_writes_charge():
     assert setter["stripe_checkout_session_id"] == "cs_test_phase47_wh"
     assert setter["stripe_payment_intent_id"] == "pi_wh_1"
     assert "paid_at" in setter
+    # Feb-2026 · FIN-PAID-STATUS-PARITY (Commit 1b) — the Checkout
+    # Session consumer now flips ``status`` to ``"paid"`` and stamps
+    # the audit crumb with the prior status, matching the native
+    # ``record_payment`` path and ``_mark_invoice_paid`` Fix A.
+    assert setter["status"] == "paid"
+    assert setter["previous_status_before_paid"] == "sent"
     payment_events.insert_one.assert_awaited_once()
     audit = payment_events.insert_one.await_args.args[0]
     assert audit["kind"] == "phase47_checkout_session_completed"
@@ -285,3 +292,106 @@ def test_router_returns_payment_url_key():
     src = inspect.getsource(sc.create_invoice_checkout_session)
     assert '"payment_url"' in src
     assert '"checkout_session_id"' in src
+
+
+# ═══════════════════════════════════════════════════════════════════
+# FIN-PAID-STATUS-PARITY · Feb-2026 · Commit 1b coverage
+# ``_mark_invoice_paid_from_session`` MUST emit ``status="paid"`` +
+# audit crumb on fully-paid, mirror the native ``record_payment``
+# flip, and NOT touch ``status`` on partial-session completions.
+# ═══════════════════════════════════════════════════════════════════
+
+
+def test_webhook_checkout_completed_partial_leaves_status_unchanged():
+    """Commit 1b · partial-session guard — when the Checkout Session
+    completes but the gateway only authorized a partial amount,
+    ``_mark_invoice_paid_from_session`` must set
+    ``payment_status="partial"`` AND must NOT flip ``status`` to
+    ``"paid"`` AND must NOT stamp ``previous_status_before_paid``.
+
+    Setup: find_one returns an invoice with total=200 but the
+    Session's amount_total is only $100 (10000 cents) — not
+    enough to clear the balance.
+    """
+    from services.payments import stripe_charge as sc
+    quotes = MagicMock()
+    quotes.find_one = AsyncMock(return_value={
+        "id": "inv-99", "total": 200.0, "amount_paid": 0.0,
+        "status": "sent",
+    })
+    quotes.update_one = AsyncMock(
+        return_value=SimpleNamespace(modified_count=1))
+    fake_db = MagicMock(
+        stripe_charges=MagicMock(update_one=AsyncMock()),
+        quotes=quotes,
+        payment_events=MagicMock(insert_one=AsyncMock()),
+    )
+    # Override the Session's amount_total to 10000 cents = $100 on
+    # a $200 invoice. Keep payment_status="paid" at the Stripe
+    # level (that just means the Session succeeded), the SHORT
+    # balance is what forces partial posture.
+    ev = _build_checkout_completed_event()
+    ev["data"]["object"]["amount_total"] = 10000
+    with patch.object(sc, "db", fake_db):
+        asyncio.get_event_loop().run_until_complete(
+            sc.handle_webhook_event(ev))
+    quotes.update_one.assert_awaited_once()
+    setter = quotes.update_one.await_args.args[1]["$set"]
+    # Payment status marches on but status stays on sent.
+    assert setter["payment_status"] == "partial"
+    assert "status" not in setter, (
+        f"partial-session leaked status flip: {setter.get('status')!r}"
+    )
+    assert "previous_status_before_paid" not in setter, (
+        "audit crumb written on partial — must only fire on the "
+        "fully-paid transition"
+    )
+    # paid_at only stamped on fully-paid branch per the handler.
+    assert "paid_at" not in setter
+
+
+def test_mark_invoice_paid_pi_webhook_fix_a_regression_lock():
+    """Commit 1b · regression lock — the sibling
+    ``_mark_invoice_paid`` consumer (PaymentIntent-webhook path,
+    the ORIGINAL TD-stripe-webhook-mark-invoice-paid Fix A site)
+    must still flip ``status`` to ``"paid"``. This guards against
+    a future refactor that unifies the two helpers and
+    accidentally regresses the PI path while fixing the Session
+    path.
+
+    Source-inspect pattern (same shape as the parity suite's §1):
+    assert the Fix A literal is still present in the shipped PI
+    helper AND that the Session helper got its parallel fix in
+    this commit.
+    """
+    from pathlib import Path
+    src = (
+        Path(__file__).resolve().parents[1] / "services" / "payments"
+        / "stripe_charge.py"
+    ).read_text()
+    # Fix A on the PI path — ``_mark_invoice_paid`` writes
+    # ``set_doc["status"] = "paid"``. Commit 1b on the Session
+    # path — ``_mark_invoice_paid_from_session`` writes
+    # ``update["status"] = "paid"``. Different local variable
+    # names, same semantic. The regression lock accepts either
+    # literal but requires BOTH to be present (count ≥ 2 across
+    # both forms).
+    import re as _re
+    status_paid_writes = _re.findall(
+        r'(?:set_doc|update)\["status"\]\s*=\s*"paid"', src)
+    assert len(status_paid_writes) >= 2, (
+        "stripe_charge.py has fewer than 2 ``status=paid`` write "
+        f"sites across _mark_invoice_paid (PI) + "
+        f"_mark_invoice_paid_from_session (Session): "
+        f"found {len(status_paid_writes)}"
+    )
+    # Audit crumb must be present on BOTH helpers.
+    crumb_writes = _re.findall(
+        r'(?:set_doc|update)\["previous_status_before_paid"\]',
+        src,
+    )
+    assert len(crumb_writes) >= 2, (
+        "stripe_charge.py missing previous_status_before_paid "
+        "audit crumb on one of the two consumers — Commit 1b "
+        f"parity gap: found {len(crumb_writes)} write sites"
+    )
