@@ -383,9 +383,12 @@ def test_manager_403_on_line_items_unit_price_touched():
 
 
 # ═══════════════════════════════════════════════════════════════════
-# 6c · manager 403 on line_items with description touched
+# 6c · manager 200 on line_items with description touched (β widen)
+#      Feb-2026 β — ``description`` moved into the metadata-only
+#      role widener so manager / owner can edit it. Shipped
+#      narrower lock inverted.
 # ═══════════════════════════════════════════════════════════════════
-def test_manager_403_on_line_items_description_touched():
+def test_manager_200_on_line_items_description_touched():
     uid, tok = _mint_token("manager")
     incats = _real_income_categories()
     svcats = _real_service_categories()
@@ -401,8 +404,7 @@ def test_manager_403_on_line_items_description_touched():
                   "service_category_id": svcats[0]["id"]},
             ],
         }, tok)
-        assert r.status_code == 403, r.text
-        assert r.json().get("detail") == "admin_only"
+        assert r.status_code == 200, r.text
     finally:
         _cleanup_invoice(inv_id)
         _cleanup_user(uid)
@@ -424,15 +426,17 @@ def test_manager_403_on_top_level_tax_rate():
 
 
 # ═══════════════════════════════════════════════════════════════════
-# 7b · manager 403 on top-level notes
+# 7b · manager 200 on top-level notes (β widen)
+#      Feb-2026 β — top-level ``notes`` / ``memo`` / ``private_notes``
+#      moved into the metadata-only role widener. Shipped narrower
+#      lock inverted.
 # ═══════════════════════════════════════════════════════════════════
-def test_manager_403_on_top_level_notes():
+def test_manager_200_on_top_level_notes():
     uid, tok = _mint_token("manager")
     inv_id = _seed_invoice(status="draft")
     try:
         r = _patch(inv_id, {"notes": "TEST_mgr_notes"}, tok)
-        assert r.status_code == 403, r.text
-        assert r.json().get("detail") == "admin_only"
+        assert r.status_code == 200, r.text
     finally:
         _cleanup_invoice(inv_id)
         _cleanup_user(uid)

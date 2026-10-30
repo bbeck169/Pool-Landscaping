@@ -137,14 +137,31 @@ def _now() -> datetime:
 
 
 # ─── Feb-2026 · narrow role bypass for category-only diffs ──────
-_CATEGORY_ONLY_TOP_FIELDS = {
-    "business_unit", "business_unit_id",
-    "category",  # forward-compat; not in InvoiceEditBody today
-}
-_CATEGORY_ONLY_LINE_FIELDS = {
+# Feb-2026 · widened to metadata-only diffs (operator β).  The
+# ``_METADATA_ONLY_*`` sets drive BOTH:
+#   • the manager/owner role widener (``_require_staff(..., allow_category_only=…)``),
+#   • the paid-invoice 409 skip (``_is_metadata_only_diff`` →
+#     short-circuits the ``paid``/``partial`` ack-required gate).
+# Line-item scope: original category keys + ``description`` +
+# ``long_description`` + ``item_id`` (pricebook re-link).
+# Top-level scope: original BU keys + invoice-level freeform
+# ``notes`` / ``memo`` / ``private_notes``.
+_METADATA_ONLY_LINE_FIELDS = {
     "category", "income_category_id",
     "service_category", "service_category_id",
+    "description", "long_description", "item_id",
 }
+_METADATA_ONLY_TOP_FIELDS = {
+    "business_unit", "business_unit_id",
+    "category",  # forward-compat; not in InvoiceEditBody today
+    "notes", "memo", "private_notes",
+}
+# Legacy aliases — same contents as the metadata sets. Preserves
+# the shipped name for any external caller that imports them, and
+# keeps the ``_is_category_only_diff`` entry-point working as a
+# backward-compat alias of ``_is_metadata_only_diff``.
+_CATEGORY_ONLY_LINE_FIELDS = _METADATA_ONLY_LINE_FIELDS
+_CATEGORY_ONLY_TOP_FIELDS = _METADATA_ONLY_TOP_FIELDS
 _AUTH_META_FIELDS = {
     "reason", "confirm_edit_sent",
     "confirm_edit_paid_invoice_number", "acknowledged_lock_bypass",
@@ -162,7 +179,24 @@ _DATE_ONLY_TOP_FIELDS = {"created_at", "due_date"}
 def _is_category_only_diff(
     provided: Dict[str, Any], existing_invoice: Dict[str, Any],
 ) -> bool:
-    """True iff the only effectively changed fields are category-related."""
+    """Backward-compat alias — same shape as
+    ``_is_metadata_only_diff``. Field sets widened Feb-2026 to the
+    metadata superset (``description``, ``long_description``,
+    ``item_id``, invoice-level ``notes``/``memo``/``private_notes``)
+    per operator β scope. Kept under the old name so no external
+    import breaks."""
+    return _is_metadata_only_diff(provided, existing_invoice)
+
+
+def _is_metadata_only_diff(
+    provided: Dict[str, Any], existing_invoice: Dict[str, Any],
+) -> bool:
+    """True iff the only effectively changed fields are
+    metadata-safe (operator β): line-item ``description`` /
+    ``long_description`` / ``item_id`` / category keys and top-
+    level BU keys / freeform notes. Used to short-circuit the
+    paid/partial 409 ack gate AND to widen the role gate to
+    manager/owner."""
     diff_keys = set(provided.keys()) - _AUTH_META_FIELDS
     if "line_items" in diff_keys:
         diff_keys.discard("line_items")
@@ -195,9 +229,9 @@ def _is_category_only_diff(
                     continue
                 if k not in new_item:
                     changed.add(k)
-            if not changed.issubset(_CATEGORY_ONLY_LINE_FIELDS):
+            if not changed.issubset(_METADATA_ONLY_LINE_FIELDS):
                 return False
-    if not diff_keys.issubset(_CATEGORY_ONLY_TOP_FIELDS):
+    if not diff_keys.issubset(_METADATA_ONLY_TOP_FIELDS):
         return False
     return True
 
@@ -415,21 +449,50 @@ async def patch_invoice(
     # number proof (gate 5a of DOC-LOCK-POLICY-RELAX).
     _ack = bool(getattr(body, "acknowledged_lock_bypass", False))
 
-    # ── Paid — accepts EITHER typed invoice-number OR Phase 1 ack ─
+    # ── Paid / partial — four acceptance paths (operator β · Feb-2026):
+    #     1. Phase-1 ack flag (shipped confirm-dialog)        → 200
+    #     2. Typed-invoice-number proof (shipped)             → 200
+    #     3. Metadata-only diff (new; no ack required)        → 200
+    #     4. Anything else                                    → 400
+    #        ``financial_edit_locked_on_paid`` (replaces the
+    #        shipped 409 ``paid_edit_requires_invoice_number``
+    #        when the diff contains a financial field; the
+    #        shipped error shape stays available for callers
+    #        that only submit meta-flag probes with no body
+    #        diff at all).
     if status in ("paid", "partial"):
-        if _ack:
-            pass  # frontend confirm-dialog authorized the edit
+        _typed_proof_ok = bool(
+            inv.get("invoice_number")
+            and body.confirm_edit_paid_invoice_number
+                == inv.get("invoice_number")
+        )
+        _metadata_only_path = _is_metadata_only_diff(provided, inv)
+        if _ack or _typed_proof_ok:
+            pass  # shipped bypass — financial edits authorized
+        elif _metadata_only_path:
+            pass  # new β bypass — metadata edits only
         else:
-            expected = inv.get("invoice_number") or ""
-            submitted = body.confirm_edit_paid_invoice_number or ""
-            if submitted != expected or not expected:
-                raise HTTPException(
-                    status_code=409,
-                    detail={
-                        "error": "paid_edit_requires_invoice_number",
-                        "expected_invoice_number": expected,
-                    },
-                )
+            # Any financial-field change without ack / typed proof.
+            # Return the new 400 so the FE can distinguish "locked
+            # on paid, need to unlock first" from the generic
+            # malformed-body 400 class.
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "financial_edit_locked_on_paid",
+                    "message": (
+                        "Line-item quantity / unit_price / tax_rate "
+                        "/ discount changes on paid invoices require "
+                        "the confirm-dialog ack flag or the typed "
+                        "invoice-number proof. Metadata fields "
+                        "(description, long_description, item_id, "
+                        "categories, notes, memo, private_notes) "
+                        "can be edited freely without the ack."
+                    ),
+                    "expected_invoice_number": inv.get(
+                        "invoice_number") or "",
+                },
+            )
 
     # ── Extract & validate line_items early (before diff) ────────
     # ``provided`` was computed above for the Feb-2026 narrow-role-
