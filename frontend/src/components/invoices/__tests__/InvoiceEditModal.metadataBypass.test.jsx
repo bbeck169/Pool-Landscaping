@@ -75,6 +75,27 @@ vi.mock("@/components/invoices/LinePricebookPicker", () => ({
   ),
 }));
 
+// MasterServiceCombobox: the real component wraps its <input> in a
+// <div data-testid={testid}>, with the input exposed as
+// data-testid={testid + "-input"}. Mirror the parent-facing contract
+// (onChange emits { name, default_price, category }) but surface the
+// SAME testid on a plain input so the metadataBypass case can drive
+// a description edit with fireEvent.change(…invoice-edit-line-0-desc).
+vi.mock("@/components/services/MasterServiceCombobox", () => ({
+  default: ({ value, onChange, testid, disabled }) => (
+    <input
+      data-testid={testid || "master-service-combobox"}
+      value={value || ""}
+      disabled={!!disabled}
+      onChange={(e) => onChange?.({
+        name: e.target.value,
+        default_price: null,
+        category: null,
+      })}
+    />
+  ),
+}));
+
 
 import InvoiceEditModal from "@/components/invoices/InvoiceEditModal";
 
