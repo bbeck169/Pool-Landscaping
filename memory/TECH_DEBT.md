@@ -3604,3 +3604,49 @@ Low. Hide-only path; no BE write-blocks. Mobile `time_entries` writes from pool 
 - CYA BE commit `fc5784a35` — introduces the current `$in` consumer with inline TODO pointer at `backend/routers/reports.py` CYA block.
 - CYA FE commit `b33965479` — unaffected (FE doesn't care about the key normalization).
 
+
+## TD-mobile-portal-next-visit-empty-state · P2 · Feb-2026 (DELEGATE: `e1_expo_frontend_dev`)
+
+**Origin:** Customer Portal Next-Visit tile β1 ship — BE `44024703f` + Web FE `c2b08bb6a`.
+
+**Context:** The web portal β1 shipped a ruling reversal on PS-D #8. The `GET /api/portal/dashboard/next-visits` endpoint now returns a row for every service the customer has an **active** `billing_plans` subscription for, even when no future job exists for that service. The placeholder shape is:
+
+```json
+{
+  "service_type": "pool" | "landscape" | "filter_cleaning",
+  "next_visit_at": null,
+  "tech_name":     null,
+  "visit_id":      null
+}
+```
+
+The web FE renders these placeholders as "No visit scheduled" tiles (muted datetime copy, tech line suppressed, icon + chevron intact). The mobile portal consumes the same BE endpoint and will **receive the placeholder rows automatically** — it does NOT need a BE change.
+
+**Scope for mobile (`/app/mobile/`):**
+
+1. Find the mobile equivalent of `NextVisitTile` (likely `mobile/src/screens/portal/PortalHome.*` or `mobile/src/components/portal/NextVisitTile.*`).
+2. Teach the component to branch on `nv.next_visit_at == null`:
+    - Datetime slot → render "No visit scheduled" copy (muted colour per mobile palette).
+    - Tech slot → suppress entirely (no "Tech to be assigned" on placeholders).
+    - Icon + service label + chevron / affordance → keep rendering identically to the real-datetime path so the tile remains a visible, tappable surface.
+3. Guard against the shipped mobile code crashing on a null datetime formatter input — the web pre-shipped formatter at `_formatNextVisitDatetime` handles null by returning "TBD"; the mobile sibling may or may not have the same defensive clause.
+4. **Testid parity with web:** keep tile root at `next-visit-tile-pool` / `next-visit-tile-landscape` / `next-visit-tile-filter-cleaning`; keep datetime slot at `next-visit-tile-datetime-{service_type}`; add `data-placeholder="true|false"` on the tile root so cross-platform regression tests can assert placeholder state uniformly.
+5. **Row-hide semantics parity:** empty `next_visits: []` (customer has no active subscriptions at all) should still hide the entire row — the placeholder rendering only kicks in when the array is non-empty but individual rows are null-dated.
+
+**Files to touch (likely, confirm during implementation):**
+- Mobile portal home screen.
+- Mobile `NextVisitTile` equivalent component.
+- Mobile vitest / jest coverage for the three new states (real datetime, placeholder, mixed) — mirror the four cases in `frontend/src/test/portal-next-visit-placeholder-b1.test.jsx`.
+
+**Risk:** Zero BE risk (endpoint already shipped). Mobile FE risk is minimal — additive branch on a null field. Primary failure mode is a shipped mobile formatter crashing on `null` input; mitigation is a defensive null-check at the top of the tile component.
+
+**Priority:** P2.
+
+**Status:** OPEN. Do **NOT** implement from the web agent — scope-locked chore for `e1_expo_frontend_dev` so the mobile sprint can resume with full context.
+
+**Cross-refs:**
+- BE commit `44024703f` — placeholder row contract live on the endpoint.
+- Web FE commit `c2b08bb6a` — placeholder rendering + testid conventions web-side.
+- Pytest regression suite: `backend/tests/test_portal_next_visits.py` (12 cases).
+- Vitest regression suite: `frontend/src/test/portal-next-visit-placeholder-b1.test.jsx` (4 cases).
+
