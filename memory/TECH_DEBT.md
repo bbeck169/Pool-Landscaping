@@ -3728,3 +3728,109 @@ Create path writes `line_items[].category` (string, display name) and leaves the
 - Operator chat ticket (Feb-2026, 3 screenshots).
 - Edit-modal reference contract: Commit A `f1034dbfc` (BE), Commit B `f48245c89` + source payload under `2cd55eddd` (FE).
 
+## TD-admin-manual-payment-save-card-feature · OPEN · Feb-2026 (P2 · FEATURE · product sign-off required)
+
+**Origin:** Operator Bug 2 report ("'Save card' on manual payment doesn't persist") — payment-audit (Deliverable 1-2 under FIN-PAID-STATUS-PARITY). Audit confirmed `RecordPaymentModal` in `frontend/src/pages/quotes/QuoteInvoiceDetail.jsx:2372-2453` has NO save-card UI by design. Commit 2a (`20fcb8c4d`) shipped a clarifying info banner; this TD scopes the NEW FEATURE if product decides the admin manual flow SHOULD support card capture.
+
+**Operator-visible gap:**
+Today, an admin recording an "external card" payment (customer handed over a card, admin ran it elsewhere e.g. terminal, now records in CRM) has no way to tokenise the card for future autobilling. The customer has to separately navigate to the portal Payment Methods page, OR the admin has to send a magic-link invoice.
+
+**Why this is a FEATURE, not a bug:**
+"Manual" payment = cash / check / external card. The modal payload at `QuoteInvoiceDetail.jsx:2394` is strictly `{amount, paid_at?}` — no card number is entered in the modal. Adding save-card requires inverting the mental model: the admin would run a *real* card charge through Stripe (same as `/charge-saved-card` or the magic-link capture path) and have the resulting PM auto-attached.
+
+**Scope stub for implementation (do NOT implement without product sign-off):**
+
+1. **Product decision — pick one UX:**
+   - (α) New "Charge new card" button in the invoice detail that opens a dedicated Stripe-Elements modal, creates a `PaymentIntent` with `setup_future_usage="off_session"`, attaches the PM via `_save_pm_after_first_payment` (shipped webhook helper at `backend/services/payments/stripe_charge.py:1787`). Keeps `RecordPaymentModal` strictly manual. Clearest UX.
+   - (β) Add an optional "Save new card to file" sub-flow inside `RecordPaymentModal` that, when enabled, swaps the modal to a Stripe-Elements embed and dispatches a real Stripe charge instead of the manual `record-payment` endpoint. Risk: UX conflation of two different payment flows under one modal.
+   - (γ) New admin "Add card to file for customer" surface on the customer detail page (completely divorced from invoice flow). Uses `SetupIntent` without charging. Reuses the `/customer-portal/payment-methods/add-card` playbook. Separation of concerns argument.
+
+2. **Backend scope (α-path, likely preferred):**
+   - New `POST /invoices/{iid}/charge-new-card` endpoint under `backend/routers/invoice_charge_new_card.py` (sibling of `invoice_charge_saved_card.py`).
+   - Reuses `stripe_charge.py` helpers — `create_payment_intent` (new helper? or extend the shipped one) with `setup_future_usage="off_session"` + `confirm=True` + `payment_method` from the Elements client-side submit.
+   - Webhook consumer `payment_intent.succeeded` already flips `payment_status`+`status` to `"paid"` under Fix A at `stripe_charge.py:1898+1969` — no new reconciler needed, state flip is free.
+   - PM mirror via `_save_pm_after_first_payment` (gated on `crm_save_for_future="1"` metadata — same wire as magic-link).
+
+3. **Frontend scope (α-path):**
+   - New `ChargeNewCardDialog.jsx` (sibling of `InvoiceChargeSavedCardDialog.jsx`).
+   - Mount Stripe Elements, confirm the PaymentIntent, submit `pm_id` to the new BE endpoint.
+   - "Save card for future" checkbox default-ON (matches `PaymentForm.jsx` magic-link UX).
+   - Invoice detail — add "Charge new card" button next to "Charge saved card" when the customer has 0 PMs OR has PMs but admin wants to capture a new one.
+
+4. **Risk flags:**
+   - PCI scope — Stripe Elements keeps the pod out of PCI card-data scope, but confirm BE never sees raw PAN.
+   - Idempotency — the new endpoint needs the same `invoice_charge_attempts` audit row the shipped `/charge-saved-card` writes (prevents double-charge on retry).
+   - Dual-write risk — if operator records a cash payment on an invoice that ALREADY has a succeeded card charge, we'd overpay. Confirm `record_payment` tolerates amount>remaining (shipped: `min(paid, total)` caps at total — no over-posting, but UX should warn).
+
+**Risk:** Medium — Stripe integration surface, PCI concerns (mitigated by Elements), 2-3 commits of fresh code (BE endpoint + FE dialog + wiring + pytest + vitest).
+
+**Priority:** P2. The absence doesn't block any revenue path — admins can save cards via the portal flow or via the magic-link flow. This is a UX convenience ticket.
+
+**Status:** OPEN. **FEATURE scope — do NOT implement without a product-side sign-off on the (α / β / γ) UX choice.** The shipped info banner from Commit 2a (`20fcb8c4d`) is the operator-facing stopgap until this ticket is scheduled.
+
+**Cross-refs:**
+- Commit 2a `20fcb8c4d` — RecordPaymentModal info banner (stopgap clarification).
+- Commit A/B of the paid-invoice metadata dispatch — unrelated, cited for the same modal's existing deps.
+- `backend/services/payments/stripe_charge.py:1787` `_save_pm_after_first_payment` — the shipped webhook helper the α-path would reuse.
+- `frontend/src/components/invoices/InvoiceChargeSavedCardDialog.jsx` — the sibling dialog the α-path would mirror.
+
+
+## TD-portal-save-card-lift-double-guard · OPEN · Feb-2026 (P2 · product decision required)
+
+**Origin:** Operator Bug 2 payment-audit — second sub-path of the "save-card doesn't persist" report. Audit found the portal/magic-link save-card flow has a DELIBERATE double-guard that silently hides the checkbox from customers who already have ≥1 saved PM. Lifting the guard is a product decision; this TD scopes what that lift would look like.
+
+**Operator-visible gap:**
+A signed-in portal customer with 1 saved card can NOT add a second card from the pay-invoice flow. The checkbox never renders (FE auto-redirect fast-path), and even if a client somehow sends `save_for_future_billing=true` the BE drops the flag. The customer CAN add a second card via the portal Payment Methods page (independent, working flow).
+
+**Code sites — double-guard breakdown:**
+
+1. **FE auto-redirect guard** — `frontend/src/components/PaymentForm.jsx:186-189`:
+```jsx
+if (count >= 1 && !autoRedirectedRef.current) {
+  // Legacy fast path — no consent step needed.
+  autoRedirectedRef.current = true;
+  await start({ saveForFuture: false });
+}
+```
+When `pmCount >= 1`, the FE skips `showReview` entirely (`showReview = pmCount === 0 && !preparing && !errorMsg`, L215) and auto-redirects to Stripe Checkout with `saveForFuture: false`. The checkbox never renders.
+
+2. **BE server-side guard** — `backend/routers/lumino_link_request.py:179-181`:
+```python
+save_requested = bool((body or PayLinkBody()).save_for_future_billing)
+pm_count = await _customer_pm_count(inv.get("tenant_id"), cid)
+save_for_future = save_requested and pm_count == 0
+```
+Code-comment at L178: *"we only honour it when the customer has 0 saved PMs today"* — this is deliberate. Even if the FE guard is bypassed, the Session metadata gets `crm_save_for_future="0"` → `_save_pm_after_first_payment` (`stripe_charge.py:1814`) is a no-op → no PM attached.
+
+**Why the guard exists (grep-only inference, confirm during pre-audit):**
+- Prevents accidental "card hoarding" on `stripe.Customer` objects — one tenant kept paying with cards from different sources (Apple Pay vs manually entered), each getting attached.
+- Simplifies the "which card is default?" UX — one saved card means no ambiguity.
+- Avoids churning the autobilling default under the customer's feet.
+
+**Scope stub for implementation (do NOT implement without product sign-off):**
+
+1. **Product decision — pick one:**
+   - (α) **Lift the guard entirely** — customer with 1+ PMs sees the checkbox, can tick to save the new card, which attaches via `_save_pm_after_first_payment`. New default behaviour TBD (replace current default? ask?).
+   - (β) **Opt-in surface** — add an explicit "Add another card for future" button on the portal Pay-Invoice page that opens a dedicated flow (not entangled with the checkbox default-behaviour).
+   - (γ) **Keep the guard but surface a help-text** — tell the customer explicitly on the pay-invoice page that saving a card is done via Payment Methods, not here. Zero code change beyond copy.
+
+2. **If α is picked — commit scope:**
+   - FE: lift `PaymentForm.jsx:186-189` auto-redirect, always show `showReview`, customer explicitly clicks "Pay $X". Keep `saveForFuture` default = `false` so the behaviour on the legacy fast path is preserved for untouched flows.
+   - BE: lift `lumino_link_request.py:181` guard (change `save_for_future = save_requested and pm_count == 0` → `save_for_future = save_requested`). Keep the `pm_count` log line for audit.
+   - Default-swap UX decision — if the new PM should become `is_default`, Fix A path (`attach_payment_method(set_default=True)`) does it already; if NOT, pass `set_default=False`.
+   - Tests: pytest for `lumino_link_request` honouring the flag at `pm_count >= 1`; vitest for `PaymentForm` rendering `showReview` at `pmCount >= 1`.
+
+3. **Risk flags:**
+   - UX surprise for existing customers who've relied on the single-PM-at-a-time model.
+   - Stripe billing-support cost — more PMs attached = more "which card charged?" support tickets.
+   - Default-flip race — concurrent payment + default-swap could leave the autobilling flow pointing at the wrong card for seconds.
+
+**Priority:** P2. Workaround exists (Payment Methods page), so this is a UX-convenience ticket.
+
+**Status:** OPEN. **Product decision required (α / β / γ) before any code lands.** The shipped info banner from Commit 2a (`20fcb8c4d`) does NOT address this specific sub-path — it only covers the admin-manual confusion. Portal customers hitting this path need (γ) help-text at minimum.
+
+**Cross-refs:**
+- Commit 2a `20fcb8c4d` — RecordPaymentModal clarification (covers the admin-manual half of Bug 2 only).
+- FE double-guard site: `frontend/src/components/PaymentForm.jsx:186-189`.
+- BE double-guard site: `backend/routers/lumino_link_request.py:179-181`.
+- Attach helper: `backend/services/payments/stripe_charge.py:1787` `_save_pm_after_first_payment`.
