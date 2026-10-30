@@ -1,14 +1,17 @@
 /**
- * Feb-2026 · CYA Over-Threshold Report.
+ * Feb-2026 · CYA Over-Threshold Report (operator fix v2).
  *
  * Route: ``/reports/cya-high`` (AdminOnly-gated in App.js).
  * Endpoints: ``GET /api/reports/cya-high`` + ``/export.csv``.
  *
- * Admins see every customer with any historical Cyanuric Acid
- * reading above the threshold (default 100 ppm, strict ``>``)
- * recorded on a submitted service report. Supports threshold +
- * optional date-range override + CSV export. Customer name cell
- * deep-links to the customer detail page (operator Q5=a).
+ * Admins see one row per historical Cyanuric Acid reading above
+ * the threshold (default 100 ppm, strict ``>``). All reports
+ * participate — including drafts and legacy rows without
+ * ``submitted_at``. Customer name cell deep-links to the
+ * customer detail page.
+ *
+ * Row shape (BE commit ``ed6538929``):
+ *   { customer_id, customer_name, job_id, job_date, value }
  */
 import React, { useCallback, useEffect, useState } from "react";
 import { api } from "@/api";
@@ -26,18 +29,13 @@ function _shortDate(iso) {
 
 function _csv(items) {
   const rows = [
-    ["customer_id", "customer_name",
-     "last_value", "last_date",
-     "max_value", "max_date",
-     "reading_count_over_threshold"],
+    ["customer_id", "customer_name", "job_id", "job_date", "value"],
     ...(items || []).map((r) => [
       r.customer_id || "",
       r.customer_name || "",
-      r.last_value ?? "",
-      r.last_date || "",
-      r.max_value ?? "",
-      r.max_date || "",
-      r.reading_count_over_threshold ?? "",
+      r.job_id || "",
+      r.job_date || "",
+      r.value ?? "",
     ]),
   ];
   return rows.map((r) => r.map((c) => {
@@ -116,8 +114,8 @@ export default function CYAHighReport() {
         }
         subtitle={
           <span data-testid="cya-high-subtitle">
-            Pools with any historical Cyanuric Acid reading above the
-            threshold (default 100 ppm) in submitted service reports.
+            One row per historical Cyanuric Acid reading above the
+            threshold (default 100 ppm) across every service report.
           </span>
         }
       />
@@ -128,10 +126,12 @@ export default function CYAHighReport() {
           <span className="mb-1 text-gray-600">Threshold (ppm)</span>
           <input
             type="number"
-            min="0"
+            min="1"
             step="1"
             value={threshold}
-            onChange={(e) => setThreshold(Number(e.target.value) || 0)}
+            onChange={(e) => setThreshold(
+              Math.max(1, Number(e.target.value) || 1),
+            )}
             className="border rounded px-3 py-1.5 w-32"
             data-testid="cya-threshold-input"
           />
@@ -206,19 +206,16 @@ export default function CYAHighReport() {
             <thead className="bg-slate-50 text-left">
               <tr>
                 <th className="px-3 py-2">Customer</th>
-                <th className="px-3 py-2 text-right">Last reading</th>
-                <th className="px-3 py-2">Last date</th>
-                <th className="px-3 py-2 text-right">Max reading</th>
-                <th className="px-3 py-2">Max date</th>
-                <th className="px-3 py-2 text-right">Count &gt; {threshold}</th>
+                <th className="px-3 py-2">Job date</th>
+                <th className="px-3 py-2 text-right">CYA reading (ppm)</th>
               </tr>
             </thead>
             <tbody>
-              {items.map((r) => (
+              {items.map((r, idx) => (
                 <tr
-                  key={r.customer_id}
+                  key={`${r.job_id || "no-job"}-${idx}`}
                   className="border-t hover:bg-slate-50"
-                  data-testid={`cya-row-${r.customer_id}`}
+                  data-testid={`cya-row-${r.job_id || "no-job"}-${idx}`}
                 >
                   <td className="px-3 py-2">
                     <CustomerLink
@@ -226,14 +223,9 @@ export default function CYAHighReport() {
                       name={r.customer_name}
                     />
                   </td>
-                  <td className="px-3 py-2 text-right">{r.last_value}</td>
-                  <td className="px-3 py-2">{_shortDate(r.last_date)}</td>
+                  <td className="px-3 py-2">{_shortDate(r.job_date)}</td>
                   <td className="px-3 py-2 text-right font-semibold">
-                    {r.max_value}
-                  </td>
-                  <td className="px-3 py-2">{_shortDate(r.max_date)}</td>
-                  <td className="px-3 py-2 text-right">
-                    {r.reading_count_over_threshold}
+                    {r.value}
                   </td>
                 </tr>
               ))}
