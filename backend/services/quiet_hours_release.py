@@ -54,6 +54,7 @@ async def _dispatch_row(row: Dict[str, Any]) -> Dict[str, Any]:
     # marker on the payload the adapters look for.
     try:
         from services.quiet_hours_context import bypass_gate
+        from services.comms_env_guard import CommsContext
         with bypass_gate():
             if channel == "email":
                 from services.comms_email_adapter import send_email as _se
@@ -65,6 +66,7 @@ async def _dispatch_row(row: Dict[str, Any]) -> Dict[str, Any]:
                     from_name=payload.get("from_name"),
                     from_email=payload.get("from_email"),
                     headers=payload.get("headers"),
+                    context=CommsContext.SYSTEM,
                 )
             elif channel == "sms":
                 from services.comms_sms_adapter import send_sms as _ss
@@ -73,6 +75,7 @@ async def _dispatch_row(row: Dict[str, Any]) -> Dict[str, Any]:
                     to_phone=payload.get("to_phone"),
                     body=payload.get("body", ""),
                     mms_url=payload.get("mms_url"),
+                    context=CommsContext.SYSTEM,
                 )
             else:
                 return {"status": "failed", "error": f"unknown channel {channel!r}"}
@@ -111,3 +114,85 @@ async def run_release_tick() -> Dict[str, int]:
         logger.info("[p34] release tick: claimed=%s sent=%s failed=%s",
                         len(claimed), n_sent, n_failed)
     return {"claimed": len(claimed), "sent": n_sent, "failed": n_failed}
+
+
+# ─── Phase 2 UX — tenant-scoped manual flush ──────────────────────
+# Feb-2026 · Operator Phase-2 β — admin-triggered "release every
+# pending row for THIS tenant RIGHT NOW" escape hatch. Semantically
+# different from ``run_release_tick`` in two ways:
+#   1. Tenant-scoped (never touches another tenant's rows).
+#   2. Ignores ``scheduled_for`` — releases every pending row for
+#      the tenant immediately regardless of its scheduled window
+#      (that's the whole point of a manual flush).
+#
+# Row-level status transitions ride the same atomic
+# ``find_one_and_update`` claim pattern as ``claim_pending_batch``
+# so a concurrent 5-min cron tick cannot double-dispatch the same
+# row.
+async def _claim_tenant_pending(
+    tenant_id: str, limit: int = BATCH_LIMIT,
+) -> list[Dict[str, Any]]:
+    claimed: list[Dict[str, Any]] = []
+    for _ in range(limit):
+        row = await db.outbound_deferred.find_one_and_update(
+            {"tenant_id": tenant_id, "status": "pending"},
+            {"$set": {"status": "releasing", "claimed_at": now_iso()}},
+            return_document=True,
+        )
+        if not row:
+            break
+        row.pop("_id", None)
+        claimed.append(row)
+    return claimed
+
+
+# Dispatch outcomes that count as "the row has left the system"
+# for admin-flush accounting purposes. ``suppressed_not_demo`` is
+# the preview-env gate blocking the comm from leaving — the row is
+# still fully processed and does not need another retry, so from
+# the operator's point of view it was "released".
+_FLUSH_OK_STATUSES = {
+    "sent", "mocked", "deferred", "suppressed_not_demo",
+    "skipped_opted_out",
+}
+
+
+async def flush_tenant_queue(tenant_id: str) -> Dict[str, Any]:
+    """Admin-triggered immediate flush of every pending
+    ``outbound_deferred`` row for ``tenant_id``. Returns
+    ``{released_count, errors[]}`` where ``errors`` is a list of
+    ``{row_id, channel, error}`` entries for rows whose dispatch
+    did not come back with an OK status."""
+    claimed = await _claim_tenant_pending(tenant_id)
+    released_count = 0
+    errors: list[Dict[str, Any]] = []
+    for row in claimed:
+        result = await _dispatch_row(row)
+        status_raw = result.get("status")
+        if status_raw in _FLUSH_OK_STATUSES:
+            released_count += 1
+            db_status = "sent"
+        else:
+            errors.append({
+                "row_id": row.get("id"),
+                "channel": row.get("channel"),
+                "error": result.get("error") or status_raw or "unknown",
+            })
+            db_status = "failed"
+        await db.outbound_deferred.update_one(
+            {"id": row["id"]},
+            {"$set": {
+                "status": db_status,
+                "released_at": now_iso(),
+                "provider_id": result.get("provider_id"),
+                "release_result": {k: v for k, v in result.items()
+                                   if k in ("status", "error",
+                                            "provider_id")},
+            }},
+        )
+    if claimed:
+        logger.info(
+            "[p34] manual flush tenant=%s claimed=%s released=%s errors=%s",
+            tenant_id, len(claimed), released_count, len(errors),
+        )
+    return {"released_count": released_count, "errors": errors}

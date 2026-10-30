@@ -311,3 +311,38 @@ async def cancel_quiet_hours_row(
         logger.warning("[p34] cancel audit log write failed: %s", e)
     return {"deleted": True, "row_id": row_id}
 
+
+
+
+@router.post("/quiet-hours/queue/release-now")
+async def release_quiet_hours_queue_now(
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+    request: Request = None,
+):
+    """Admin-triggered immediate release of every pending
+    ``outbound_deferred`` row for the current tenant.
+
+    Semantically distinct from the 5-min APScheduler tick: this
+    endpoint ignores each row's ``scheduled_for`` and dispatches
+    every pending row for this tenant RIGHT NOW. Dispatches run in
+    the ``bypass_gate`` context inside ``_dispatch_row`` so the
+    adapter's own quiet-hours check doesn't re-defer the row.
+    """
+    _writer_only(user)
+    from services.quiet_hours_release import flush_tenant_queue
+    result = await flush_tenant_queue(tenant["id"])
+    try:
+        await _p27_write_audit(
+            event="quiet_hours_queue_release_now",
+            cid=tenant["id"], tenant_id=tenant["id"],
+            user=user, request=request,
+            extra={
+                "released_count": result.get("released_count", 0),
+                "errors_count": len(result.get("errors") or []),
+            },
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[p34] release-now audit log write failed: %s", e)
+    return result
+
