@@ -185,14 +185,29 @@ async def portal_next_visits(
         if k not in by_key:
             by_key[k] = job
 
-    if not by_key:
-        return {"next_visits": []}
+    # Feb-2026 · Portal β1 — operator ruling reversal on PS-D #8:
+    # we no longer fail-quietly when a subscribed service has no
+    # upcoming job.  Emit a placeholder tile (``next_visit_at=null``)
+    # so the FE can render a "No visit scheduled" state per
+    # eligible service.  Non-subscribed services still never surface
+    # here — ``active_keys`` remains the eligibility gate.
 
     # ── (4) Resolve tech names + emit in canonical display order.
+    # Placeholder rows (no future job) emit null datetime + null
+    # tech + null visit_id so the FE can distinguish real vs
+    # empty tiles.
     out: List[Dict[str, Any]] = []
     for key, _hits in _CATEGORY_MATCHERS:
+        if key not in active_keys:
+            continue
         job = by_key.get(key)
-        if not job:
+        if job is None:
+            out.append({
+                "service_type":  key,
+                "next_visit_at": None,
+                "tech_name":     None,
+                "visit_id":      None,
+            })
             continue
         tech_name = await _resolve_tech_name(
             tid, job.get("technician_id"),

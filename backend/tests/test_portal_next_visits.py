@@ -177,18 +177,32 @@ def test_pool_eligible_returns_pool_tile(dbc, portal_customer):
 # ═══════════════════════════════════════════════════════════════════
 # 3. Active subscription but NO future job → tile hidden.
 # ═══════════════════════════════════════════════════════════════════
-def test_subscription_active_but_no_future_job_hides_tile(dbc, portal_customer):
+def test_subscription_active_but_no_future_job_surfaces_placeholder(
+        dbc, portal_customer):
+    """β1 ruling reversal (Feb-2026 Portal) — a subscribed service
+    with no future job no longer fail-quiets; it surfaces a
+    placeholder row with ``next_visit_at: null`` so the FE can
+    render a "No visit scheduled" tile."""
     _add_subscription(dbc, portal_customer["tenant_id"],
                        portal_customer["customer_id"],
                        "Weekly Pool Service", active=True)
-    # PAST job — should not surface.
+    # PAST job — should NOT populate the tile, but a placeholder
+    # row for the eligible service still surfaces.
     _add_job(dbc, portal_customer["tenant_id"],
               portal_customer["customer_id"],
               service_type="Weekly Pool Service", days_ahead=-3)
     r = requests.get(f"{API}/portal/dashboard/next-visits",
                         headers=portal_customer["headers"], timeout=20)
     assert r.status_code == 200
-    assert r.json() == {"next_visits": []}
+    body = r.json()
+    assert len(body["next_visits"]) == 1
+    row = body["next_visits"][0]
+    assert row == {
+        "service_type":  "pool",
+        "next_visit_at": None,
+        "tech_name":     None,
+        "visit_id":      None,
+    }
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -208,10 +222,11 @@ def test_inactive_subscription_hides_tile(dbc, portal_customer):
 
 
 # ═══════════════════════════════════════════════════════════════════
-# 5. Mixed — pool eligible + landscape ineligible + filter
-# eligible → returns pool + filter tiles in canonical order.
+# 5. Mixed — pool eligible with future job, landscape eligible
+# WITHOUT future job (placeholder), filter eligible with future
+# job → returns all three tiles in canonical order per β1 ruling.
 # ═══════════════════════════════════════════════════════════════════
-def test_mixed_eligibility_returns_only_eligible_in_order(dbc, portal_customer):
+def test_mixed_eligibility_returns_all_eligible_in_order(dbc, portal_customer):
     # Pool: active + future job.
     _add_subscription(dbc, portal_customer["tenant_id"],
                        portal_customer["customer_id"],
@@ -219,7 +234,8 @@ def test_mixed_eligibility_returns_only_eligible_in_order(dbc, portal_customer):
     _add_job(dbc, portal_customer["tenant_id"],
               portal_customer["customer_id"],
               service_type="Weekly Pool Service", days_ahead=5)
-    # Landscape: active BUT no future job — tile hidden.
+    # Landscape: active BUT no future job — β1 surfaces a
+    # placeholder tile with ``next_visit_at: null``.
     _add_subscription(dbc, portal_customer["tenant_id"],
                        portal_customer["customer_id"],
                        "Monthly Landscape Package", active=True)
@@ -235,8 +251,18 @@ def test_mixed_eligibility_returns_only_eligible_in_order(dbc, portal_customer):
                         headers=portal_customer["headers"], timeout=20)
     body = r.json()
     keys = [row["service_type"] for row in body["next_visits"]]
-    # Pool listed BEFORE filter_cleaning (canonical order).
-    assert keys == ["pool", "filter_cleaning"]
+    # Canonical order preserved: pool → landscape → filter_cleaning.
+    assert keys == ["pool", "landscape", "filter_cleaning"]
+    # Landscape row is the placeholder.
+    landscape = next(r for r in body["next_visits"]
+                      if r["service_type"] == "landscape")
+    assert landscape["next_visit_at"] is None
+    assert landscape["tech_name"] is None
+    assert landscape["visit_id"] is None
+    # Pool + filter_cleaning rows have real datetimes.
+    pool = next(r for r in body["next_visits"]
+                 if r["service_type"] == "pool")
+    assert pool["next_visit_at"] is not None
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -324,3 +350,82 @@ def test_admin_role_forbidden():
                         timeout=20)
     assert r.status_code == 403, r.text
     assert r.json()["detail"] == "Customers only"
+
+
+
+# ═══════════════════════════════════════════════════════════════════
+# β1 · Feb-2026 — placeholder-row contract covering the three
+# operator-dispatched spec cases that weren't locked by the
+# pre-shipped suite.
+# ═══════════════════════════════════════════════════════════════════
+def test_b1_filter_cleaning_only_no_future_job_placeholder(
+        dbc, portal_customer):
+    """β1 — single filter_cleaning subscription, no future job
+    → single placeholder tile with ``next_visit_at: null``."""
+    _add_subscription(dbc, portal_customer["tenant_id"],
+                       portal_customer["customer_id"],
+                       "Quarterly Filter Cleaning", active=True)
+    r = requests.get(f"{API}/portal/dashboard/next-visits",
+                        headers=portal_customer["headers"], timeout=20)
+    body = r.json()
+    assert len(body["next_visits"]) == 1
+    row = body["next_visits"][0]
+    assert row == {
+        "service_type":  "filter_cleaning",
+        "next_visit_at": None,
+        "tech_name":     None,
+        "visit_id":      None,
+    }
+
+
+def test_b1_pool_and_landscape_only_pool_has_job(dbc, portal_customer):
+    """β1 — two subscriptions (pool + landscape), ONE future job
+    (pool) → two tiles, pool populated, landscape placeholder."""
+    _add_subscription(dbc, portal_customer["tenant_id"],
+                       portal_customer["customer_id"],
+                       "Weekly Pool Cleaning", active=True)
+    _add_subscription(dbc, portal_customer["tenant_id"],
+                       portal_customer["customer_id"],
+                       "Monthly Landscape Package", active=True)
+    _add_job(dbc, portal_customer["tenant_id"],
+              portal_customer["customer_id"],
+              service_type="Weekly Pool Service", days_ahead=5)
+    r = requests.get(f"{API}/portal/dashboard/next-visits",
+                        headers=portal_customer["headers"], timeout=20)
+    body = r.json()
+    assert [r["service_type"] for r in body["next_visits"]] == [
+        "pool", "landscape",
+    ]
+    pool = body["next_visits"][0]
+    assert pool["next_visit_at"] is not None
+    assert pool["visit_id"] is not None
+    landscape = body["next_visits"][1]
+    assert landscape["next_visit_at"] is None
+    assert landscape["tech_name"] is None
+    assert landscape["visit_id"] is None
+
+
+def test_b1_canonical_order_all_three_placeholders(dbc, portal_customer):
+    """β1 regression — ordering must stay pool → landscape →
+    filter_cleaning even when ALL three slots are placeholders
+    (subscriptions planted in reverse order to confirm the sort
+    is not seed-order sensitive)."""
+    _add_subscription(dbc, portal_customer["tenant_id"],
+                       portal_customer["customer_id"],
+                       "Quarterly Filter Cleaning", active=True)
+    _add_subscription(dbc, portal_customer["tenant_id"],
+                       portal_customer["customer_id"],
+                       "Monthly Landscape Package", active=True)
+    _add_subscription(dbc, portal_customer["tenant_id"],
+                       portal_customer["customer_id"],
+                       "Weekly Pool Cleaning", active=True)
+    r = requests.get(f"{API}/portal/dashboard/next-visits",
+                        headers=portal_customer["headers"], timeout=20)
+    body = r.json()
+    keys = [row["service_type"] for row in body["next_visits"]]
+    assert keys == ["pool", "landscape", "filter_cleaning"]
+    for row in body["next_visits"]:
+        assert row["next_visit_at"] is None
+        assert row["tech_name"] is None
+        assert row["visit_id"] is None
+
