@@ -34,6 +34,9 @@ from routers.tenants import get_current_tenant
 from migrations.task_p19_backfill_empty_website_visitor_leads import (
     run_backfill_for_tenant,
 )
+from migrations.backfill_paid_invoice_status_v1 import (
+    backfill_paid_invoice_status,
+)
 
 
 logger = logging.getLogger("admin_migrations")
@@ -124,6 +127,75 @@ async def backfill_website_visitor_leads(
         "skipped_no_new_data": report["skipped_no_new_data"],
         "enrichments": report["enrichments"],
         "warnings": report["warnings"],
+    }
+
+
+
+# ─────────────────────────────────────────────────────────────────────
+# POST /admin/migrations/backfill-paid-invoice-status
+#
+# Feb-2026 · FIN-PAID-STATUS-PARITY · Commit 1c — one-shot migration
+# that reconciles legacy ``quotes`` rows left stuck by the pre-fix
+# write-path asymmetry (``payment_status == "paid"`` but
+# ``status != "paid"``). Commits 1a + 1b fixed the write paths; this
+# endpoint migrates the legacy rows.
+# ─────────────────────────────────────────────────────────────────────
+@router.post(
+    "/admin/migrations/backfill-paid-invoice-status",
+    operation_id="admin.migrations.backfill_paid_invoice_status",
+)
+async def backfill_paid_invoice_status_endpoint(
+    dry_run: bool = Query(
+        True,
+        description=(
+            "Safety-first default. Set to false to actually flip "
+            "status='paid' on stuck rows + stamp the audit crumb. "
+            "Idempotent either way — the WHERE clause excludes "
+            "already-fixed rows."
+        ),
+    ),
+    tenant_slug: Optional[str] = Query(
+        None,
+        description=(
+            "Target tenant slug. Defaults to the caller's own "
+            "tenant. Only super_admins can target a different "
+            "tenant, and every cross-tenant invocation is logged "
+            "at WARN."
+        ),
+    ),
+    user: Dict[str, Any] = Depends(get_current_user),
+    tenant: Dict[str, Any] = Depends(get_current_tenant),
+):
+    _require_super_admin(user)
+    target = await _resolve_target_tenant(tenant, tenant_slug)
+    is_cross = target["id"] != tenant["id"]
+
+    log_line = (
+        f"[fin-paid-status-backfill] user={user.get('id')} "
+        f"email={user.get('email')} caller_tenant={tenant['id']} "
+        f"target_tenant={target['id']} target_slug={target.get('slug')} "
+        f"dry_run={dry_run} cross_tenant={is_cross}"
+    )
+    if is_cross:
+        logger.warning(
+            "CROSS-TENANT admin migration invocation · " + log_line,
+        )
+    else:
+        logger.info(log_line)
+
+    report = await backfill_paid_invoice_status(
+        db,
+        tenant_id=target["id"],
+        dry_run=dry_run,
+    )
+    return {
+        "tenant_id": target["id"],
+        "tenant_slug": target.get("slug"),
+        "tenant_name": target.get("name"),
+        "dry_run": report["dry_run"],
+        "matched": report["matched"],
+        "modified": report["modified"],
+        "crumbs_written": report["crumbs_written"],
     }
 
 
