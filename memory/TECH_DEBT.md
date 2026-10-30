@@ -3655,3 +3655,47 @@ The web FE renders these placeholders as "No visit scheduled" tiles (muted datet
 - Pytest regression suite: `backend/tests/test_portal_next_visits.py` (12 cases).
 - Vitest regression suite: `frontend/src/test/portal-next-visit-placeholder-b1.test.jsx` (4 cases).
 
+## TD-mobile-paid-invoice-metadata-edit · OPEN · Feb-2026 (mobile parity)
+
+**Origin:** Web commits `f1034dbfc` (BE metadata-only paid-invoice bypass) + `f48245c89` (FE vitest 4/4 close-out). The web `InvoiceEditModal` now lets admins / managers / owners / super_admins edit the metadata subset on a paid invoice **without** the `_ack` confirm dialog or the typed-invoice-number proof. Financial fields (`quantity`, `unit_price`, `tax_rate`, `discount_*`) stay locked and surface a new `financial_edit_locked_on_paid` 400 if touched without ack. Mobile parity delegated here to `e1_expo_frontend_dev`.
+
+**BE contract — ALREADY LIVE on preview and prod (no gate needed):**
+- `backend/routers/invoice_edit.py` — `_METADATA_ONLY_LINE_FIELDS` = `description`, `long_description`, `item_id`, `service_category_id`, `income_category_id` (plus any shipped category aliases). `_METADATA_ONLY_TOP_FIELDS` = `notes`, `memo`, `private_notes`, business-unit aliases. The shipped `_CATEGORY_ONLY_*` names are kept as backward-compat aliases.
+- `patch_invoice` paid-lock is now a 4-path acceptance: (1) `_ack`, (2) typed invoice-number proof, (3) `_is_metadata_only_diff` (β bypass — THIS is the mobile hook), (4) default 400 `financial_edit_locked_on_paid` otherwise.
+- No new auth gate — the same admin-tier set that already reaches the paid-lock dialog on web is the one that transparently uses the metadata bypass.
+
+**Scope for mobile (`/app/mobile/`):**
+
+1. Find the mobile equivalent of the invoice edit screen (likely `mobile/app/(app)/invoices/[id]/edit.tsx` or sibling under `mobile/src/screens/invoices/*`). Audit alongside the shipped `mobile/src/components/documents/EditLockConfirmDialog` sibling (or whatever its mobile mirror is).
+2. Teach the screen's status-aware readOnly logic to split the shipped "paid ⇒ everything locked unless ack" branch into two states:
+    - **Metadata-only fields** (`description`, `long_description`, line `category` picker, top-level `notes` / `memo` / `private_notes`, pricebook `item_id` re-link): interactive on paid, no ack, no confirm dialog, save goes straight through — the BE short-circuits via `_is_metadata_only_diff`.
+    - **Financial fields** (`quantity`, `unit_price`, `tax_rate`, `discount_amount`, `discount_type`): keep `editable={false}` + an `aria-readonly` equivalent (RN `accessibilityState={{disabled:true}}`). Still open the confirm dialog on diff — the BE will return 400 `financial_edit_locked_on_paid` without `_ack`, so the dialog guards the UX.
+3. **Payload hygiene**: on paid metadata-only save, suppress `acknowledged_lock_bypass` + `confirm_edit_paid_invoice_number`. Mirror the web helper `_isMetadataOnlyLineDiff` (added in Commit B source — `frontend/src/components/invoices/InvoiceEditModal.jsx`) in RN. Suggested port name: `isMetadataOnlyLineDiff` under `mobile/src/utils/invoiceEditLock.ts` or similar.
+4. **Save-flow gating**: the submit handler should branch BEFORE prompting the dialog. If the diff is metadata-only, dispatch the PATCH immediately. If any financial field moved, open the confirm dialog as today.
+5. **Combobox parity**: web uses `MasterServiceCombobox` for the description slot. Mobile's equivalent (whatever picker is wired to the line-description slot) must stay interactive on paid, same as web.
+
+**Testid parity with web** (web source of truth: Commit A/B vitest + the modal's own data-testids):
+- `invoice-edit-line-{i}-desc` — stays interactive on paid.
+- `invoice-edit-line-{i}-qty` — `editable={false}` on paid.
+- `invoice-edit-line-{i}-price` — `editable={false}` on paid.
+- `invoice-edit-save` — one tap on a metadata-only diff should NOT render `edit-lock-confirm-dialog`; one tap on a financial diff should.
+
+**Files to touch (likely, confirm during implementation):**
+- Mobile invoice edit screen (status-aware readOnly branching + save-flow gate).
+- Mobile `isMetadataOnlyLineDiff` port.
+- Mobile jest-expo tests mirroring the four shipped web vitest cases in `frontend/src/components/invoices/__tests__/InvoiceEditModal.metadataBypass.test.jsx` (paid desc editable; paid metadata-only save → no dialog; paid financial save → dialog opens; unpaid → everything editable, no dialog).
+
+**Risk:** Low. BE paths are shipped and pytest-locked (31/31 under Commit A). Mobile FE risk is a per-field readOnly flip + a save-flow branch — additive, no removal of existing paths. Primary failure mode: if mobile's shipped submit handler always stamps `acknowledged_lock_bypass` on paid (regardless of ack), the BE accepts it but the ack-dialog never surfaces for financial edits — mitigation is a diff pre-check gate before dispatching the PATCH.
+
+**Priority:** P2 (parity, not a web regression — web is fully shipped).
+
+**Status:** OPEN. Do **NOT** implement from the web agent — scope-locked chore for `e1_expo_frontend_dev` so the mobile sprint can resume with full context.
+
+**Cross-refs:**
+- BE commit `f1034dbfc` — metadata-only paid-invoice bypass (web + BE contract — mobile reuses as-is).
+- FE commit `2cd55eddd` — modal source payload (shipped under STOP marker; see commit body).
+- FE commit `f48245c89` — MasterServiceCombobox mock close-out → vitest 4/4.
+- Pytest regression suite: `backend/tests/test_invoice_edit_metadata_bypass_beta.py` (11 cases, all green against the BE contract).
+- Vitest regression suite: `frontend/src/components/invoices/__tests__/InvoiceEditModal.metadataBypass.test.jsx` (4 cases, 4/4 green).
+
+
