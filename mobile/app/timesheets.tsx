@@ -41,7 +41,8 @@ export default function Timesheets() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const { user } = useAuth();
-  const isAdmin = user?.role === "admin" || user?.role === "super_admin";
+  const role = user?.role as string | undefined;
+  const isAdmin = role === "admin" || role === "super_admin";
   const { showToast } = useToast();
   const [reasonFor, setReasonFor] = useState<any | null>(null);
 
@@ -143,7 +144,7 @@ export default function Timesheets() {
                       style={styles.trashBtn} onPress={() => askDelete(item)} hitSlop={6}
                       accessibilityRole="button" accessibilityLabel="Delete timecard" testID={`timesheet-delete-${item.id}`}
                     >
-                      <Ionicons name="trash-outline" size={18} color={colors.danger || "#DC2626"} />
+                      <Ionicons name="trash-outline" size={18} color="#DC2626" />
                     </Pressable>
                   ) : null}
                 </View>
