@@ -141,6 +141,16 @@ def _add_job(dbc, tenant_id, customer_id, *, service_type,
     return job_id
 
 
+def _set_service_category(dbc, customer_id, value):
+    """Feb-2026 hybrid-gate helper — stamp
+    ``customers.service_category`` on the per-test customer so the
+    endpoint's fallback step can derive eligibility from it."""
+    dbc.customers.update_one(
+        {"id": customer_id},
+        {"$set": {"service_category": value}},
+    )
+
+
 # ═══════════════════════════════════════════════════════════════════
 # 1. No subscriptions at all → empty array.
 # ═══════════════════════════════════════════════════════════════════
@@ -429,3 +439,101 @@ def test_b1_canonical_order_all_three_placeholders(dbc, portal_customer):
         assert row["tech_name"] is None
         assert row["visit_id"] is None
 
+
+# ═══════════════════════════════════════════════════════════════════
+# Feb-2026 · HYBRID FALLBACK — ``customers.service_category`` acts
+# as a secondary eligibility gate when a customer hasn't had their
+# billing_plans fully seeded.  Preserves β1 shape (placeholder tile
+# per eligible service when no future job exists) + canonical order.
+# ═══════════════════════════════════════════════════════════════════
+def test_hybrid_fallback_pool_service_category_no_plans(
+        dbc, portal_customer):
+    """No active billing_plans + ``service_category='pool'`` →
+    one placeholder pool tile with ``next_visit_at: null``."""
+    _set_service_category(dbc, portal_customer["customer_id"], "pool")
+    r = requests.get(f"{API}/portal/dashboard/next-visits",
+                        headers=portal_customer["headers"], timeout=20)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert len(body["next_visits"]) == 1
+    assert body["next_visits"][0] == {
+        "service_type":  "pool",
+        "next_visit_at": None,
+        "tech_name":     None,
+        "visit_id":      None,
+    }
+
+
+def test_hybrid_fallback_landscaping_service_category_no_plans(
+        dbc, portal_customer):
+    """No active billing_plans + ``service_category='landscaping'`` →
+    one placeholder landscape tile."""
+    _set_service_category(
+        dbc, portal_customer["customer_id"], "landscaping",
+    )
+    r = requests.get(f"{API}/portal/dashboard/next-visits",
+                        headers=portal_customer["headers"], timeout=20)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert len(body["next_visits"]) == 1
+    assert body["next_visits"][0] == {
+        "service_type":  "landscape",
+        "next_visit_at": None,
+        "tech_name":     None,
+        "visit_id":      None,
+    }
+
+
+def test_hybrid_fallback_both_service_category_no_plans(
+        dbc, portal_customer):
+    """No active billing_plans + ``service_category='both'`` →
+    pool AND landscape placeholder tiles in canonical order."""
+    _set_service_category(dbc, portal_customer["customer_id"], "both")
+    r = requests.get(f"{API}/portal/dashboard/next-visits",
+                        headers=portal_customer["headers"], timeout=20)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    keys = [row["service_type"] for row in body["next_visits"]]
+    assert keys == ["pool", "landscape"]
+    for row in body["next_visits"]:
+        assert row["next_visit_at"] is None
+        assert row["tech_name"] is None
+        assert row["visit_id"] is None
+
+
+def test_hybrid_fallback_null_service_category_no_plans(
+        dbc, portal_customer):
+    """No active billing_plans + ``service_category`` explicitly
+    null → empty tiles array (no fallback addition)."""
+    _set_service_category(dbc, portal_customer["customer_id"], None)
+    r = requests.get(f"{API}/portal/dashboard/next-visits",
+                        headers=portal_customer["headers"], timeout=20)
+    assert r.status_code == 200, r.text
+    assert r.json() == {"next_visits": []}
+
+
+def test_hybrid_fallback_plan_and_service_category_union(
+        dbc, portal_customer):
+    """Active pool plan (with future pool job) + ``service_category=
+    'both'`` → UNION: pool tile populated from the plan, landscape
+    tile placeholder from the fallback.  Canonical order preserved."""
+    _set_service_category(dbc, portal_customer["customer_id"], "both")
+    _add_subscription(dbc, portal_customer["tenant_id"],
+                       portal_customer["customer_id"],
+                       "Weekly Pool Cleaning", active=True)
+    _add_job(dbc, portal_customer["tenant_id"],
+              portal_customer["customer_id"],
+              service_type="Weekly Pool Service", days_ahead=5)
+    r = requests.get(f"{API}/portal/dashboard/next-visits",
+                        headers=portal_customer["headers"], timeout=20)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    keys = [row["service_type"] for row in body["next_visits"]]
+    assert keys == ["pool", "landscape"]
+    pool = body["next_visits"][0]
+    assert pool["next_visit_at"] is not None
+    assert pool["visit_id"] is not None
+    landscape = body["next_visits"][1]
+    assert landscape["next_visit_at"] is None
+    assert landscape["tech_name"] is None
+    assert landscape["visit_id"] is None

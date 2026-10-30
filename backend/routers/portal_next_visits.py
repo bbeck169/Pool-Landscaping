@@ -16,12 +16,19 @@ codebase):
 Eligibility rules (BOTH must hold per service type):
     1. Active subscription — a row in ``db.billing_plans`` with
        ``active: True`` whose ``service`` contains a category
-       keyword.
+       keyword.  OR (Feb-2026 hybrid fallback) a value in
+       ``customers.service_category`` that maps to the category:
+       ``pool`` → ``pool``, ``landscaping`` → ``landscape``,
+       ``both`` → both.  ``filter_cleaning`` is NEVER derived
+       from ``service_category`` — it only lights up when a
+       filter/cartridge billing_plan row exists.
     2. Future scheduled job — a row in ``db.jobs`` with
        ``scheduled_at`` (or ``scheduled_date``) >= now AND
        status in {scheduled, active, in_progress} whose
        ``service_type`` / ``job_type`` / ``service_title``
-       contains a category keyword.
+       contains a category keyword.  When no future job exists
+       for an eligible category, a placeholder tile with
+       ``next_visit_at: null`` is emitted (β1 contract).
 
 Output is filtered to the three canonical categories and returned
 in the display order Pool → Landscape → Filter Cleaning.  Empty
@@ -137,6 +144,35 @@ async def portal_next_visits(
         # Fail-quietly per portal UX standard — return empty and
         # the frontend hides the tile row.
         return {"next_visits": []}
+
+    # ── (1b) Hybrid fallback · Feb-2026 — when a customer hasn't
+    # had their billing_plans fully seeded yet, derive eligible
+    # category keys from ``customers.service_category`` as a
+    # secondary gate.  Set-union with the primary gate so a plan
+    # row wins its own category (populated tiles still outrank
+    # placeholder-only fallback tiles).  Mapping is intentionally
+    # narrow — ``filter_cleaning`` has no corresponding
+    # ``service_category`` value so it is NEVER derived here;
+    # null / missing / unrecognized values are a no-op.
+    try:
+        cust = await db.customers.find_one(
+            {"id": cid, "tenant_id": tid},
+            {"_id": 0, "service_category": 1},
+        )
+    except Exception as exc:                                     # pragma: no cover
+        logger.warning(
+            "[ps-d] customers read failed for tenant=%s cid=%s: %s",
+            tid, cid, exc,
+        )
+        cust = None
+    svc_cat = ((cust or {}).get("service_category") or "").strip().lower()
+    if svc_cat == "pool":
+        active_keys.add("pool")
+    elif svc_cat == "landscaping":
+        active_keys.add("landscape")
+    elif svc_cat == "both":
+        active_keys.add("pool")
+        active_keys.add("landscape")
 
     if not active_keys:
         return {"next_visits": []}
