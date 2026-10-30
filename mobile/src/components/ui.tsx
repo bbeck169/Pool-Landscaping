@@ -119,12 +119,15 @@ export function Sheet({
   title,
   children,
   testID,
+  header,
 }: {
   visible: boolean;
   onClose: () => void;
   title?: string;
   children: React.ReactNode;
   testID?: string;
+  /** Optional pinned content between the title row and the scrolling list (e.g. a search box). */
+  header?: React.ReactNode;
 }) {
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
@@ -139,7 +142,8 @@ export function Sheet({
             </Pressable>
           </View>
         ) : null}
-        <ScrollView contentContainerStyle={{ paddingBottom: spacing.xl }}>{children}</ScrollView>
+        {header}
+        <ScrollView contentContainerStyle={{ paddingBottom: spacing.xl }} keyboardShouldPersistTaps={header ? "handled" : undefined}>{children}</ScrollView>
       </View>
     </Modal>
   );

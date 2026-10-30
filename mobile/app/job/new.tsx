@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from "react";
-import { View, Text, StyleSheet, Pressable, Alert } from "react-native";
+import React, { useEffect, useMemo, useState } from "react";
+import { View, Text, StyleSheet, Pressable, Alert, Platform } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -10,7 +10,25 @@ import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { useToast } from "@/src/components/ToastProvider";
 import { Header } from "@/src/components/widgets";
 import { PrimaryButton, Sheet } from "@/src/components/ui";
+import AppTextInput from "@/src/components/ui/AppTextInput";
 import { Field } from "@/app/customer/new";
+
+/** Select Customer sheet search — case-insensitive text match on names +
+ *  emails; digit-only match on phones when the query carries >= 3 digits. */
+export function customerMatches(c: any, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  const text = [
+    c?.name, c?.display_name, c?.first_name, c?.last_name,
+    [c?.first_name, c?.last_name].filter(Boolean).join(" "),
+    c?.email, ...(Array.isArray(c?.emails) ? c.emails.map((e: any) => e?.address) : []),
+  ];
+  if (text.some((v) => typeof v === "string" && v.toLowerCase().includes(q))) return true;
+  const qd = q.replace(/\D/g, "");
+  if (qd.length < 3) return false;
+  const phones = [c?.phone, ...(Array.isArray(c?.mobiles) ? c.mobiles.flatMap((m: any) => [m?.number_e164, m?.number]) : [])];
+  return phones.some((p) => typeof p === "string" && p.replace(/\D/g, "").includes(qd));
+}
 
 const SERVICE_TYPES = ["Pool Cleaning", "Repair", "Landscaping", "Inspection", "Installation"];
 
@@ -47,6 +65,9 @@ export default function JobForm() {
   const [price, setPrice] = useState("");
   const [notes, setNotes] = useState("");
   const [sheet, setSheet] = useState<null | "customer" | "tech" | "service">(null);
+  const [custQuery, setCustQuery] = useState("");
+  const filteredCustomers = useMemo(() => customers.filter((c) => customerMatches(c, custQuery)), [customers, custQuery]);
+  const closeCustomerSheet = () => { setSheet(null); setCustQuery(""); };
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -125,13 +146,34 @@ export default function JobForm() {
         <PrimaryButton title="Create Job" onPress={save} loading={busy} testID="save-job-button" />
       </KeyboardAwareScrollView>
 
-      <Sheet visible={sheet === "customer"} onClose={() => setSheet(null)} title="Select Customer" testID="customer-sheet">
-        {customers.map((c) => (
-          <Pressable key={c.id} style={styles.opt} onPress={() => { setCustomer(c); setSheet(null); }} testID={`pick-customer-${c.id}`}>
+      <Sheet
+        visible={sheet === "customer"} onClose={closeCustomerSheet} title="Select Customer" testID="customer-sheet"
+        header={
+          <View style={styles.searchBox}>
+            <Ionicons name="search" size={18} color={colors.muted} />
+            <AppTextInput
+              style={styles.searchInput} value={custQuery} onChangeText={setCustQuery}
+              placeholder="Search customers…" placeholderTextColor={colors.muted}
+              autoCorrect={false} autoCapitalize="none" returnKeyType="search"
+              testID="customer-sheet-search"
+            />
+            {custQuery ? (
+              <Pressable onPress={() => setCustQuery("")} hitSlop={10} style={styles.searchClear} accessibilityLabel="Clear search" testID="customer-sheet-search-clear">
+                <Ionicons name="close-circle" size={18} color={colors.muted} />
+              </Pressable>
+            ) : null}
+          </View>
+        }
+      >
+        {filteredCustomers.map((c) => (
+          <Pressable key={c.id} style={styles.opt} onPress={() => { setCustomer(c); closeCustomerSheet(); }} testID={`pick-customer-${c.id}`}>
             <Text style={styles.optText}>{c.name}</Text>
             {customer?.id === c.id ? <Ionicons name="checkmark" size={20} color={colors.brand} /> : null}
           </Pressable>
         ))}
+        {custQuery.trim() && filteredCustomers.length === 0 ? (
+          <Text style={styles.searchEmpty} testID="customer-sheet-empty">{`No customers match '${custQuery.trim()}'`}</Text>
+        ) : null}
       </Sheet>
       <Sheet visible={sheet === "tech"} onClose={() => setSheet(null)} title="Select Technician" testID="technician-sheet">
         <Pressable style={styles.opt} onPress={() => { setTech(null); setSheet(null); }}>
@@ -179,5 +221,13 @@ const styles = StyleSheet.create({
   selectorText: { fontFamily: font.regular, fontSize: fontSize.lg, color: colors.onSurface },
   opt: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: spacing.md, borderBottomWidth: 1, borderBottomColor: colors.divider },
   optText: { fontFamily: font.medium, fontSize: fontSize.lg, color: colors.onSurface },
+  searchBox: {
+    flexDirection: "row", alignItems: "center", gap: spacing.sm, marginBottom: spacing.sm,
+    backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border,
+    borderRadius: radius.md, paddingHorizontal: spacing.md, height: 48,
+  },
+  searchInput: { flex: 1, fontFamily: font.regular, fontSize: fontSize.lg, color: colors.onSurface, ...(Platform.OS === "web" ? { outlineStyle: "none" as any } : {}) },
+  searchClear: { minWidth: 32, minHeight: 44, alignItems: "center", justifyContent: "center" },
+  searchEmpty: { fontFamily: font.regular, fontSize: fontSize.base, color: colors.muted, textAlign: "center", paddingVertical: spacing.xl },
   error: { color: colors.error, fontFamily: font.medium, fontSize: fontSize.base, marginTop: spacing.sm },
 });
