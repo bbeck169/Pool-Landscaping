@@ -254,6 +254,17 @@ export default function QuoteInvoiceNew({ docType = "quote" }) {
             quantity: Number(li.quantity) || 0,
             unit_price: Number(li.unit_price) || 0,
             category: li.category || "",
+            // Feb-2026 · Phase 5 Item-1 fix — surface the shipped
+            // ``income_category_id`` from local state (set by the
+            // CategoryPicker.onChange stamp AND the pricebook pick
+            // path at L498-504 which already stamps the id). The
+            // BE ``validate_line_item_categories`` accepts the id
+            // shape via the ``cat_str in valid_ids`` branch at
+            // ``routers/income_categories.py:223``; persisting it
+            // directly closes the asymmetry with
+            // ``PATCH /quotes/{id}`` which already carries the id.
+            income_category_id: li.income_category_id || undefined,
+            service_category_id: li.service_category_id || undefined,
             item_id: li.item_id || li.pricebook_item_id || undefined,
             pricebook_item_id: li.pricebook_item_id || undefined,
             // Feb-2026 · Invoice inline edit sprint — writeback flag
@@ -502,6 +513,20 @@ export default function QuoteInvoiceNew({ docType = "quote" }) {
                               if (item.service_category_id) {
                                 next.service_category_id = item.service_category_id;
                               }
+                              // Feb-2026 · Phase 5 Item-1 fix —
+                              // pricebook items carrying an
+                              // ``income_category_id`` (per
+                              // ``routers/items.py:183-202`` rule:
+                              // non-service items may carry one)
+                              // propagate it to the line so the
+                              // save payload includes it alongside
+                              // ``service_category_id``. Mirrors
+                              // the shipped K71 handler at
+                              // ``K71LineItemsEditor.jsx`` pick
+                              // flow.
+                              if (item.income_category_id) {
+                                next.income_category_id = item.income_category_id;
+                              }
                               return next;
                             }),
                           }));
@@ -608,7 +633,22 @@ export default function QuoteInvoiceNew({ docType = "quote" }) {
                       <CategoryPicker
                         value={li.category}
                         onChange={(v) => {
-                          patchLine(i, { category: v });
+                          // Feb-2026 · Phase 5 Item-1 fix —
+                          // ``CategoryPicker.onChange(c.id)`` emits
+                          // the resolved income category UUID. The
+                          // shipped flow stored it only on
+                          // ``line.category`` (string column) and
+                          // left ``income_category_id`` unset,
+                          // which flipped the Uncategorized badge
+                          // on and opened the Edit modal's two
+                          // dropdowns empty. Stamp BOTH fields so
+                          // the saved line satisfies the
+                          // ``isLegacyLine`` guard at
+                          // ``K71LineItemsEditor.jsx:125-131``.
+                          patchLine(i, {
+                            category: v,
+                            income_category_id: v,
+                          });
                           setRowErrors((prev) => {
                             if (!prev[i]) return prev;
                             const next = { ...prev };
