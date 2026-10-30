@@ -54,6 +54,20 @@ function thisWeekRange() {
   return { start: isoDay(sunday), end: isoDay(saturday) };
 }
 
+// Feb-2026 — "Next Week" = the following Sunday → Saturday. Mirrors
+// the thisWeekRange Sunday-start convention above (US pool-service
+// industry default); kept tile-local to avoid refactoring a shared
+// util for a one-liner.
+function nextWeekRange() {
+  const now = startOfDay(new Date());
+  const dow = now.getDay(); // 0 = Sunday
+  const sunday = new Date(now);
+  sunday.setDate(now.getDate() - dow + 7);
+  const saturday = new Date(sunday);
+  saturday.setDate(sunday.getDate() + 6);
+  return { start: isoDay(sunday), end: isoDay(saturday) };
+}
+
 // Phase H10 · Feb-2026 — month windows.
 function thisMonthRange() {
   const now = startOfDay(new Date());
@@ -73,6 +87,9 @@ const TABS = [
   { key: "today", label: "Today", build: todayRange },
   { key: "tomorrow", label: "Tomorrow", build: tomorrowRange },
   { key: "week", label: "This Week", build: thisWeekRange },
+  // Feb-2026 — "Next Week" sits between "This Week" and "This Month"
+  // so the pills read narrow→wide (day · day · week · week · month · month).
+  { key: "next_week", label: "Next Week", build: nextWeekRange },
   // Phase H10 · Feb-2026 — monthly outlook.
   { key: "this_month", label: "This Month", build: thisMonthRange },
   { key: "next_month", label: "Next Month", build: nextMonthRange },
