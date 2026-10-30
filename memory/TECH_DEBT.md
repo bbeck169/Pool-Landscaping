@@ -3574,35 +3574,40 @@ Low. Hide-only path; no BE write-blocks. Mobile `time_entries` writes from pool 
 
 ## TD-chemistry-cyanuric-key-normalization · P2 · Feb-2026 (BE)
 
-**Origin:** CYA Over-Threshold report ship (BE `fc5784a35`, FE `b33965479`). The report consumer currently queries both key spellings via `{"$in": ["cyanuric", "cyanuric_acid"]}` because historic `service_reports.chemical_readings[].key` carries both. Flagged in the dispatch message as a sibling chore so a future sprint can collapse the two to one canonical key.
+**Origin:** CYA Over-Threshold report ship (BE `fc5784a35`, FE `b33965479`). Scope expanded on `ed6538929` + `2bd504013` — a live DB probe found a **third** alias (`"cya"`, 4 rows) in addition to `"cyanuric"` (19 rows) and `"cyanuric_acid"` (15 rows). The report consumer now queries three key spellings via `{"$in": ["cyanuric", "cyanuric_acid", "cya"]}` on historic `service_reports.chemical_readings[].key`. Flagged as a sibling chore so a future sprint can collapse the three to one canonical key.
 
-**Current state (verified):**
-- `backend/services/chemistry.py:76-77` normalizes BOTH `"cyanuric"` and `"cyanuric_acid"` → `"cya"` for internal classification purposes.
-- `backend/services/pool_dosing.py:64-66` also folds `"cya"` + `"stabilizer"` → `"cyanuric_acid"` for dosing math.
+**Current state (verified Feb-2026 — DB probe counts fresh):**
+- `backend/services/chemistry.py:76-77` normalizes BOTH `"cyanuric"` and `"cyanuric_acid"` → `"cya"` for internal classification purposes (does NOT currently handle `"cya"` as a persisted-data input).
+- `backend/services/pool_dosing.py:64-66` folds `"cya"` + `"stabilizer"` → `"cyanuric_acid"` for dosing math.
 - `backend/services/chemistry_gate.py:140-141` and `services/water_bodies.py:56,69,84` use `"cyanuric_acid"` server-side.
 - `backend/services/inventory_alerts.py:55` uses `"cyanuric_acid"` as the inventory slug.
 - `backend/services/auto_visit_email.py:349` uses `"cyanuric_acid"` as the merge-tag key.
+- `backend/routers/reports.py :: _CYA_KEYS = ["cyanuric", "cyanuric_acid", "cya"]` (CYA report consumer — ships the three-way `$in` as the current defensive guard).
+- Live DB distribution (preview, aquaterra + ttt tenants): `cyanuric` = 19, `cyanuric_acid` = 15, `cya` = 4.
 
-**Canonical pick:** `"cyanuric_acid"`. Winner because it's already server-side across chemistry gate / dosing / inventory / merge tags / water-bodies. `"cyanuric"` only survives as an alias in the normalizer maps and as historic data in `service_reports.chemical_readings[].key`.
+**Canonical pick:** `"cyanuric_acid"`. Winner because it's dominant server-side across chemistry gate / dosing / inventory / merge tags / water-bodies. `"cyanuric"` and `"cya"` only survive as aliases in the normalizer maps and as historic data in `service_reports.chemical_readings[].key`.
 
 **Scope:**
-1. One-shot migration script `backend/services/migrations/chemistry_cyanuric_key_normalize_v1.py` — `$pull` every `chemical_readings[]` entry with `key == "cyanuric"` and re-insert with `key = "cyanuric_acid"` (preserve all other fields). Model on the shape of the existing `chemistry_remove_total_chlorine_v1.py` migration (same collection, same unwind pattern).
+1. One-shot migration script `backend/services/migrations/chemistry_cyanuric_key_normalize_v1.py` — `$pull` every `chemical_readings[]` entry whose `key` is in `{"cyanuric", "cya"}` and re-insert with `key = "cyanuric_acid"` (preserve all other fields). Model on the shape of the existing `chemistry_remove_total_chlorine_v1.py` migration (same collection, same unwind pattern).
 2. Idempotence sentinel: write a `migrations_runs` row keyed on the migration name so the server boot path doesn't re-run it.
-3. Update any FE chemistry-reading picker if it still offers the legacy `"cyanuric"` key as a selectable option (grep `frontend/src/` for `"cyanuric"` string literals; expected hits in chemistry editors / checklist builders).
-4. Simplify the CYA report consumer: `backend/routers/reports.py :: _cya_high_items()` currently has `_CYA_KEYS = ["cyanuric", "cyanuric_acid"]` and uses `$in`. After the migration lands + boot path has run on every tenant, drop the alias and switch to `"chemical_readings.key": "cyanuric_acid"` (single-key `$eq`, no `$in`).
-5. Update the normalizer maps in `services/chemistry.py` + `services/pool_dosing.py` to KEEP the `"cyanuric"` alias (defensive — in case a third-party API or operator-pasted CSV still uses the legacy key). This is NOT a drop of the alias; the migration only cleans historic data.
+3. Update any FE chemistry-reading picker if it still offers the legacy `"cyanuric"` or `"cya"` key as a selectable option (grep `frontend/src/` for both string literals; expected hits in chemistry editors / checklist builders).
+4. Simplify the CYA report consumer: `backend/routers/reports.py :: _cya_high_items()` currently has `_CYA_KEYS = ["cyanuric", "cyanuric_acid", "cya"]` and uses `$in`. After the migration lands + boot path has run on every tenant, drop the aliases and switch to `"chemical_readings.key": "cyanuric_acid"` (single-key `$eq`, no `$in`).
+5. Update the normalizer maps in `services/chemistry.py` + `services/pool_dosing.py` to KEEP the `"cyanuric"` AND `"cya"` aliases (defensive — in case a third-party API or operator-pasted CSV still uses the legacy keys). This is NOT a drop of the aliases; the migration only cleans historic data.
+6. Update `backend/tests/test_cya_high_report.py::test_cya_12_cya_alias_specifically_surfaces` after the migration — the test still passes with the simplified single-key filter because by that point the seeded `cya` row has been rewritten to `cyanuric_acid`.
 
-**Rationale for deferral:** Non-blocking. The report works correctly today with the `$in` guard, and the two-key split is cosmetic rather than functional. Natural time to ship is during the next chemistry-reading pipeline edit (e.g. a new chemistry gate, a new chemistry report, or the next labelling pass in `services/chemistry.py`).
+**Rationale for deferral:** Non-blocking. The report works correctly today with the `$in` guard (now covering all three aliases). The three-way split is cosmetic rather than functional. Natural time to ship is during the next chemistry-reading pipeline edit (a new chemistry gate, a new chemistry report, or the next labelling pass in `services/chemistry.py`).
 
 **Test plan:**
-- Pytest: 3 cases on the migration (dry-run shape, apply changes rows, idempotence sentinel honoured).
-- Pytest: re-run the CYA report test suite (`test_cya_high_report.py`) with the simplified single-key filter to confirm `test_cya_05_both_key_conventions_included` still passes — because after migration the legacy row is now stored under `cyanuric_acid`, both halves of that test converge on the canonical key.
+- Pytest: 3 cases on the migration (dry-run shape, apply changes rows for BOTH `cyanuric` + `cya` legacy keys, idempotence sentinel honoured).
+- Pytest: re-run the CYA report test suite (`test_cya_high_report.py`) with the simplified single-key filter to confirm `test_cya_04_all_three_aliases_surface` + `test_cya_12_cya_alias_specifically_surfaces` still pass — because after migration every legacy row is stored under `cyanuric_acid`, all three subtests converge on the canonical key.
 
 **Status:** OPEN. Do NOT implement in this sprint — scope-locked chore so a future dispatch can resume with full context.
 
 **Cross-refs:**
-- CYA BE commit `fc5784a35` — introduces the current `$in` consumer with inline TODO pointer at `backend/routers/reports.py` CYA block.
-- CYA FE commit `b33965479` — unaffected (FE doesn't care about the key normalization).
+- CYA v1 BE commit `fc5784a35` — introduced the original 2-alias `$in` consumer.
+- CYA v1 FE commit `b33965479` — unaffected (FE doesn't care about the key normalization).
+- CYA v2 BE commit `ed6538929` — expanded `_CYA_KEYS` to the three-alias list and dropped the `submitted_at` gate; this chore's scope §4 now needs to roll back `_CYA_KEYS` to a single-key filter post-migration.
+- CYA v2 FE commit `2bd504013` — reshape to per-reading rows; unaffected.
 
 
 ## TD-mobile-portal-next-visit-empty-state · P2 · Feb-2026 (DELEGATE: `e1_expo_frontend_dev`)
