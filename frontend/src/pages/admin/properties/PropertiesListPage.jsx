@@ -46,6 +46,14 @@ const ACTIVE_OPTIONS = [
   { key: "all", label: "All" },
 ];
 
+// Feb-2026 · TD-80 follow-up (operator Q2=a) — bump the active-list
+// request to the BE max (2000) and surface a cap-hit footer when the
+// response fills the page. Mirrors `limit <= 2000` ceiling in
+// `backend/routers/properties.py::list_properties`. Keep this as a
+// const so the vitest can assert the exact query-string value and
+// the footer copy stays in sync with the request.
+const PROPERTIES_LIST_LIMIT = 2000;
+
 
 function formatAddress(addr) {
   if (!addr) return "";
@@ -211,6 +219,11 @@ export default function PropertiesListPage() {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [customerIndex, setCustomerIndex] = useState({});
+  // Feb-2026 · aggregator count from GET /dashboard — fed into the
+  // cap-hit footer copy ("Showing first N of M…"). Null when the
+  // dashboard call fails or isn't admin-visible; the footer then
+  // falls back to the row-count-equals-limit heuristic alone.
+  const [activeAccountsCount, setActiveAccountsCount] = useState(null);
 
   const fetchRows = useCallback(async () => {
     setLoading(true);
@@ -224,6 +237,9 @@ export default function PropertiesListPage() {
       }
       if (customerIdFilter) params.customer_id = customerIdFilter;
       if (search) params.search = search;
+      // TD-80 follow-up — ask BE for the full cap so a tenant with
+      // >500 active properties no longer silently loses the tail.
+      params.limit = String(PROPERTIES_LIST_LIMIT);
       const qs = new URLSearchParams(params).toString();
       const r = await api.get(`/properties${qs ? `?${qs}` : ""}`);
       setRows(Array.isArray(r?.items) ? r.items : []);
@@ -237,6 +253,24 @@ export default function PropertiesListPage() {
   useEffect(() => {
     fetchRows();
   }, [fetchRows]);
+
+  // TD-80 follow-up — hydrate the aggregator count once per mount so
+  // the cap-hit footer can show "Showing first N of M". Fail-open:
+  // non-admins / rate-limited calls degrade to the heuristic-only
+  // copy without taking the page down.
+  useEffect(() => {
+    (async () => {
+      try {
+        const d = await api.get("/dashboard");
+        const n = d?.active_accounts_count;
+        if (typeof n === "number" && Number.isFinite(n)) {
+          setActiveAccountsCount(n);
+        }
+      } catch (_err) {
+        /* fail-open — footer uses heuristic alone */
+      }
+    })();
+  }, []);
 
   // Hydrate customer names in one $in call. Fed by the per-row
   // customer_id values; cheap because the Commit-1 list endpoint
@@ -415,6 +449,38 @@ export default function PropertiesListPage() {
               onOpenProperty={onOpenProperty}
             />
           ))}
+          {/* TD-80 follow-up — cap-hit footer. Triggered strictly
+              by the heuristic ``rows.length === PROPERTIES_LIST_LIMIT``
+              (operator Q2=a). Copy includes the aggregator total
+              when available; otherwise falls back to a shorter
+              "Showing first N" line. */}
+          {rows.length === PROPERTIES_LIST_LIMIT ? (
+            <div
+              data-testid="properties-list-cap-footer"
+              style={{
+                marginTop: 16,
+                padding: "12px 16px",
+                borderRadius: 8,
+                background: colors.brandTertiary || "#fef3c7",
+                color: colors.textDim || "#78350f",
+                fontSize: 13,
+              }}
+            >
+              {typeof activeAccountsCount === "number"
+                && activeAccountsCount > PROPERTIES_LIST_LIMIT ? (
+                  <>
+                    Showing first {PROPERTIES_LIST_LIMIT.toLocaleString()}
+                    {" "}of {activeAccountsCount.toLocaleString()}{" "}
+                    active properties — refine filters to narrow.
+                  </>
+                ) : (
+                  <>
+                    Showing first {PROPERTIES_LIST_LIMIT.toLocaleString()}
+                    {" "}active properties — refine filters to narrow.
+                  </>
+                )}
+            </div>
+          ) : null}
         </div>
       )}
     </div>
