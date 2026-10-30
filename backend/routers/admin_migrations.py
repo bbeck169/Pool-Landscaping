@@ -37,6 +37,9 @@ from migrations.task_p19_backfill_empty_website_visitor_leads import (
 from migrations.backfill_paid_invoice_status_v1 import (
     backfill_paid_invoice_status,
 )
+from migrations.backfill_line_item_income_category_id_v1 import (
+    backfill_line_item_income_category_id,
+)
 
 
 logger = logging.getLogger("admin_migrations")
@@ -196,6 +199,71 @@ async def backfill_paid_invoice_status_endpoint(
         "matched": report["matched"],
         "modified": report["modified"],
         "crumbs_written": report["crumbs_written"],
+    }
+
+
+
+# ─────────────────────────────────────────────────────────────────────
+# POST /admin/migrations/backfill-line-item-income-category-id
+#
+# Feb-2026 · TD-new-invoice-category-dropdown-persist · Commit 2 —
+# one-shot migration that stamps ``income_category_id`` onto legacy
+# ``quotes.line_items[*]`` rows left stuck by the pre-fix CREATE path
+# (fixed in Commit 1 ``1216ad18e``). Resolves ``category`` name →
+# ``income_categories.id`` deterministically (zero collisions
+# across all tenants per pre-audit).
+# ─────────────────────────────────────────────────────────────────────
+@router.post(
+    "/admin/migrations/backfill-line-item-income-category-id",
+    operation_id="admin.migrations.backfill_line_item_income_category_id",
+)
+async def backfill_line_item_income_category_id_endpoint(
+    dry_run: bool = Query(
+        True,
+        description=(
+            "Safety-first default. Set to false to actually stamp "
+            "income_category_id on legacy stuck lines. Idempotent "
+            "either way — the WHERE clause excludes already-stamped "
+            "rows. Unresolvable names are LOGGED and SKIPPED — the "
+            "backfill never invents an id."
+        ),
+    ),
+    tenant_slug: Optional[str] = Query(
+        None,
+        description=(
+            "Target tenant slug. Defaults to the caller's own tenant. "
+            "Only super_admins can target a different tenant; cross-"
+            "tenant invocations are logged at WARN."
+        ),
+    ),
+    user: Dict[str, Any] = Depends(get_current_user),
+    tenant: Dict[str, Any] = Depends(get_current_tenant),
+):
+    _require_super_admin(user)
+    target = await _resolve_target_tenant(tenant, tenant_slug)
+    is_cross = target["id"] != tenant["id"]
+    log_line = (
+        f"[income-cat-backfill] user={user.get('id')} "
+        f"email={user.get('email')} caller_tenant={tenant['id']} "
+        f"target_tenant={target['id']} target_slug={target.get('slug')} "
+        f"dry_run={dry_run} cross_tenant={is_cross}"
+    )
+    if is_cross:
+        logger.warning("CROSS-TENANT admin migration invocation · " + log_line)
+    else:
+        logger.info(log_line)
+    report = await backfill_line_item_income_category_id(
+        db, tenant_id=target["id"], dry_run=dry_run,
+    )
+    return {
+        "tenant_id": target["id"],
+        "tenant_slug": target.get("slug"),
+        "tenant_name": target.get("name"),
+        "dry_run": report["dry_run"],
+        "matched_invoices": report["matched_invoices"],
+        "modified_invoices": report["modified_invoices"],
+        "lines_stamped": report["lines_stamped"],
+        "lines_unresolved": report["lines_unresolved"],
     }
 
 
