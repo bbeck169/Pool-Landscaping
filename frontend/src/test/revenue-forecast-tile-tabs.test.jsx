@@ -69,6 +69,67 @@ describe("RevenueForecastTile quick-view tabs", () => {
     expect(screen.getByTestId("revenue-forecast-tab-week")).toBeInTheDocument();
   });
 
+  // Feb-2026 — Next Week quick-view tab is present and sits between
+  // "This Week" and "This Month" in render order (narrow→wide pill flow).
+  it("renders a Next Week tab between This Week and This Month", async () => {
+    render(<RevenueForecastTile range={heroRange} />);
+    await waitFor(() => {
+      expect(screen.getByTestId("revenue-forecast-combined"))
+        .toBeInTheDocument();
+    });
+    const next = screen.getByTestId("revenue-forecast-tab-next_week");
+    expect(next).toBeInTheDocument();
+    expect(next.textContent).toMatch(/Next Week/i);
+    // Order: week → next_week → this_month.
+    const quick = screen.getByTestId("revenue-forecast-quick-view");
+    const buttons = Array.from(quick.querySelectorAll("button"))
+      .map((b) => b.getAttribute("data-testid"));
+    const iWeek = buttons.indexOf("revenue-forecast-tab-week");
+    const iNextWeek = buttons.indexOf("revenue-forecast-tab-next_week");
+    const iThisMonth = buttons.indexOf("revenue-forecast-tab-this_month");
+    expect(iWeek).toBeGreaterThan(-1);
+    expect(iNextWeek).toBe(iWeek + 1);
+    expect(iThisMonth).toBe(iNextWeek + 1);
+  });
+
+  // Feb-2026 — clicking Next Week fires a tab-local fetch covering a
+  // 7-day window one week ahead (start < end, exactly 6 days apart).
+  it("clicking Next Week fires a fetch covering a 7-day forward window", async () => {
+    render(<RevenueForecastTile range={heroRange} />);
+    await waitFor(() => {
+      expect(screen.getByTestId("revenue-forecast-combined"))
+        .toBeInTheDocument();
+    });
+    getMock.mockResolvedValueOnce({
+      combined_total: 999,
+      booked: { amount: 999, job_count: 2 },
+      recurring: { amount: 0, subscription_count: 0, cycle_count: 0 },
+    });
+    fireEvent.click(screen.getByTestId("revenue-forecast-tab-next_week"));
+    await waitFor(() => {
+      expect(getMock).toHaveBeenCalledTimes(2);
+    });
+    const secondCall = getMock.mock.calls[1][0];
+    const m = secondCall.match(/start=([^&]+)&end=([^&]+)/);
+    expect(m).not.toBeNull();
+    const [, start, end] = m;
+    // Window spans 6 inclusive days (Sun..Sat → 6-day delta).
+    const sMs = new Date(`${start}T00:00:00`).getTime();
+    const eMs = new Date(`${end}T00:00:00`).getTime();
+    const dayMs = 24 * 60 * 60 * 1000;
+    expect(Math.round((eMs - sMs) / dayMs)).toBe(6);
+    // Window is strictly in the future vs today (start > today).
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    expect(sMs).toBeGreaterThan(today.getTime());
+    // Rendered stat uses the Next Week label.
+    await waitFor(() => {
+      const stat = screen.getByTestId("revenue-forecast-tab-value");
+      expect(stat.textContent).toMatch(/Next Week/i);
+      expect(stat.textContent).toMatch(/\$999/);
+    });
+  });
+
   it("clicking Today fires a second fetch with today's date range", async () => {
     render(<RevenueForecastTile range={heroRange} />);
     // Wait for hero to settle.
