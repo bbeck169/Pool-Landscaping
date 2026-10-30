@@ -1,7 +1,14 @@
-"""Feb-2026 · CYA Over-Threshold Report tests.
+"""Feb-2026 · CYA Over-Threshold report — operator v2 fix.
 
-Covers ``GET /api/reports/cya-high`` and ``/export.csv`` with the
-10 pytest cases locked in the operator dispatch for this ticket.
+Pins the 12 pytest cases locked in the operator dispatch for the BE
+rewrite:
+
+  * Per-reading granularity (one row per reading over threshold)
+  * All historical readings (``submitted_at`` gate dropped)
+  * Three canonical aliases (``cyanuric``, ``cyanuric_acid``, ``cya``)
+  * Job date resolved via ``$lookup`` on ``jobs`` with ``$ifNull``
+    chain to SR fields
+  * Shape: ``{customer_id, customer_name, job_id, job_date, value}``
 """
 from __future__ import annotations
 
@@ -25,7 +32,6 @@ BASE_URL = (
 API = f"{BASE_URL}/api"
 
 
-# ─── auth / fixtures ──────────────────────────────────────────────
 def _login(email: str, password: str = "password123") -> str:
     r = http.post(
         f"{API}/auth/login",
@@ -68,12 +74,11 @@ def admin_h() -> dict:
 
 @pytest.fixture(scope="module")
 def customer_h() -> dict:
-    """Non-admin role for the 403 case."""
     return {"Authorization": f"Bearer {_login('customer@aquaterra.com')}"}
 
 
-# ─── seeding helpers ──────────────────────────────────────────────
-def _plant_customer(db, tenant_id: str, cid: str, name: str) -> None:
+# ─── seeding helpers ──────────────────────────────────────────
+def _plant_customer(db, tenant_id, cid, name) -> None:
     async def _go():
         await db.customers.insert_one({
             "id": cid, "tenant_id": tenant_id, "name": name,
@@ -83,25 +88,38 @@ def _plant_customer(db, tenant_id: str, cid: str, name: str) -> None:
     _run(_go())
 
 
+def _plant_job(db, tenant_id, jid, customer_id,
+                scheduled_date="2026-07-04") -> None:
+    async def _go():
+        await db.jobs.insert_one({
+            "id": jid, "tenant_id": tenant_id,
+            "customer_id": customer_id,
+            "scheduled_date": scheduled_date,
+            "scheduled_start": f"{scheduled_date}T09:00:00-07:00",
+            "status": "completed",
+            "created_at": "2026-01-01T00:00:00Z",
+        })
+    _run(_go())
+
+
 def _plant_report(
-    db, tenant_id: str, *,
-    customer_id: str, cya_key: str, cya_value,
-    submitted_at: Optional[str],
+    db, tenant_id, *,
+    customer_id, job_id, cya_key, cya_value,
+    submitted_at="2026-07-04T15:00:00+00:00",
 ) -> str:
-    rid = f"cya-r-{uuid.uuid4().hex[:12]}"
+    rid = f"cya2-r-{uuid.uuid4().hex[:12]}"
 
     async def _go():
         await db.service_reports.insert_one({
-            "id": rid,
-            "tenant_id": tenant_id,
-            "job_id": f"cya-j-{rid}",
-            "customer_id": customer_id,
+            "id": rid, "tenant_id": tenant_id,
+            "job_id": job_id, "customer_id": customer_id,
             "tech_id": "test-tech",
             "submitted_at": submitted_at,
-            "chemical_readings": [
-                {"key": cya_key, "name": "Cyanuric Acid",
-                 "unit": "ppm", "value": cya_value},
-            ],
+            "created_at": "2026-07-04T14:00:00+00:00",
+            "chemical_readings": [{
+                "key": cya_key, "name": "Cyanuric Acid",
+                "unit": "ppm", "value": cya_value,
+            }],
         })
     _run(_go())
     return rid
@@ -116,276 +134,319 @@ def _cleanup(db, coll: str, ids: list[str]) -> None:
     _run(_go())
 
 
-# ─── tests ────────────────────────────────────────────────────────
+# ─── tests ────────────────────────────────────────────────────
 def test_cya_01_admin_200_well_shaped(db, admin_h, aq_tenant_id):
-    """1. Admin can call → 200, well-shaped response."""
-    marker = uuid.uuid4().hex[:8]
-    cid = f"cya-c-01-{marker}"
-    _plant_customer(db, aq_tenant_id, cid, f"CYA-01-{marker}")
+    """1. Admin GET → 200 with per-reading row shape."""
+    m = uuid.uuid4().hex[:8]
+    cid, jid = f"cya2-c-01-{m}", f"cya2-j-01-{m}"
+    _plant_customer(db, aq_tenant_id, cid, f"CYA2-01-{m}")
+    _plant_job(db, aq_tenant_id, jid, cid)
     rid = _plant_report(
-        db, aq_tenant_id,
-        customer_id=cid, cya_key="cyanuric_acid", cya_value=150,
-        submitted_at="2026-02-15T10:00:00Z",
+        db, aq_tenant_id, customer_id=cid, job_id=jid,
+        cya_key="cyanuric_acid", cya_value=150,
     )
     try:
-        r = http.get(f"{API}/reports/cya-high", headers=admin_h, timeout=30)
+        r = http.get(f"{API}/reports/cya-high", headers=admin_h,
+                     timeout=30)
         assert r.status_code == 200, r.text
         body = r.json()
         assert set(body.keys()) >= {"threshold", "count", "items"}
-        assert body["threshold"] == 100.0
-        assert isinstance(body["items"], list)
-        assert body["count"] == len(body["items"])
-        row = next((x for x in body["items"] if x["customer_id"] == cid), None)
-        assert row is not None, "seeded customer missing from items"
-        assert set(row.keys()) >= {
+        row = next((x for x in body["items"] if x["job_id"] == jid), None)
+        assert row is not None
+        assert set(row.keys()) == {
             "customer_id", "customer_name",
-            "last_value", "last_date",
-            "max_value", "max_date",
-            "reading_count_over_threshold",
+            "job_id", "job_date", "value",
         }
-        assert row["max_value"] == 150.0
-        assert row["reading_count_over_threshold"] == 1
+        assert row["customer_id"] == cid
+        assert row["value"] == 150.0
+        assert row["job_date"] == "2026-07-04"
     finally:
         _cleanup(db, "service_reports", [rid])
+        _cleanup(db, "jobs", [jid])
         _cleanup(db, "customers", [cid])
 
 
 def test_cya_02_non_admin_403(customer_h):
     """2. Non-admin → 403."""
-    r = http.get(f"{API}/reports/cya-high", headers=customer_h, timeout=30)
-    assert r.status_code == 403, r.text
+    r = http.get(f"{API}/reports/cya-high", headers=customer_h,
+                 timeout=30)
+    assert r.status_code == 403
 
 
 def test_cya_03_cross_tenant_isolation(db, admin_h, aq_tenant_id,
                                        foreign_tenant_id):
-    """3. Tenant A admin never sees tenant B readings."""
+    """3. Cross-tenant filter."""
     if not foreign_tenant_id:
-        pytest.skip("no second tenant available in preview")
-    marker = uuid.uuid4().hex[:8]
-    a_cid = f"cya-c-A-{marker}"
-    b_cid = f"cya-c-B-{marker}"
-    _plant_customer(db, aq_tenant_id, a_cid, f"CYA-A-{marker}")
-    _plant_customer(db, foreign_tenant_id, b_cid, f"CYA-B-{marker}")
+        pytest.skip("no second tenant available")
+    m = uuid.uuid4().hex[:8]
+    a_cid, a_jid = f"cya2-c-A-{m}", f"cya2-j-A-{m}"
+    b_cid, b_jid = f"cya2-c-B-{m}", f"cya2-j-B-{m}"
+    _plant_customer(db, aq_tenant_id, a_cid, f"CYA2-A-{m}")
+    _plant_customer(db, foreign_tenant_id, b_cid, f"CYA2-B-{m}")
+    _plant_job(db, aq_tenant_id, a_jid, a_cid)
+    _plant_job(db, foreign_tenant_id, b_jid, b_cid)
     a_rid = _plant_report(
-        db, aq_tenant_id, customer_id=a_cid,
+        db, aq_tenant_id, customer_id=a_cid, job_id=a_jid,
         cya_key="cyanuric_acid", cya_value=140,
-        submitted_at="2026-02-15T10:00:00Z",
     )
     b_rid = _plant_report(
-        db, foreign_tenant_id, customer_id=b_cid,
+        db, foreign_tenant_id, customer_id=b_cid, job_id=b_jid,
         cya_key="cyanuric_acid", cya_value=180,
-        submitted_at="2026-02-15T10:00:00Z",
     )
     try:
-        r = http.get(f"{API}/reports/cya-high", headers=admin_h, timeout=30)
-        assert r.status_code == 200, r.text
-        items = r.json()["items"]
-        ids = {x["customer_id"] for x in items}
-        assert a_cid in ids
-        assert b_cid not in ids
+        r = http.get(f"{API}/reports/cya-high", headers=admin_h,
+                     timeout=30)
+        job_ids = {x["job_id"] for x in r.json()["items"]}
+        assert a_jid in job_ids
+        assert b_jid not in job_ids
     finally:
         _cleanup(db, "service_reports", [a_rid, b_rid])
+        _cleanup(db, "jobs", [a_jid, b_jid])
         _cleanup(db, "customers", [a_cid, b_cid])
 
 
-def test_cya_04_draft_readings_excluded(db, admin_h, aq_tenant_id):
-    """4. Reports with no submitted_at (drafts) are excluded (Q2=a)."""
-    marker = uuid.uuid4().hex[:8]
-    cid = f"cya-c-04-{marker}"
-    _plant_customer(db, aq_tenant_id, cid, f"CYA-04-{marker}")
-    draft_rid = _plant_report(
-        db, aq_tenant_id, customer_id=cid,
+def test_cya_04_all_three_aliases_surface(db, admin_h, aq_tenant_id):
+    """4. All 3 aliases participate: cyanuric, cyanuric_acid, cya."""
+    m = uuid.uuid4().hex[:8]
+    cid = f"cya2-c-04-{m}"
+    _plant_customer(db, aq_tenant_id, cid, f"CYA2-04-{m}")
+    pieces: list[tuple[str, str, int]] = []
+    for i, alias in enumerate(["cyanuric", "cyanuric_acid", "cya"]):
+        jid = f"cya2-j-04{i}-{m}"
+        _plant_job(db, aq_tenant_id, jid, cid,
+                     scheduled_date=f"2026-07-{10 + i:02d}")
+        rid = _plant_report(
+            db, aq_tenant_id, customer_id=cid, job_id=jid,
+            cya_key=alias, cya_value=130 + i,
+        )
+        pieces.append((alias, rid, jid))
+    try:
+        r = http.get(f"{API}/reports/cya-high", headers=admin_h,
+                     timeout=30)
+        job_ids = {x["job_id"] for x in r.json()["items"]}
+        for alias, _rid, jid in pieces:
+            assert jid in job_ids, f"alias {alias!r} missing"
+    finally:
+        _cleanup(db, "service_reports", [p[1] for p in pieces])
+        _cleanup(db, "jobs", [p[2] for p in pieces])
+        _cleanup(db, "customers", [cid])
+
+
+def test_cya_05_draft_readings_surface(db, admin_h, aq_tenant_id):
+    """5. ``submitted_at=null`` draft readings SURFACE (gate drop)."""
+    m = uuid.uuid4().hex[:8]
+    cid, jid = f"cya2-c-05-{m}", f"cya2-j-05-{m}"
+    _plant_customer(db, aq_tenant_id, cid, f"CYA2-05-{m}")
+    _plant_job(db, aq_tenant_id, jid, cid)
+    rid = _plant_report(
+        db, aq_tenant_id, customer_id=cid, job_id=jid,
         cya_key="cyanuric_acid", cya_value=200,
         submitted_at=None,
     )
     try:
-        r = http.get(f"{API}/reports/cya-high", headers=admin_h, timeout=30)
-        assert r.status_code == 200
-        ids = {x["customer_id"] for x in r.json()["items"]}
-        assert cid not in ids, "draft reading leaked into report"
+        r = http.get(f"{API}/reports/cya-high", headers=admin_h,
+                     timeout=30)
+        job_ids = {x["job_id"] for x in r.json()["items"]}
+        assert jid in job_ids, "draft reading was wrongly excluded"
     finally:
-        _cleanup(db, "service_reports", [draft_rid])
+        _cleanup(db, "service_reports", [rid])
+        _cleanup(db, "jobs", [jid])
         _cleanup(db, "customers", [cid])
-
-
-def test_cya_05_both_key_conventions_included(db, admin_h, aq_tenant_id):
-    """5. Both `cyanuric` and `cyanuric_acid` key spellings participate."""
-    marker = uuid.uuid4().hex[:8]
-    legacy_cid = f"cya-c-05L-{marker}"
-    canon_cid = f"cya-c-05C-{marker}"
-    _plant_customer(db, aq_tenant_id, legacy_cid, f"CYA-05L-{marker}")
-    _plant_customer(db, aq_tenant_id, canon_cid, f"CYA-05C-{marker}")
-    legacy_rid = _plant_report(
-        db, aq_tenant_id, customer_id=legacy_cid,
-        cya_key="cyanuric", cya_value=130,
-        submitted_at="2026-02-15T10:00:00Z",
-    )
-    canon_rid = _plant_report(
-        db, aq_tenant_id, customer_id=canon_cid,
-        cya_key="cyanuric_acid", cya_value=145,
-        submitted_at="2026-02-15T10:00:00Z",
-    )
-    try:
-        r = http.get(f"{API}/reports/cya-high", headers=admin_h, timeout=30)
-        assert r.status_code == 200
-        ids = {x["customer_id"] for x in r.json()["items"]}
-        assert legacy_cid in ids, "legacy `cyanuric` key missed"
-        assert canon_cid in ids, "canonical `cyanuric_acid` key missed"
-    finally:
-        _cleanup(db, "service_reports", [legacy_rid, canon_rid])
-        _cleanup(db, "customers", [legacy_cid, canon_cid])
 
 
 def test_cya_06_string_values_coerced(db, admin_h, aq_tenant_id):
-    """6. Stringy legacy values ("120") coerce via $convert."""
-    marker = uuid.uuid4().hex[:8]
-    hi_cid = f"cya-c-06H-{marker}"
-    lo_cid = f"cya-c-06L-{marker}"
-    _plant_customer(db, aq_tenant_id, hi_cid, f"CYA-06H-{marker}")
-    _plant_customer(db, aq_tenant_id, lo_cid, f"CYA-06L-{marker}")
-    hi_rid = _plant_report(
-        db, aq_tenant_id, customer_id=hi_cid,
-        cya_key="cyanuric_acid", cya_value="120",
-        submitted_at="2026-02-15T10:00:00Z",
-    )
-    lo_rid = _plant_report(
-        db, aq_tenant_id, customer_id=lo_cid,
-        cya_key="cyanuric_acid", cya_value="50",
-        submitted_at="2026-02-15T10:00:00Z",
-    )
+    """6. Stringy legacy values ("120") coerce correctly."""
+    m = uuid.uuid4().hex[:8]
+    cid = f"cya2-c-06-{m}"
+    _plant_customer(db, aq_tenant_id, cid, f"CYA2-06-{m}")
+    hi_jid = f"cya2-j-06H-{m}"; lo_jid = f"cya2-j-06L-{m}"
+    _plant_job(db, aq_tenant_id, hi_jid, cid)
+    _plant_job(db, aq_tenant_id, lo_jid, cid)
+    hi_rid = _plant_report(db, aq_tenant_id, customer_id=cid,
+                             job_id=hi_jid, cya_key="cyanuric_acid",
+                             cya_value="120")
+    lo_rid = _plant_report(db, aq_tenant_id, customer_id=cid,
+                             job_id=lo_jid, cya_key="cyanuric_acid",
+                             cya_value="50")
     try:
-        r = http.get(f"{API}/reports/cya-high", headers=admin_h, timeout=30)
-        assert r.status_code == 200
-        ids = {x["customer_id"] for x in r.json()["items"]}
-        assert hi_cid in ids, 'string "120" not coerced above threshold'
-        assert lo_cid not in ids, 'string "50" wrongly surfaced above 100'
+        r = http.get(f"{API}/reports/cya-high", headers=admin_h,
+                     timeout=30)
+        job_ids = {x["job_id"] for x in r.json()["items"]}
+        assert hi_jid in job_ids
+        assert lo_jid not in job_ids
     finally:
         _cleanup(db, "service_reports", [hi_rid, lo_rid])
-        _cleanup(db, "customers", [hi_cid, lo_cid])
-
-
-def test_cya_07_threshold_override(db, admin_h, aq_tenant_id):
-    """7. ?threshold=50 widens the result set."""
-    marker = uuid.uuid4().hex[:8]
-    cid = f"cya-c-07-{marker}"
-    _plant_customer(db, aq_tenant_id, cid, f"CYA-07-{marker}")
-    rid = _plant_report(
-        db, aq_tenant_id, customer_id=cid,
-        cya_key="cyanuric_acid", cya_value=75,
-        submitted_at="2026-02-15T10:00:00Z",
-    )
-    try:
-        # default (100) → excluded
-        r = http.get(f"{API}/reports/cya-high", headers=admin_h, timeout=30)
-        assert cid not in {x["customer_id"] for x in r.json()["items"]}
-        # override 50 → included
-        r2 = http.get(
-            f"{API}/reports/cya-high?threshold=50",
-            headers=admin_h, timeout=30,
-        )
-        assert r2.status_code == 200
-        body = r2.json()
-        assert body["threshold"] == 50.0
-        assert cid in {x["customer_id"] for x in body["items"]}
-    finally:
-        _cleanup(db, "service_reports", [rid])
+        _cleanup(db, "jobs", [hi_jid, lo_jid])
         _cleanup(db, "customers", [cid])
 
 
-def test_cya_08_date_range_filter(db, admin_h, aq_tenant_id):
-    """8. ?from/?to clips to the submitted_at window."""
-    marker = uuid.uuid4().hex[:8]
-    cid = f"cya-c-08-{marker}"
-    _plant_customer(db, aq_tenant_id, cid, f"CYA-08-{marker}")
-    old_rid = _plant_report(
-        db, aq_tenant_id, customer_id=cid,
-        cya_key="cyanuric_acid", cya_value=160,
-        submitted_at="2025-06-01T10:00:00Z",
-    )
-    new_rid = _plant_report(
-        db, aq_tenant_id, customer_id=cid,
-        cya_key="cyanuric_acid", cya_value=130,
-        submitted_at="2026-02-15T10:00:00Z",
-    )
+def test_cya_07_threshold_override(db, admin_h, aq_tenant_id):
+    """7. ``?threshold=50`` widens the result set."""
+    m = uuid.uuid4().hex[:8]
+    cid, jid = f"cya2-c-07-{m}", f"cya2-j-07-{m}"
+    _plant_customer(db, aq_tenant_id, cid, f"CYA2-07-{m}")
+    _plant_job(db, aq_tenant_id, jid, cid)
+    rid = _plant_report(db, aq_tenant_id, customer_id=cid,
+                         job_id=jid, cya_key="cyanuric_acid",
+                         cya_value=75)
     try:
-        # window excludes the old (160) reading → only 130 counts
+        r = http.get(f"{API}/reports/cya-high", headers=admin_h,
+                     timeout=30)
+        assert jid not in {x["job_id"] for x in r.json()["items"]}
+        r2 = http.get(f"{API}/reports/cya-high?threshold=50",
+                      headers=admin_h, timeout=30)
+        body = r2.json()
+        assert body["threshold"] == 50.0
+        assert jid in {x["job_id"] for x in body["items"]}
+    finally:
+        _cleanup(db, "service_reports", [rid])
+        _cleanup(db, "jobs", [jid])
+        _cleanup(db, "customers", [cid])
+
+
+def test_cya_08_date_range_filter_on_job_date(db, admin_h,
+                                              aq_tenant_id):
+    """8. ``?from=/?to=`` clips to ``job_date`` window."""
+    m = uuid.uuid4().hex[:8]
+    cid = f"cya2-c-08-{m}"
+    _plant_customer(db, aq_tenant_id, cid, f"CYA2-08-{m}")
+    old_jid = f"cya2-j-08O-{m}"; new_jid = f"cya2-j-08N-{m}"
+    _plant_job(db, aq_tenant_id, old_jid, cid,
+                 scheduled_date="2025-06-01")
+    _plant_job(db, aq_tenant_id, new_jid, cid,
+                 scheduled_date="2026-07-04")
+    old_rid = _plant_report(db, aq_tenant_id, customer_id=cid,
+                              job_id=old_jid, cya_key="cyanuric_acid",
+                              cya_value=160)
+    new_rid = _plant_report(db, aq_tenant_id, customer_id=cid,
+                              job_id=new_jid, cya_key="cyanuric_acid",
+                              cya_value=130)
+    try:
         r = http.get(
             f"{API}/reports/cya-high?from=2026-01-01&to=2026-12-31",
             headers=admin_h, timeout=30,
         )
-        assert r.status_code == 200
-        row = next((x for x in r.json()["items"]
-                   if x["customer_id"] == cid), None)
-        assert row is not None
-        assert row["max_value"] == 130.0, (
-            "date filter failed to exclude older 160-ppm reading"
-        )
-        assert row["reading_count_over_threshold"] == 1
+        job_ids = {x["job_id"] for x in r.json()["items"]}
+        assert new_jid in job_ids
+        assert old_jid not in job_ids
     finally:
         _cleanup(db, "service_reports", [old_rid, new_rid])
+        _cleanup(db, "jobs", [old_jid, new_jid])
         _cleanup(db, "customers", [cid])
 
 
-def test_cya_09_csv_matches_json(db, admin_h, aq_tenant_id):
+def test_cya_09_csv_mirrors_json(db, admin_h, aq_tenant_id):
     """9. CSV export mirrors JSON items row-for-row."""
-    marker = uuid.uuid4().hex[:8]
-    cid = f"cya-c-09-{marker}"
-    _plant_customer(db, aq_tenant_id, cid, f"CYA-09-{marker}")
-    rid = _plant_report(
-        db, aq_tenant_id, customer_id=cid,
-        cya_key="cyanuric_acid", cya_value=175,
-        submitted_at="2026-02-15T10:00:00Z",
-    )
+    m = uuid.uuid4().hex[:8]
+    cid, jid = f"cya2-c-09-{m}", f"cya2-j-09-{m}"
+    _plant_customer(db, aq_tenant_id, cid, f"CYA2-09-{m}")
+    _plant_job(db, aq_tenant_id, jid, cid)
+    rid = _plant_report(db, aq_tenant_id, customer_id=cid,
+                         job_id=jid, cya_key="cyanuric_acid",
+                         cya_value=175)
     try:
-        jr = http.get(f"{API}/reports/cya-high", headers=admin_h, timeout=30)
-        cr = http.get(
-            f"{API}/reports/cya-high/export.csv",
-            headers=admin_h, timeout=30,
-        )
-        assert jr.status_code == 200 and cr.status_code == 200
-        assert cr.headers.get("content-type", "").startswith("text/csv")
-        reader = csv.reader(io.StringIO(cr.text))
-        rows = list(reader)
+        jr = http.get(f"{API}/reports/cya-high",
+                      headers=admin_h, timeout=30)
+        cr = http.get(f"{API}/reports/cya-high/export.csv",
+                      headers=admin_h, timeout=30)
+        assert cr.headers.get("content-type", "").startswith(
+            "text/csv")
+        rows = list(csv.reader(io.StringIO(cr.text)))
         assert rows[0] == [
             "customer_id", "customer_name",
-            "last_value", "last_date",
-            "max_value", "max_date",
-            "reading_count_over_threshold",
+            "job_id", "job_date", "value",
         ]
-        body_rows = {r[0]: r for r in rows[1:]}
+        body_rows = {r[2]: r for r in rows[1:]}  # keyed by job_id
         for item in jr.json()["items"]:
-            row = body_rows.get(item["customer_id"])
+            row = body_rows.get(item["job_id"])
             assert row is not None, (
-                f"customer {item['customer_id']} missing from CSV"
+                f"job_id {item['job_id']} missing from CSV"
             )
+            assert row[0] == item["customer_id"]
             assert row[1] == item["customer_name"]
-            assert float(row[2]) == float(item["last_value"])
-            assert row[3] == item["last_date"]
-            assert float(row[4]) == float(item["max_value"])
-            assert row[5] == item["max_date"]
-            assert int(row[6]) == int(item["reading_count_over_threshold"])
+            assert row[3] == item["job_date"]
+            assert float(row[4]) == float(item["value"])
     finally:
         _cleanup(db, "service_reports", [rid])
+        _cleanup(db, "jobs", [jid])
         _cleanup(db, "customers", [cid])
 
 
-def test_cya_10_exactly_at_threshold_excluded(db, admin_h, aq_tenant_id):
-    """10. Reading exactly AT threshold (= 100) is EXCLUDED — strict `>`."""
-    marker = uuid.uuid4().hex[:8]
-    cid = f"cya-c-10-{marker}"
-    _plant_customer(db, aq_tenant_id, cid, f"CYA-10-{marker}")
-    rid = _plant_report(
-        db, aq_tenant_id, customer_id=cid,
-        cya_key="cyanuric_acid", cya_value=100,
-        submitted_at="2026-02-15T10:00:00Z",
-    )
+def test_cya_10_exactly_at_threshold_excluded(db, admin_h,
+                                              aq_tenant_id):
+    """10. Reading at exactly 100 EXCLUDED (strict ``>``)."""
+    m = uuid.uuid4().hex[:8]
+    cid, jid = f"cya2-c-10-{m}", f"cya2-j-10-{m}"
+    _plant_customer(db, aq_tenant_id, cid, f"CYA2-10-{m}")
+    _plant_job(db, aq_tenant_id, jid, cid)
+    rid = _plant_report(db, aq_tenant_id, customer_id=cid,
+                         job_id=jid, cya_key="cyanuric_acid",
+                         cya_value=100)
     try:
-        r = http.get(f"{API}/reports/cya-high", headers=admin_h, timeout=30)
-        assert r.status_code == 200
-        ids = {x["customer_id"] for x in r.json()["items"]}
-        assert cid not in ids, (
-            "exactly-100 reading surfaced — contract is strict `> threshold`"
-        )
+        r = http.get(f"{API}/reports/cya-high",
+                     headers=admin_h, timeout=30)
+        assert jid not in {x["job_id"] for x in r.json()["items"]}
     finally:
         _cleanup(db, "service_reports", [rid])
+        _cleanup(db, "jobs", [jid])
+        _cleanup(db, "customers", [cid])
+
+
+def test_cya_11_multiple_readings_same_customer_different_jobs(
+        db, admin_h, aq_tenant_id):
+    """11. Per-reading granularity: one customer, N jobs → N rows."""
+    m = uuid.uuid4().hex[:8]
+    cid = f"cya2-c-11-{m}"
+    _plant_customer(db, aq_tenant_id, cid, f"CYA2-11-{m}")
+    pieces: list[tuple[str, str]] = []
+    for i, value in enumerate([115, 125, 135]):
+        jid = f"cya2-j-11{i}-{m}"
+        _plant_job(db, aq_tenant_id, jid, cid,
+                     scheduled_date=f"2026-08-{10 + i:02d}")
+        rid = _plant_report(
+            db, aq_tenant_id, customer_id=cid, job_id=jid,
+            cya_key="cyanuric_acid", cya_value=value,
+        )
+        pieces.append((rid, jid))
+    try:
+        r = http.get(f"{API}/reports/cya-high",
+                     headers=admin_h, timeout=30)
+        rows = [x for x in r.json()["items"] if x["customer_id"] == cid]
+        assert len(rows) == 3
+        values = sorted(x["value"] for x in rows)
+        assert values == [115.0, 125.0, 135.0]
+        # Each row has a distinct job_id.
+        assert len({x["job_id"] for x in rows}) == 3
+    finally:
+        _cleanup(db, "service_reports", [p[0] for p in pieces])
+        _cleanup(db, "jobs", [p[1] for p in pieces])
+        _cleanup(db, "customers", [cid])
+
+
+def test_cya_12_cya_alias_specifically_surfaces(db, admin_h,
+                                                aq_tenant_id):
+    """12. Regression lock: the ``cya`` alias (3rd spelling,
+    added by this fix) must surface."""
+    m = uuid.uuid4().hex[:8]
+    cid, jid = f"cya2-c-12-{m}", f"cya2-j-12-{m}"
+    _plant_customer(db, aq_tenant_id, cid, f"CYA2-12-{m}")
+    _plant_job(db, aq_tenant_id, jid, cid)
+    rid = _plant_report(
+        db, aq_tenant_id, customer_id=cid, job_id=jid,
+        cya_key="cya", cya_value=145,
+    )
+    try:
+        r = http.get(f"{API}/reports/cya-high",
+                     headers=admin_h, timeout=30)
+        row = next(
+            (x for x in r.json()["items"] if x["job_id"] == jid),
+            None,
+        )
+        assert row is not None, (
+            "the 'cya' alias was wrongly excluded"
+        )
+        assert row["value"] == 145.0
+    finally:
+        _cleanup(db, "service_reports", [rid])
+        _cleanup(db, "jobs", [jid])
         _cleanup(db, "customers", [cid])

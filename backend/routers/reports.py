@@ -1538,22 +1538,28 @@ async def get_labor_cost_report(
     )
 
 
-# ─── CYA Over-Threshold Report · Feb-2026 ─────────────────────────────────
-# Admin-only report scanning ``service_reports.chemical_readings`` for any
-# historical Cyanuric Acid reading above the operator-configurable
-# threshold (default 100 ppm, strict ``>``). Supports both canonical key
-# spellings (``cyanuric`` and ``cyanuric_acid``) until the normalization
-# chore (``TD-chemistry-cyanuric-key-normalization``) collapses them to
-# one. Numeric coercion uses Mongo ``$convert`` so stringy legacy values
-# ("120") participate correctly.
+# ─── CYA Over-Threshold Report · Feb-2026 (operator fix v2) ───────────
+# Admin-only report scanning ``service_reports.chemical_readings`` for
+# every historical Cyanuric Acid reading above the operator-configurable
+# threshold (default 100 ppm, strict ``>``). Operator-locked spec v2:
 #
-# Operator-locked spec:
-#   • Submitted reports only (``submitted_at IS NOT NULL``) — Q2=a
-#   • Default date range: all-time (empty from/to) — Q3=a
-#   • Numeric coercion via ``$convert``/``$toDouble`` — Q4=a
-#   • Strict ``> threshold`` (NOT ``>=``) — operator "over 100 ppm"
-#   • Customer-level grouping with last+max value/date + count-over
-_CYA_KEYS = ["cyanuric", "cyanuric_acid"]
+#   • **Per-reading granularity** — one row per over-threshold reading,
+#     NOT per customer. A customer with three bad readings surfaces
+#     three rows.
+#   • **All historical** — the ``submitted_at IS NOT NULL`` gate is
+#     dropped. Draft reports with CYA readings surface too.
+#   • **Three canonical aliases** — ``cyanuric``, ``cyanuric_acid``,
+#     and ``cya`` (live DB probe confirmed the third alias exists in
+#     production shape; TD-chemistry-cyanuric-key-normalization chore
+#     tracks the collapse).
+#   • **Job date source** — ``jobs.scheduled_date`` →
+#     ``jobs.scheduled_start`` → ``service_reports.submitted_at`` →
+#     ``service_reports.created_at`` (first non-null wins).
+#   • Numeric coercion via Mongo ``$convert``/``$toDouble`` so
+#     stringy legacy values ("120") still participate.
+#   • Columns: ``customer_id``, ``customer_name``, ``job_id``,
+#     ``job_date``, ``value``.
+_CYA_KEYS = ["cyanuric", "cyanuric_acid", "cya"]
 
 
 async def _cya_high_items(
@@ -1564,75 +1570,105 @@ async def _cya_high_items(
 ) -> list[dict]:
     """Build the CYA-over-threshold items list for a tenant. Shared
     between the JSON endpoint and the CSV export so both return
-    row-for-row identical data."""
-    match: dict = {
-        "tenant_id": tenant_id,
-        "submitted_at": {"$ne": None},
-    }
+    row-for-row identical data. One row per over-threshold reading
+    (operator v2 spec — see module-level docstring)."""
+    pipeline: list[dict] = [
+        {"$match": {
+            "tenant_id": tenant_id,
+            "chemical_readings": {"$exists": True, "$ne": []},
+        }},
+        {"$unwind": "$chemical_readings"},
+        {"$match": {"chemical_readings.key": {"$in": _CYA_KEYS}}},
+        {"$addFields": {"__v": {"$convert": {
+            "input": "$chemical_readings.value",
+            "to": "double",
+            "onError": None,
+            "onNull": None,
+        }}}},
+        {"$match": {"__v": {"$ne": None, "$gt": threshold}}},
+        # Join to the linked job to pull the authoritative service
+        # date. We also carry the SR-side ``submitted_at`` and
+        # ``created_at`` through so the ``$ifNull`` fallback chain
+        # has something to grab when the job is missing or has no
+        # scheduled timestamps.
+        {"$lookup": {
+            "from": "jobs",
+            "let": {"jid": "$job_id", "tid": "$tenant_id"},
+            "pipeline": [
+                {"$match": {"$expr": {"$and": [
+                    {"$eq": ["$id", "$$jid"]},
+                    {"$eq": ["$tenant_id", "$$tid"]},
+                ]}}},
+                {"$project": {"_id": 0, "id": 1,
+                                "scheduled_date": 1,
+                                "scheduled_start": 1,
+                                "customer_id": 1}},
+                {"$limit": 1},
+            ],
+            "as": "_job",
+        }},
+        {"$addFields": {"_job": {"$arrayElemAt": ["$_job", 0]}}},
+        {"$addFields": {
+            "__job_date": {"$ifNull": [
+                "$_job.scheduled_date",
+                {"$ifNull": [
+                    "$_job.scheduled_start",
+                    {"$ifNull": ["$submitted_at", "$created_at"]},
+                ]},
+            ]},
+            "__customer_id": {"$ifNull": [
+                "$_job.customer_id", "$customer_id",
+            ]},
+        }},
+    ]
+    # Optional date-range filter on resolved ``__job_date``.
     if dfrom or dto:
         rng: dict = {"$ne": None}
         if dfrom:
             rng["$gte"] = dfrom
         if dto:
-            # end-of-day inclusive (ISO lexicographic comparison)
+            # End-of-day inclusive — ISO lexicographic comparison.
             rng["$lte"] = f"{dto}T23:59:59.999Z"
-        match["submitted_at"] = rng
-    pipeline = [
-        {"$match": match},
-        {"$unwind": "$chemical_readings"},
-        {"$match": {"chemical_readings.key": {"$in": _CYA_KEYS}}},
-        {"$addFields": {
-            "__v": {"$convert": {
-                "input": "$chemical_readings.value",
-                "to": "double",
-                "onError": None,
-                "onNull": None,
-            }},
-        }},
-        {"$match": {"__v": {"$ne": None, "$gt": threshold}}},
-        {"$group": {
-            "_id": "$customer_id",
-            "readings": {"$push": {"v": "$__v", "d": "$submitted_at"}},
-            "count": {"$sum": 1},
-        }},
-    ]
-    rows = await db.service_reports.aggregate(pipeline).to_list(length=None)
-    if not rows:
-        return []
-    cust_ids = [r["_id"] for r in rows if r.get("_id")]
-    customers = await db.customers.find(
-        {"tenant_id": tenant_id, "id": {"$in": cust_ids}},
-        {"_id": 0, "id": 1, "name": 1},
-    ).to_list(length=None)
-    cmap = {c["id"]: c.get("name") or "" for c in customers}
+        pipeline.append({"$match": {"__job_date": rng}})
 
-    items: list[dict] = []
-    for r in rows:
-        cid = r.get("_id")
-        if not cid:
-            continue
-        readings = r.get("readings") or []
-        if not readings:
-            continue
-        last = max(readings, key=lambda x: x.get("d") or "")
-        best = max(
-            readings,
-            key=lambda x: (x.get("v") or 0.0, x.get("d") or ""),
-        )
-        items.append({
-            "customer_id": cid,
-            "customer_name": cmap.get(cid, ""),
-            "last_value": last["v"],
-            "last_date": last["d"],
-            "max_value": best["v"],
-            "max_date": best["d"],
-            "reading_count_over_threshold": r.get("count", 0),
-        })
-    items.sort(
-        key=lambda x: (-(x["max_value"] or 0.0),
-                       (x["customer_name"] or "").lower()),
-    )
-    return items
+    pipeline.extend([
+        {"$lookup": {
+            "from": "customers",
+            "let": {"cid": "$__customer_id", "tid": "$tenant_id"},
+            "pipeline": [
+                {"$match": {"$expr": {"$and": [
+                    {"$eq": ["$id", "$$cid"]},
+                    {"$eq": ["$tenant_id", "$$tid"]},
+                ]}}},
+                {"$project": {"_id": 0, "name": 1}},
+                {"$limit": 1},
+            ],
+            "as": "_cust",
+        }},
+        {"$addFields": {"_cust": {"$arrayElemAt": ["$_cust", 0]}}},
+        {"$project": {
+            "_id": 0,
+            "customer_id": "$__customer_id",
+            "customer_name": {"$ifNull": ["$_cust.name", ""]},
+            "job_id": "$job_id",
+            "job_date": "$__job_date",
+            "value": "$__v",
+        }},
+        # Worst offenders first; stable secondary sort by job_date.
+        {"$sort": {"value": -1, "job_date": -1}},
+    ])
+    rows = await db.service_reports.aggregate(pipeline).to_list(length=None)
+    return [
+        {
+            "customer_id": r.get("customer_id") or "",
+            "customer_name": r.get("customer_name") or "",
+            "job_id": r.get("job_id") or "",
+            "job_date": r.get("job_date"),
+            "value": r.get("value"),
+        }
+        for r in rows
+        if r.get("customer_id")
+    ]
 
 
 @router.get("/reports/cya-high")
@@ -1642,8 +1678,9 @@ async def cya_high_report(
     dto: Optional[str] = Query(None, alias="to"),
     user: dict = Depends(require_admin),
 ):
-    """Pools with any historical Cyanuric Acid reading above
-    ``threshold`` (default 100 ppm) in submitted service reports."""
+    """One row per Cyanuric Acid reading above ``threshold`` (default
+    100 ppm) across every historical service report. Operator v2
+    spec — see ``_cya_high_items`` docstring for the full rules."""
     tenant_id = user["tenant_id"]
     items = await _cya_high_items(tenant_id, threshold, dfrom, dto)
     return {"threshold": threshold, "count": len(items), "items": items}
@@ -1665,16 +1702,12 @@ async def cya_high_report_csv(
     w = csv.writer(buf)
     w.writerow([
         "customer_id", "customer_name",
-        "last_value", "last_date",
-        "max_value", "max_date",
-        "reading_count_over_threshold",
+        "job_id", "job_date", "value",
     ])
     for it in items:
         w.writerow([
             it["customer_id"], it["customer_name"],
-            it["last_value"], it["last_date"],
-            it["max_value"], it["max_date"],
-            it["reading_count_over_threshold"],
+            it["job_id"], it["job_date"], it["value"],
         ])
     buf.seek(0)
     return StreamingResponse(
