@@ -3571,3 +3571,36 @@ Low. Hide-only path; no BE write-blocks. Mobile `time_entries` writes from pool 
   - **AI draft:** `POST /ai/draft-reply {channel, recipient_type:"customer", recipient_id}` + Undo.
 - Mobile `customer-action-text` uses the native `sms:` handoff (operator decision), so those texts aren't logged in `communications_log`, skip BE consent checks, and come from the admin's own number. Web Text uses `POST /customers/{cid}/send-sms`.
 - Owner role can't see the Email button: mobile `isAdmin` = admin/super_admin, while BE `require_admin` also allows owner. Same class as `TD-mobile-category-owner-gap`.
+
+## TD-chemistry-cyanuric-key-normalization · P2 · Feb-2026 (BE)
+
+**Origin:** CYA Over-Threshold report ship (BE `fc5784a35`, FE `b33965479`). The report consumer currently queries both key spellings via `{"$in": ["cyanuric", "cyanuric_acid"]}` because historic `service_reports.chemical_readings[].key` carries both. Flagged in the dispatch message as a sibling chore so a future sprint can collapse the two to one canonical key.
+
+**Current state (verified):**
+- `backend/services/chemistry.py:76-77` normalizes BOTH `"cyanuric"` and `"cyanuric_acid"` → `"cya"` for internal classification purposes.
+- `backend/services/pool_dosing.py:64-66` also folds `"cya"` + `"stabilizer"` → `"cyanuric_acid"` for dosing math.
+- `backend/services/chemistry_gate.py:140-141` and `services/water_bodies.py:56,69,84` use `"cyanuric_acid"` server-side.
+- `backend/services/inventory_alerts.py:55` uses `"cyanuric_acid"` as the inventory slug.
+- `backend/services/auto_visit_email.py:349` uses `"cyanuric_acid"` as the merge-tag key.
+
+**Canonical pick:** `"cyanuric_acid"`. Winner because it's already server-side across chemistry gate / dosing / inventory / merge tags / water-bodies. `"cyanuric"` only survives as an alias in the normalizer maps and as historic data in `service_reports.chemical_readings[].key`.
+
+**Scope:**
+1. One-shot migration script `backend/services/migrations/chemistry_cyanuric_key_normalize_v1.py` — `$pull` every `chemical_readings[]` entry with `key == "cyanuric"` and re-insert with `key = "cyanuric_acid"` (preserve all other fields). Model on the shape of the existing `chemistry_remove_total_chlorine_v1.py` migration (same collection, same unwind pattern).
+2. Idempotence sentinel: write a `migrations_runs` row keyed on the migration name so the server boot path doesn't re-run it.
+3. Update any FE chemistry-reading picker if it still offers the legacy `"cyanuric"` key as a selectable option (grep `frontend/src/` for `"cyanuric"` string literals; expected hits in chemistry editors / checklist builders).
+4. Simplify the CYA report consumer: `backend/routers/reports.py :: _cya_high_items()` currently has `_CYA_KEYS = ["cyanuric", "cyanuric_acid"]` and uses `$in`. After the migration lands + boot path has run on every tenant, drop the alias and switch to `"chemical_readings.key": "cyanuric_acid"` (single-key `$eq`, no `$in`).
+5. Update the normalizer maps in `services/chemistry.py` + `services/pool_dosing.py` to KEEP the `"cyanuric"` alias (defensive — in case a third-party API or operator-pasted CSV still uses the legacy key). This is NOT a drop of the alias; the migration only cleans historic data.
+
+**Rationale for deferral:** Non-blocking. The report works correctly today with the `$in` guard, and the two-key split is cosmetic rather than functional. Natural time to ship is during the next chemistry-reading pipeline edit (e.g. a new chemistry gate, a new chemistry report, or the next labelling pass in `services/chemistry.py`).
+
+**Test plan:**
+- Pytest: 3 cases on the migration (dry-run shape, apply changes rows, idempotence sentinel honoured).
+- Pytest: re-run the CYA report test suite (`test_cya_high_report.py`) with the simplified single-key filter to confirm `test_cya_05_both_key_conventions_included` still passes — because after migration the legacy row is now stored under `cyanuric_acid`, both halves of that test converge on the canonical key.
+
+**Status:** OPEN. Do NOT implement in this sprint — scope-locked chore so a future dispatch can resume with full context.
+
+**Cross-refs:**
+- CYA BE commit `fc5784a35` — introduces the current `$in` consumer with inline TODO pointer at `backend/routers/reports.py` CYA block.
+- CYA FE commit `b33965479` — unaffected (FE doesn't care about the key normalization).
+
