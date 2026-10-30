@@ -3834,3 +3834,87 @@ Code-comment at L178: *"we only honour it when the customer has 0 saved PMs toda
 - FE double-guard site: `frontend/src/components/PaymentForm.jsx:186-189`.
 - BE double-guard site: `backend/routers/lumino_link_request.py:179-181`.
 - Attach helper: `backend/services/payments/stripe_charge.py:1787` `_save_pm_after_first_payment`.
+## TD-form-builder-accordion-ux-polish · OPEN · Feb-2026 (P3 · UX polish)
+
+**Origin:** CUS-Marketing-Form-Builder Phase 5 (α-delta), Commits A–C (`6975f8abf`, `3ecde9990`, `f2001437a`). Operator design image 2 specified an accordion UX for the ThemePanel's Phase-5 sections (Style / Font / Wallpaper / Banner / Header collapsibles). Current implementation ships a non-collapsible vertical stack to keep Commit C single-concern and avoid rewriting the shipped K34 preset/customize UX.
+
+**Operator-reported design intent (from design image 2):**
+- Panel title "Form Customization"
+- Collapsible sections (accordion) for:
+  - Style (container layout + header layout tiles)
+  - Font (family + size)
+  - Wallpaper (image upload)
+  - Banner (image upload)
+  - Header (color + font controls)
+- Style section expanded by default; others collapsed.
+
+**Current shipped shape (Phase 5 α-delta):**
+- Phase-5 sub-sections render as a flat vertical stack INSIDE `ThemePanel.jsx` body, separated by a top-border divider from the shipped K34 preset picker + Phase-2 Advanced expand.
+- All sections always visible; no per-section collapse state.
+- Testids: `theme-layout-container-section`, `theme-layout-header-section`, `theme-font-size-scale-section`, `theme-wallpaper-section`, `theme-banner-section`.
+
+**Scope stub for polish:**
+1. Wrap each Phase-5 sub-section in a `<details><summary>` or a shadcn Accordion item.
+2. Store expand/collapse state in `ThemePanel` local state (NOT persisted on the theme — purely UX).
+3. Default expand state: Style = open, others = closed per design image 2.
+4. Preserve all shipped testids + add `-collapse-toggle` testid for e2e of the expand/collapse interaction.
+5. Vitest: expand/collapse state transitions correctly; collapsed state doesn't lose selected values.
+
+**Risk flags:**
+- MUST preserve the shipped K34 "Customize" expand pattern on the preset section — don't fuse the Phase-5 accordion with the Phase-2 Advanced-expand, keep them separate so operators who customised a preset can still find the color pickers.
+- Accordion wrappers tend to re-mount children on collapse — verify no state loss on the Phase-5 image slot pick flow (MediaLibraryPicker open-state must survive).
+- Mobile Safari `<details>` has known collapse-animation glitches — if shadcn Accordion is used instead, confirm no package weight blowup.
+
+**Priority:** P3. The Phase 5 α-delta functionality is complete and operator-usable today; the accordion is a visual polish ask.
+
+**Status:** OPEN. Not blocking any shipped flow. Pick up when a UI/UX polish sprint is scheduled.
+
+**Cross-refs:**
+- Commit A `6975f8abf` — BE normaliser.
+- Commit B `3ecde9990` — FE coerceTheme + themeToCssVars.
+- Commit C `f2001437a` — FE ThemePanel UI + ThemedFormShell renderer honor.
+- Operator design image 2 (session chat, Feb-2026).
+
+
+## TD-mobile-form-theme-layout-wallpaper-banner-parity · OPEN · Feb-2026 (P2 · mobile parity)
+
+**Origin:** CUS-Marketing-Form-Builder Phase 5 (α-delta), Commits A–C. Web now supports four new theme fields (`theme.layout.{container,header}`, `theme.font.size_scale`, `theme.wallpaper`, `theme.banner`) wired end-to-end on `ThemedFormShell` + the public lead intake renderer. Mobile has lead-intake surfaces but no theme-aware form renderer today.
+
+**Scope for `e1_expo_frontend_dev`:**
+
+1. **Audit mobile form-rendering surfaces** — initial grep shows:
+   - `/app/mobile/src/components/NewLeadForm.tsx` — mobile admin flow for creating leads
+   - `/app/mobile/app/leads/*` — leads screens
+   - None of these currently consume `form.theme` or render a themed public form.
+   Audit must confirm whether any mobile screen renders a tenant's `marketing_forms` doc as a public form OR whether the public form is strictly web-only.
+
+2. **If web-only (likely):** No parity work needed. Close this TD with a two-line "mobile has no themed form renderer — public form path is web-only" note after the audit.
+
+3. **If mobile DOES render marketing forms:**
+   - Port the shipped BE contract — Phase-5 fields are already stored on `theme` opaquely.
+   - Mirror `coerceTheme` + `themeToCssVars` into mobile-side helpers.
+   - Implement a mobile `ThemedFormShell` equivalent (RN `View` + inline style props):
+     - Wallpaper: `backgroundImage` → RN `ImageBackground` component.
+     - Banner: a 120px-tall RN `Image` above the children.
+     - Layout enums: swap flex alignment per container enum; swap header render per header enum.
+     - Font-size scale: pass as a multiplier down to text components (RN doesn't inherit `em` the same way web does).
+   - Jest-expo vitest mirroring the 7 renderer-honor cases from
+     `frontend/src/test/form-builder-phase5-ui-renderer.test.jsx`.
+
+**BE Contract already live:**
+- `backend/routers/marketing_forms.py` with `_coerce_theme_extras` normalises the four fields on POST + PATCH.
+- No new API endpoint needed — mobile reads `GET /admin/forms/{fid}` or `GET /public/forms/{slug}` same as web.
+
+**Risk:** Low to medium.
+- Low if the audit finds no mobile form renderer (close as no-op).
+- Medium if parity work IS needed — RN doesn't have CSS vars; the port must pre-compute all style values in JS and pass down as React Native style prop values. The mapping is mechanical but surface-area-heavy.
+
+**Priority:** P2. Depends on whether mobile has a public form render surface. Audit result determines whether this is a no-op close or a full port ticket.
+
+**Status:** OPEN. Scope-locked to `e1_expo_frontend_dev`. Do NOT implement from the web agent (standing `/app/mobile/` discipline).
+
+**Cross-refs:**
+- Commit A `6975f8abf` — BE normaliser + reference contract.
+- Commit B `3ecde9990` — FE coerceTheme + themeToCssVars reference.
+- Commit C `f2001437a` — FE ThemePanel UI + ThemedFormShell renderer reference.
+- Vitest reference suite: `frontend/src/test/form-builder-phase5-ui-renderer.test.jsx` (7 renderer-honor cases to mirror in jest-expo).
