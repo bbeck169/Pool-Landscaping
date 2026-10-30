@@ -1536,3 +1536,152 @@ async def get_labor_cost_report(
         tenant["id"], start, end,
         tech_filter=(tech_id or None),
     )
+
+
+# ─── CYA Over-Threshold Report · Feb-2026 ─────────────────────────────────
+# Admin-only report scanning ``service_reports.chemical_readings`` for any
+# historical Cyanuric Acid reading above the operator-configurable
+# threshold (default 100 ppm, strict ``>``). Supports both canonical key
+# spellings (``cyanuric`` and ``cyanuric_acid``) until the normalization
+# chore (``TD-chemistry-cyanuric-key-normalization``) collapses them to
+# one. Numeric coercion uses Mongo ``$convert`` so stringy legacy values
+# ("120") participate correctly.
+#
+# Operator-locked spec:
+#   • Submitted reports only (``submitted_at IS NOT NULL``) — Q2=a
+#   • Default date range: all-time (empty from/to) — Q3=a
+#   • Numeric coercion via ``$convert``/``$toDouble`` — Q4=a
+#   • Strict ``> threshold`` (NOT ``>=``) — operator "over 100 ppm"
+#   • Customer-level grouping with last+max value/date + count-over
+_CYA_KEYS = ["cyanuric", "cyanuric_acid"]
+
+
+async def _cya_high_items(
+    tenant_id: str,
+    threshold: float,
+    dfrom: Optional[str],
+    dto: Optional[str],
+) -> list[dict]:
+    """Build the CYA-over-threshold items list for a tenant. Shared
+    between the JSON endpoint and the CSV export so both return
+    row-for-row identical data."""
+    match: dict = {
+        "tenant_id": tenant_id,
+        "submitted_at": {"$ne": None},
+    }
+    if dfrom or dto:
+        rng: dict = {"$ne": None}
+        if dfrom:
+            rng["$gte"] = dfrom
+        if dto:
+            # end-of-day inclusive (ISO lexicographic comparison)
+            rng["$lte"] = f"{dto}T23:59:59.999Z"
+        match["submitted_at"] = rng
+    pipeline = [
+        {"$match": match},
+        {"$unwind": "$chemical_readings"},
+        {"$match": {"chemical_readings.key": {"$in": _CYA_KEYS}}},
+        {"$addFields": {
+            "__v": {"$convert": {
+                "input": "$chemical_readings.value",
+                "to": "double",
+                "onError": None,
+                "onNull": None,
+            }},
+        }},
+        {"$match": {"__v": {"$ne": None, "$gt": threshold}}},
+        {"$group": {
+            "_id": "$customer_id",
+            "readings": {"$push": {"v": "$__v", "d": "$submitted_at"}},
+            "count": {"$sum": 1},
+        }},
+    ]
+    rows = await db.service_reports.aggregate(pipeline).to_list(length=None)
+    if not rows:
+        return []
+    cust_ids = [r["_id"] for r in rows if r.get("_id")]
+    customers = await db.customers.find(
+        {"tenant_id": tenant_id, "id": {"$in": cust_ids}},
+        {"_id": 0, "id": 1, "name": 1},
+    ).to_list(length=None)
+    cmap = {c["id"]: c.get("name") or "" for c in customers}
+
+    items: list[dict] = []
+    for r in rows:
+        cid = r.get("_id")
+        if not cid:
+            continue
+        readings = r.get("readings") or []
+        if not readings:
+            continue
+        last = max(readings, key=lambda x: x.get("d") or "")
+        best = max(
+            readings,
+            key=lambda x: (x.get("v") or 0.0, x.get("d") or ""),
+        )
+        items.append({
+            "customer_id": cid,
+            "customer_name": cmap.get(cid, ""),
+            "last_value": last["v"],
+            "last_date": last["d"],
+            "max_value": best["v"],
+            "max_date": best["d"],
+            "reading_count_over_threshold": r.get("count", 0),
+        })
+    items.sort(
+        key=lambda x: (-(x["max_value"] or 0.0),
+                       (x["customer_name"] or "").lower()),
+    )
+    return items
+
+
+@router.get("/reports/cya-high")
+async def cya_high_report(
+    threshold: float = Query(100.0, ge=0),
+    dfrom: Optional[str] = Query(None, alias="from"),
+    dto: Optional[str] = Query(None, alias="to"),
+    user: dict = Depends(require_admin),
+):
+    """Pools with any historical Cyanuric Acid reading above
+    ``threshold`` (default 100 ppm) in submitted service reports."""
+    tenant_id = user["tenant_id"]
+    items = await _cya_high_items(tenant_id, threshold, dfrom, dto)
+    return {"threshold": threshold, "count": len(items), "items": items}
+
+
+@router.get("/reports/cya-high/export.csv")
+async def cya_high_report_csv(
+    threshold: float = Query(100.0, ge=0),
+    dfrom: Optional[str] = Query(None, alias="from"),
+    dto: Optional[str] = Query(None, alias="to"),
+    user: dict = Depends(require_admin),
+):
+    """CSV mirror of ``/reports/cya-high`` — row-for-row identical."""
+    from fastapi.responses import StreamingResponse
+
+    tenant_id = user["tenant_id"]
+    items = await _cya_high_items(tenant_id, threshold, dfrom, dto)
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow([
+        "customer_id", "customer_name",
+        "last_value", "last_date",
+        "max_value", "max_date",
+        "reading_count_over_threshold",
+    ])
+    for it in items:
+        w.writerow([
+            it["customer_id"], it["customer_name"],
+            it["last_value"], it["last_date"],
+            it["max_value"], it["max_date"],
+            it["reading_count_over_threshold"],
+        ])
+    buf.seek(0)
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": 'attachment; filename="cya-high.csv"',
+        },
+    )
+
