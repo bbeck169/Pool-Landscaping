@@ -108,3 +108,54 @@ it("Y8 · screen wiring lock: chips mounted for all roles above the tech filter;
   expect(SRC).toContain("}, [focus, user?.id, crewFilter, isTech, resolvedTechId, serviceCategory]);");
   expect(SRC).toMatch(/categoryEffectMounted\.current = true; return; }\n\s+load\(true\);\n\s+}, \[serviceCategory\]\);/);
 });
+
+describe("Schedule declutter · overflow actions + Filters drawer (source locks)", () => {
+  const fs = require("fs");
+  const path = require("path");
+  const S = fs.readFileSync(path.join(__dirname, "../app/(app)/schedule/calendar.tsx"), "utf8");
+  const HEADER = S.slice(S.indexOf("<Header\n        title=\"Schedule\""), S.indexOf('testID="schedule-root-scroll"'));
+  const sheet = (id: string) => S.slice(S.indexOf(`testID="${id}">`), S.indexOf("</SwipeSheet>", S.indexOf(`testID="${id}">`)));
+
+  it("D1 · top bar: Sync Route + Refresh icons gone; Filters + ⋯ (labelled, expanded state) via headerActions", () => {
+    expect(HEADER).not.toMatch(/testID="schedule-sync-route"|testID="schedule-refresh"/);
+    expect(HEADER).toContain("{!compactHeader && headerActions}");
+    expect(S).toMatch(/onPress=\{\(\) => setFiltersOpen\(true\)\}[\s\S]{0,200}testID="schedule-filters-button"[\s\S]{0,80}accessibilityLabel="Open filters"[\s\S]{0,120}accessibilityState=\{\{ expanded: filtersOpen \}\}/);
+    expect(S).toMatch(/onPress=\{\(\) => setActionsSheetOpen\(true\)\}[\s\S]{0,120}testID="schedule-actions-overflow"[\s\S]{0,80}accessibilityLabel="Open actions"/);
+  });
+
+  it("D2 · actions sheet holds the SAME Sync Route + Refresh controls (handlers, offline-disable, spinners)", () => {
+    const a = sheet("schedule-actions-sheet");
+    expect(a).toContain("{routeActions}");
+    expect(S).toMatch(/onPress=\{handleSyncRoute\}\s*disabled=\{syncingRoute \|\| hydrationMeta\?\.inProgress \|\| !online\}[\s\S]{0,200}testID="schedule-sync-route"/);
+    expect(S).toContain('testID="schedule-sync-route-progress"');
+    expect(S).toContain("onPress={() => { if (!refreshing) { setRefreshing(true); load(true).finally(() => setRefreshing(false)); } }}");
+    expect(S).toMatch(/disabled=\{refreshing\}[\s\S]{0,120}testID="schedule-refresh"/);
+    expect(S).toContain('testID="schedule-refresh-spinner"');
+  });
+
+  it("D3 · Filters drawer: admin-only inline tech list (same handler, no nested modal) + cancelled toggle", () => {
+    const f = sheet("schedule-filters-sheet");
+    expect(f).toMatch(/\{!isTech && \(\s*<View style=\{styles\.filtersSection\} testID="schedule-tech-filter-row">/);
+    expect(f).toContain('onPress={() => { handleTechFilterChange("all"); }}');
+    expect(f).toContain("onPress={() => { handleTechFilterChange(t.id); }}");
+    expect(f).toMatch(/onPress=\{toggleShowCancelled\}[\s\S]{0,80}testID="schedule-show-cancelled-toggle"/);
+    expect(S).not.toMatch(/techPickerOpen|setTechPickerOpen/);
+    // the cancelled toggle + tech row no longer render in the page body
+    expect(S.indexOf('testID="schedule-show-cancelled-toggle"')).toBeGreaterThan(S.indexOf('testID="schedule-filters-sheet"'));
+  });
+
+  it("D4 · Filters badge: admin = tech selected OR cancelled shown; tech = cancelled shown only", () => {
+    expect(S).toContain('const filtersActive = isTech ? showCancelled : (techFilter !== "all" || showCancelled);');
+    expect(S).toContain('{filtersActive ? <View style={styles.filtersDot} testID="schedule-filters-active-badge" /> : null}');
+  });
+
+  it("D5 · regression lock: mode toggle, category pills, Actions, Add Job, bell, SyncBadge untouched", () => {
+    expect(S).toContain('{(["calendar", "grid", "month"] as const).map((m) => {');
+    expect(S).toContain('testID="schedule-mode-switch"');
+    expect(S).toContain("<ServiceCategoryChips value={serviceCategory} onChange={setServiceCategory} />");
+    expect(S).toContain('testID="grid-actions-trigger"');
+    expect(S).toContain('testID="mobile-schedule-add-job-btn-grid"');
+    expect(S).toContain('testID="mobile-schedule-add-job-btn-calendar"');
+    expect(HEADER).toMatch(/<SyncBadge testID="schedule-header-sync-badge" \/>\s*\{isTech \? \(\s*<View testID="schedule-header-bell">/);
+  });
+});

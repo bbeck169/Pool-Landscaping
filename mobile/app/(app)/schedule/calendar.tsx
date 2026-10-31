@@ -111,6 +111,7 @@ import { resolveTechnicianId } from "@/lib/technicianResolver";
 import { jobDayKey, localDateKey } from "@/src/utils/scheduleDayKey";
 import { tenantTz } from "@/src/utils/tenantTime";
 import { notifyJobsChanged } from "@/src/background/jobGeofence";
+import SwipeSheet from "@/src/components/schedule/SwipeSheet";
 
 type Job = {
   id: string;
@@ -305,7 +306,9 @@ function ScheduleCalendarInner() {
   const [techFilter, setTechFilter] = useState<string>(
     isTech ? (user?.technician_id || "all") : "all",
   );
-  const [techPickerOpen, setTechPickerOpen] = useState(false);
+  // Schedule declutter · Filters drawer + "⋯" actions sheet (state stays here).
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [actionsSheetOpen, setActionsSheetOpen] = useState(false);
   // M3a · Service Category filter (web Ticket Y) — all roles, persisted.
   const [serviceCategory, setServiceCategory] = useScheduleServiceCategory();
 
@@ -790,27 +793,64 @@ function ScheduleCalendarInner() {
       <Pressable
         onPress={handleSyncRoute}
         disabled={syncingRoute || hydrationMeta?.inProgress || !online}
-        style={[gStyles.refreshBtn, (!online || syncingRoute || hydrationMeta?.inProgress) && { opacity: 0.5 }]}
-        hitSlop={8}
+        style={[styles.sheetRow, (!online || syncingRoute || hydrationMeta?.inProgress) && { opacity: 0.5 }]}
         testID="schedule-sync-route"
+        accessibilityRole="button"
+        accessibilityState={{ disabled: !!(syncingRoute || hydrationMeta?.inProgress || !online), busy: !!(syncingRoute || hydrationMeta?.inProgress) }}
         accessibilityLabel={!online ? "You're offline — sync when connected" : "Sync route"}
       >
         {(syncingRoute || hydrationMeta?.inProgress)
           ? <ActivityIndicator size={14} color={colors.brand} testID="schedule-sync-route-progress" />
-          : <Ionicons name="cloud-download-outline" size={16} color={colors.brand} />}
+          : <Ionicons name="cloud-download-outline" size={18} color={colors.brand} />}
+        <Text style={styles.sheetRowText}>{!online ? "Sync Route (offline)" : "Sync Route"}</Text>
       </Pressable>
       {/* ITEM 2 — Schedule Refresh Button */}
       <Pressable
         onPress={() => { if (!refreshing) { setRefreshing(true); load(true).finally(() => setRefreshing(false)); } }}
         disabled={refreshing}
-        style={[gStyles.refreshBtn, refreshing && { opacity: 0.6 }]}
-        hitSlop={8}
+        style={[styles.sheetRow, refreshing && { opacity: 0.6 }]}
         testID="schedule-refresh"
+        accessibilityRole="button"
+        accessibilityState={{ disabled: refreshing, busy: refreshing }}
         accessibilityLabel="Refresh schedule"
       >
         {refreshing
           ? <ActivityIndicator size={14} color={colors.onSurface} testID="schedule-refresh-spinner" />
-          : <Ionicons name="refresh" size={16} color={colors.onSurface} />}
+          : <Ionicons name="refresh" size={18} color={colors.onSurface} />}
+        <Text style={styles.sheetRowText}>Refresh</Text>
+      </Pressable>
+    </>
+  );
+  // Filters badge: admin → tech selected OR showing cancelled; tech → showing cancelled only.
+  const filtersActive = isTech ? showCancelled : (techFilter !== "all" || showCancelled);
+  const actionsBusy = !!(syncingRoute || hydrationMeta?.inProgress || refreshing);
+  const headerActions = (
+    <>
+      <Pressable
+        onPress={() => setFiltersOpen(true)}
+        style={[gStyles.refreshBtn, filtersActive && styles.filtersBtnActive]}
+        hitSlop={8}
+        testID="schedule-filters-button"
+        accessibilityRole="button"
+        accessibilityLabel="Open filters"
+        accessibilityHint={filtersActive ? "A filter is active" : undefined}
+        accessibilityState={{ expanded: filtersOpen }}
+      >
+        <Ionicons name="options-outline" size={16} color={filtersActive ? colors.brand : colors.onSurface} />
+        {filtersActive ? <View style={styles.filtersDot} testID="schedule-filters-active-badge" /> : null}
+      </Pressable>
+      <Pressable
+        onPress={() => setActionsSheetOpen(true)}
+        style={gStyles.refreshBtn}
+        hitSlop={8}
+        testID="schedule-actions-overflow"
+        accessibilityRole="button"
+        accessibilityLabel="Open actions"
+        accessibilityState={{ expanded: actionsSheetOpen, busy: actionsBusy }}
+      >
+        {actionsBusy
+          ? <ActivityIndicator size={14} color={colors.brand} testID="schedule-actions-overflow-busy" />
+          : <Ionicons name="ellipsis-horizontal" size={16} color={colors.onSurface} />}
       </Pressable>
     </>
   );
@@ -822,7 +862,7 @@ function ScheduleCalendarInner() {
         subtitle={loading ? "Loading…" : `${visibleJobs.length} jobs in window · ${mode}`}
         right={
           <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexShrink: 0 }}>
-            {!compactHeader && routeActions}
+            {!compactHeader && headerActions}
             <SyncBadge testID="schedule-header-sync-badge" />
             {isTech ? (
               <View testID="schedule-header-bell">
@@ -837,7 +877,7 @@ function ScheduleCalendarInner() {
           Header (not in the title row) so the title + icons never get squeezed.
           OfflineBadge renders null when there is nothing to report → strip collapses. */}
       <View style={gStyles.statusStrip} testID="schedule-status-strip">
-        {compactHeader && routeActions}
+        {compactHeader && headerActions}
         <OfflineBadge testID="schedule-header-offline-badge" cacheStats={hydrationMeta ? { cached: hydrationMeta.cachedJobs, total: hydrationMeta.totalJobs, lastSyncedAt: hydrationMeta.lastSyncedAt, syncStatus: hydrationMeta.syncStatus } : undefined} />
       </View>
 
@@ -932,57 +972,6 @@ function ScheduleCalendarInner() {
 
       {/* M3a · Service Category chip-group (web Ticket Y) — drives Grid + Calendar. */}
       <ServiceCategoryChips value={serviceCategory} onChange={setServiceCategory} />
-
-      {/* Phase S1 — Per-tech filter dropdown (admin/manager/owner only). */}
-      {!isTech && (
-        <View style={styles.techFilterRow} testID="schedule-tech-filter-row">
-          <Pressable
-            onPress={() => setTechPickerOpen(true)}
-            style={styles.techFilterBtn}
-            testID="schedule-tech-filter"
-            accessibilityRole="button"
-            accessibilityLabel="Filter schedule by technician"
-          >
-            <Ionicons name="person-outline" size={14} color={techFilter === "all" ? colors.muted : colors.brand} />
-            <Text
-              style={[styles.techFilterLabel, techFilter !== "all" && { color: colors.brand, fontFamily: font.bold }]}
-              numberOfLines={1}
-              testID="schedule-tech-filter-label"
-            >
-              {techFilter === "all"
-                ? "All techs"
-                : sortedTechs.find((t: any) => t.id === techFilter)?.name || "Tech"}
-            </Text>
-            <Ionicons name="chevron-down" size={12} color={techFilter === "all" ? colors.muted : colors.brand} />
-          </Pressable>
-        </View>
-      )}
-
-      {/* INACTIVE-CUSTOMER-CASCADE — show/hide cancelled toggle */}
-      <View style={styles.cancelledToggleRow}>
-        <Pressable
-          onPress={toggleShowCancelled}
-          style={styles.cancelledToggleBtn}
-          testID="schedule-show-cancelled-toggle"
-          accessibilityRole="switch"
-          accessibilityState={{ checked: showCancelled }}
-          accessibilityLabel={showCancelled ? "Hide cancelled" : "Show cancelled"}
-        >
-          <Ionicons
-            name={showCancelled ? "eye-outline" : "eye-off-outline"}
-            size={14}
-            color={showCancelled ? colors.brand : colors.muted}
-          />
-          <Text style={[styles.cancelledToggleText, showCancelled && { color: colors.brand }]}>
-            {showCancelled ? "Hide cancelled" : "Show cancelled"}
-          </Text>
-          {!showCancelled && hiddenCancelledCount > 0 ? (
-            <View style={styles.cancelledCountPill}>
-              <Text style={styles.cancelledCountText}>{hiddenCancelledCount}</Text>
-            </View>
-          ) : null}
-        </Pressable>
-      </View>
 
       {/* K15 · Error card with retry — replaces the old tiny inline bar */}
       {/* K43 — Empty-profile message when tech has no linked technician row. */}
@@ -1171,24 +1160,34 @@ function ScheduleCalendarInner() {
         </View>
       </Modal>
 
-      {/* Phase S1 — Tech filter picker modal */}
-      <Modal
-        visible={techPickerOpen}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setTechPickerOpen(false)}
-      >
-        <Pressable
-          style={techPickerStyles.backdrop}
-          onPress={() => setTechPickerOpen(false)}
-        >
-          <View style={techPickerStyles.sheet}>
-            <Text style={techPickerStyles.title}>Filter by technician</Text>
-            <ScrollView style={{ maxHeight: 350 }}>
+      {/* Schedule declutter · "⋯" actions sheet — Sync Route + Refresh rows
+          (same handlers, offline-disable + spinners inline). */}
+      <SwipeSheet visible={actionsSheetOpen} onClose={() => setActionsSheetOpen(false)} title="Schedule actions" testID="schedule-actions-sheet">
+        {routeActions}
+      </SwipeSheet>
+
+      {/* Schedule declutter · Filters drawer — Phase S1 tech list (inline, admin
+          only) + INACTIVE-CUSTOMER-CASCADE cancelled toggle. Same handlers. */}
+      <SwipeSheet visible={filtersOpen} onClose={() => setFiltersOpen(false)} title="Filters" testID="schedule-filters-sheet">
+      {!isTech && (
+        <View style={styles.filtersSection} testID="schedule-tech-filter-row">
+          <View style={styles.filtersSectionHead} testID="schedule-tech-filter">
+            <Ionicons name="person-outline" size={14} color={techFilter === "all" ? colors.muted : colors.brand} />
+            <Text
+              style={[styles.techFilterLabel, techFilter !== "all" && { color: colors.brand, fontFamily: font.bold }]}
+              numberOfLines={1}
+              testID="schedule-tech-filter-label"
+            >
+              {techFilter === "all"
+                ? "All techs"
+                : sortedTechs.find((t: any) => t.id === techFilter)?.name || "Tech"}
+            </Text>
+          </View>
+            <ScrollView style={{ maxHeight: 300 }}>
               {/* P9-C: techs must never see "All techs" — defense in depth */}
               {!isTech && (
               <Pressable
-                onPress={() => { handleTechFilterChange("all"); setTechPickerOpen(false); }}
+                onPress={() => { handleTechFilterChange("all"); }}
                 style={[techPickerStyles.row, techFilter === "all" && techPickerStyles.rowActive]}
                 testID="tech-filter-option-all"
               >
@@ -1202,7 +1201,7 @@ function ScheduleCalendarInner() {
               {sortedTechs.map((t: any) => (
                 <Pressable
                   key={t.id}
-                  onPress={() => { handleTechFilterChange(t.id); setTechPickerOpen(false); }}
+                  onPress={() => { handleTechFilterChange(t.id); }}
                   style={[techPickerStyles.row, techFilter === t.id && techPickerStyles.rowActive]}
                   testID={`tech-filter-option-${t.id}`}
                 >
@@ -1217,9 +1216,35 @@ function ScheduleCalendarInner() {
                 <Text style={techPickerStyles.empty}>No technicians found</Text>
               )}
             </ScrollView>
-          </View>
+        </View>
+      )}
+      {/* INACTIVE-CUSTOMER-CASCADE — show/hide cancelled toggle */}
+      <View style={styles.cancelledToggleRow}>
+        <Pressable
+          onPress={toggleShowCancelled}
+          style={styles.cancelledToggleBtn}
+          testID="schedule-show-cancelled-toggle"
+          accessibilityRole="switch"
+          accessibilityState={{ checked: showCancelled }}
+          accessibilityLabel={showCancelled ? "Hide cancelled" : "Show cancelled"}
+        >
+          <Ionicons
+            name={showCancelled ? "eye-outline" : "eye-off-outline"}
+            size={14}
+            color={showCancelled ? colors.brand : colors.muted}
+          />
+          <Text style={[styles.cancelledToggleText, showCancelled && { color: colors.brand }]}>
+            {showCancelled ? "Hide cancelled" : "Show cancelled"}
+          </Text>
+          {!showCancelled && hiddenCancelledCount > 0 ? (
+            <View style={styles.cancelledCountPill}>
+              <Text style={styles.cancelledCountText}>{hiddenCancelledCount}</Text>
+            </View>
+          ) : null}
         </Pressable>
-      </Modal>
+      </View>
+
+      </SwipeSheet>
     </View>
   );
 }
@@ -2069,6 +2094,12 @@ const styles = StyleSheet.create({
     fontFamily: font.bold, fontSize: fontSize.sm, color: "#fff",
   },
   // Phase S1 — Tech filter dropdown
+  sheetRow: { flexDirection: "row", alignItems: "center", gap: spacing.md, minHeight: 52, paddingHorizontal: spacing.sm, borderRadius: radius.md },
+  sheetRowText: { fontFamily: font.semibold, fontSize: fontSize.base, color: colors.onSurface },
+  filtersBtnActive: { borderColor: colors.brand, backgroundColor: "#EFF6FF" },
+  filtersDot: { position: "absolute", top: 4, right: 4, width: 8, height: 8, borderRadius: 4, backgroundColor: colors.brand },
+  filtersSection: { marginBottom: spacing.md },
+  filtersSectionHead: { flexDirection: "row", alignItems: "center", gap: 6, paddingVertical: spacing.sm },
   techFilterRow: {
     paddingHorizontal: spacing.md,
     paddingBottom: spacing.xs,

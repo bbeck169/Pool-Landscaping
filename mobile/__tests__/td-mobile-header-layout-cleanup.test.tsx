@@ -29,11 +29,11 @@ it("H2 · OfflineBadge renders in a separate strip directly under the Header", (
   expect(SRC).toMatch(/statusStrip: \{ flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 16, paddingTop: 6 \}/);
 });
 
-it("H2b · narrow phones (<360): Sync-route + Refresh move from the title row to the strip; wide keep them in the header", () => {
+it("H2b · narrow phones (<360): header actions (Filters + ⋯, which now hold Sync-route + Refresh) move from the title row to the strip; wide keep them in the header", () => {
   expect(SRC).toContain("const compactHeader = isCompactScheduleHeader(winWidth);");
-  expect(RIGHT).toContain("{!compactHeader && routeActions}");
+  expect(RIGHT).toContain("{!compactHeader && headerActions}"); // Schedule declutter: Filters + ⋯ replace Sync/Refresh
   const strip = HEADER.slice(HEADER.indexOf('testID="schedule-status-strip"'));
-  expect(strip).toContain("{compactHeader && routeActions}");
+  expect(strip).toContain("{compactHeader && headerActions}");
   expect(SRC.match(/testID="schedule-sync-route"/g)).toHaveLength(1); // single definition, rendered in exactly one place
   expect(SRC.match(/testID="schedule-refresh"/g)).toHaveLength(1);
 });
