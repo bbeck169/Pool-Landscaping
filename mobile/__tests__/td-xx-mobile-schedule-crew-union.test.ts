@@ -94,9 +94,9 @@ describe("calendar.tsx wiring (source lock)", () => {
   });
   it("both filteredJobs branches + month filter use the widened predicate", () => {
     expect(SRC).toContain("const inTechCrews = useCallback((j: any) => !!techCrewIds && !!j.crew_id && techCrewIds.has(j.crew_id), [techCrewIds]);");
-    expect(SRC).toContain("return jobs.filter((j) => j.technician_id === tid || !j.technician_id || inTechCrews(j));");
-    expect(SRC).toContain("return jobs.filter((j) => j.technician_id === techFilter || !j.technician_id || inTechCrews(j));");
-    expect(SRC).toContain("filterMonthJobs(arr, { isTech, techFilter, resolvedTechId, showCancelled, techCrewIds })");
+    expect(SRC).toContain("return jobs.filter((j) => j.technician_id === tid || !j.technician_id || inTechCrews(j) || matchesAltTechId(j));");
+    expect(SRC).toContain("return jobs.filter((j) => j.technician_id === techFilter || !j.technician_id || inTechCrews(j) || matchesAltTechId(j));");
+    expect(SRC).toContain("filterMonthJobs(arr, { isTech, techFilter, resolvedTechId, showCancelled, techCrewIds, altTechId })");
     expect(SRC).toContain("if (!tid) return []; // fail closed: no id → empty");
   });
 });

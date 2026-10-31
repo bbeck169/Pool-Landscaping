@@ -57,21 +57,22 @@ export function buildTechCrewIds(crews: any[] | null | undefined, tid?: string |
 }
 
 /** Direct tech match OR unassigned catch-all (D1a, unchanged) OR crew membership (new). */
-export function jobMatchesTech(j: any, tid: string, techCrewIds?: Set<string> | null): boolean {
+export function jobMatchesTech(j: any, tid: string, techCrewIds?: Set<string> | null, altTechId?: string | null): boolean {
   if (j.technician_id === tid || !j.technician_id) return true;
+  if (altTechId && j.technician_id === altTechId) return true; // Bug C · record id ↔ user_id
   return !!techCrewIds && !!j.crew_id && techCrewIds.has(j.crew_id);
 }
 
 const CANCELLED = new Set(["cancelled", "canceled", "skipped"]);
 /** Mirrors calendar.tsx filteredJobs + visibleJobs (tech fail-closed, hide cancelled). */
-export function filterMonthJobs(jobs: any[], o: { isTech: boolean; techFilter: string; resolvedTechId?: string | null; showCancelled: boolean; techCrewIds?: Set<string> | null }): any[] {
+export function filterMonthJobs(jobs: any[], o: { isTech: boolean; techFilter: string; resolvedTechId?: string | null; showCancelled: boolean; techCrewIds?: Set<string> | null; altTechId?: string | null }): any[] {
   let arr = jobs || [];
   if (o.isTech) {
     const tid = o.techFilter !== "all" ? o.techFilter : o.resolvedTechId;
     if (!tid) return [];
-    arr = arr.filter((j) => jobMatchesTech(j, tid, o.techCrewIds));
+    arr = arr.filter((j) => jobMatchesTech(j, tid, o.techCrewIds, o.altTechId));
   } else if (o.techFilter !== "all") {
-    arr = arr.filter((j) => jobMatchesTech(j, o.techFilter, o.techCrewIds));
+    arr = arr.filter((j) => jobMatchesTech(j, o.techFilter, o.techCrewIds, o.altTechId));
   }
   return o.showCancelled ? arr : arr.filter((j) => !CANCELLED.has(String(j.status || "").toLowerCase()));
 }

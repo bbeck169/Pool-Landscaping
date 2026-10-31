@@ -420,15 +420,26 @@ function ScheduleCalendarInner() {
   const activeTechId = techFilter !== "all" ? techFilter : (isTech ? resolvedTechId : null);
   const techCrewIds = useMemo(() => buildTechCrewIds(crews, activeTechId), [crews, activeTechId]);
   const inTechCrews = useCallback((j: any) => !!techCrewIds && !!j.crew_id && techCrewIds.has(j.crew_id), [techCrewIds]);
+  // Bug C · BE tech_id_resolver parity — a job may be saved under the
+  // technician RECORD id or the tech's USER account id. Alt form = selected
+  // /technicians row's user_id (admin filter) or user.id (tech own view),
+  // only when it differs from the primary id.
+  const altTechId = useMemo(() => {
+    const primary = isTech ? (techFilter !== "all" ? techFilter : resolvedTechId) : (techFilter !== "all" ? techFilter : null);
+    if (!primary) return null;
+    const alt = isTech ? user?.id : allTechs.find((t: any) => t.id === primary)?.user_id;
+    return alt && alt !== primary ? String(alt) : null;
+  }, [isTech, techFilter, resolvedTechId, user?.id, allTechs]);
+  const matchesAltTechId = useCallback((j: any) => !!altTechId && j.technician_id === altTechId, [altTechId]);
   const filteredJobs = useMemo(() => {
     if (isTech) {
       const tid = techFilter !== "all" ? techFilter : resolvedTechId;
       if (!tid) return []; // fail closed: no id → empty
-      return jobs.filter((j) => j.technician_id === tid || !j.technician_id || inTechCrews(j));
+      return jobs.filter((j) => j.technician_id === tid || !j.technician_id || inTechCrews(j) || matchesAltTechId(j));
     }
     if (techFilter === "all") return jobs;
-    return jobs.filter((j) => j.technician_id === techFilter || !j.technician_id || inTechCrews(j));
-  }, [jobs, techFilter, isTech, resolvedTechId, inTechCrews]);
+    return jobs.filter((j) => j.technician_id === techFilter || !j.technician_id || inTechCrews(j) || matchesAltTechId(j));
+  }, [jobs, techFilter, isTech, resolvedTechId, inTechCrews, matchesAltTechId]);
 
   // INACTIVE-CUSTOMER-CASCADE — hide cancelled/skipped by default.
   // Persisted under `schedule_show_cancelled` (matches web key).
@@ -466,8 +477,8 @@ function ScheduleCalendarInner() {
   // (crew / tech / category) + the same client filters as filteredJobs/visibleJobs.
   const monthScopeQuery = `${!isTech && crewFilter ? `&crew_id=${crewFilter}` : ""}${isTech && resolvedTechId ? `&technician_id=${resolvedTechId}` : ""}${serviceCategoryParam(serviceCategory)}`;
   const monthClientFilter = useCallback(
-    (arr: any[]) => filterMonthJobs(arr, { isTech, techFilter, resolvedTechId, showCancelled, techCrewIds }),
-    [isTech, techFilter, resolvedTechId, showCancelled, techCrewIds],
+    (arr: any[]) => filterMonthJobs(arr, { isTech, techFilter, resolvedTechId, showCancelled, techCrewIds, altTechId }),
+    [isTech, techFilter, resolvedTechId, showCancelled, techCrewIds, altTechId],
   );
 
   const load = useCallback(async (force = false) => {
