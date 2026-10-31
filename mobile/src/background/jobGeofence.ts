@@ -127,12 +127,44 @@ function _sortKey(j: any): string {
   return String(j?.scheduled_start || j?.scheduled_date || j?.created_at || "");
 }
 
+// β-core 2 · today + upcoming window; inactive statuses never geofenced.
+const UPCOMING_DAYS = 14;
+const SKIP_STATUSES = new Set(["completed", "cancelled", "canceled", "skipped"]);
+function _dayKey(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function _jobDay(j: any): string {
+  return String(j?.scheduled_date || j?.scheduled_start || "").slice(0, 10);
+}
+
+// β-core 2 · jobs-changed signal (Schedule calls notify after a load).
+const _jobsListeners = new Set<() => void>();
+export function notifyJobsChanged(): void {
+  _jobsListeners.forEach((cb) => { try { cb(); } catch { /* listener errors never propagate */ } });
+}
+export function onJobsChanged(cb: () => void): () => void {
+  _jobsListeners.add(cb);
+  return () => { _jobsListeners.delete(cb); };
+}
+
+let _lastRegionsFp = "";
+/** Logout / non-fleet role → remove every arrival region (idempotent). */
+export async function stopJobGeofencesP37c(): Promise<void> {
+  _lastRegionsFp = "";
+  if (Platform.OS === "web") return;
+  try {
+    const running = await Location.hasStartedGeofencingAsync(JOB_GEOFENCE_TASK).catch(() => false);
+    if (running) await Location.stopGeofencingAsync(JOB_GEOFENCE_TASK);
+  } catch { /* swallow */ }
+}
+
 export type SyncResult = {
   registered: number;
   truncated: number;
   radius: number;
   skipped_no_coords: number;
   skipped_completed: number;
+  skipped_past?: number;
 };
 
 
@@ -146,17 +178,21 @@ export async function syncJobGeofencesP37c(): Promise<SyncResult> {
     const bg = await Location.getBackgroundPermissionsAsync();
     if (bg.status !== "granted") return empty;
 
+    const today = _dayKey(new Date());
     const [jobsRaw, radius] = await Promise.all([
-      api.get("/jobs") as Promise<any>,
+      api.get(`/jobs?start=${today}&end=${_dayKey(new Date(Date.now() + UPCOMING_DAYS * 86_400_000))}`) as Promise<any>,
       _fetchRadius(),
     ]);
     const jobs: any[] = Array.isArray(jobsRaw) ? jobsRaw : (jobsRaw?.items || []);
 
     let skippedCompleted = 0;
     let skippedNoCoords = 0;
+    let skippedPast = 0;
     const candidates: any[] = [];
     for (const j of jobs) {
-      if (j?.status === "completed") { skippedCompleted++; continue; }
+      if (SKIP_STATUSES.has(String(j?.status || "").toLowerCase())) { skippedCompleted++; continue; }
+      const day = _jobDay(j);
+      if (day && day < today) { skippedPast++; continue; }
       const { lat, lng } = _jobCoords(j);
       if (lat == null || lng == null) { skippedNoCoords++; continue; }
       if (j?.timer_started_at) continue;  // already running
@@ -177,15 +213,19 @@ export async function syncJobGeofencesP37c(): Promise<SyncResult> {
 
     const running = await Location.hasStartedGeofencingAsync(JOB_GEOFENCE_TASK)
       .catch(() => false);
+    const fp = JSON.stringify(regions.map((r) => [r.identifier, r.latitude, r.longitude, r.radius]));
+    const result = { registered: regions.length, truncated, radius,
+              skipped_no_coords: skippedNoCoords,
+              skipped_completed: skippedCompleted, skipped_past: skippedPast };
+    if (running && fp === _lastRegionsFp) return result;  // unchanged → no churn
     if (running) {
       await Location.stopGeofencingAsync(JOB_GEOFENCE_TASK).catch(() => {});
     }
     if (regions.length > 0) {
       await Location.startGeofencingAsync(JOB_GEOFENCE_TASK, regions);
     }
-    return { registered: regions.length, truncated, radius,
-              skipped_no_coords: skippedNoCoords,
-              skipped_completed: skippedCompleted };
+    _lastRegionsFp = regions.length > 0 ? fp : "";
+    return result;
   } catch {
     return empty;
   }
@@ -196,4 +236,5 @@ export async function syncJobGeofencesP37c(): Promise<SyncResult> {
 export const _testables = {
   _jobCoords, _sortKey, JOB_GEOFENCE_TASK, REGION_CAP, FALLBACK_RADIUS_M,
   _getConsentCached, _fireUndoBanner, _fetchRadius,
+  _resetRegionsFp: () => { _lastRegionsFp = ""; },
 };

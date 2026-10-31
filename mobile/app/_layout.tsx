@@ -28,6 +28,7 @@ import { registerOfflineTemplateDraftListeners } from "@/src/utils/offlineTempla
 import { SyncManagerProvider } from "@/src/services/SyncManager";
 // FLEET-B · Hook that initializes foreground GPS emission for fleet techs.
 import FleetEmitterRunner from "@/src/components/fleet/FleetEmitterRunner";
+import JobGeofenceSyncRunner from "@/src/components/fleet/JobGeofenceSyncRunner";
 // TB-1 / Phase 8M · "Hey MARCO" wake-word — arm-on-click controller.
 import { MarcoMicProvider } from "@/src/components/marco/MarcoMicController";
 // OTA auto-update listener — background check + subtle "update ready" toast.
@@ -38,7 +39,7 @@ import { wirePhotoAutoUpload, flushPhotos } from "@/src/services/sync/photoWorke
 import { wireVideoAutoUpload, flushVideos } from "@/src/services/sync/videoWorker";
 import { getSyncDb } from "@/src/services/sync/db";
 // P37c · Geofence region sync — register active job geofences on boot.
-import { syncJobGeofencesP37c } from "@/src/background/jobGeofence";
+import "@/src/background/jobGeofence"; // registers the P37c TaskManager task at module load
 // Phase O6 · Sync UI components.
 import { OfflineBanner, ConflictSheet, SyncToast, StoragePressureBanner } from "@/src/components/sync";
 // Phase 20 · Feb-2026 · Sub-item B — role-aware push tap-through.
@@ -129,9 +130,8 @@ export default function RootLayout() {
         const { uploadPendingCrash } = require("@/src/utils/crashReporter");
         uploadPendingCrash().catch(() => {});
       } catch { /* swallow */ }
-      // P37c · Register geofences for active jobs on boot.
-      // Fire-and-forget; never blocks boot; silent on failure.
-      try { syncJobGeofencesP37c().catch(() => {}); } catch { /* swallow */ }
+      // P37c arrival-geofence sync moved INTO <AuthProvider> (β-core 2):
+      // <JobGeofenceSyncRunner /> runs it after login / on job + foreground changes.
       logNav("boot.sync.done");
     })();
   }, []);
@@ -181,6 +181,7 @@ export default function RootLayout() {
                   <ImpersonationBanner />
                   <PushTapRouter />
                   <FleetEmitterRunner />
+                  <JobGeofenceSyncRunner />
                   <Stack screenOptions={{ headerShown: false }} />
                   <ConfirmModalHost />
                   <ConflictSheet />

@@ -63,6 +63,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   (Platform as any).OS = "ios"; // Simulate native
   invalidateConsentCache();
+  _testables._resetRegionsFp();
 });
 
 afterAll(() => {
@@ -79,7 +80,7 @@ describe("syncJobGeofencesP37c", () => {
       status: "scheduled",
       latitude: 33.45,
       longitude: -112.07,
-      scheduled_start: "2026-04-10T08:00:00Z",
+      scheduled_start: "2099-04-10T08:00:00Z",
       ...overrides,
     };
   }
@@ -115,7 +116,7 @@ describe("syncJobGeofencesP37c", () => {
       makeJob({ id: "j2", latitude: 34.05, longitude: -118.24 }),
     ];
     mockGet.mockImplementation((url: string) => {
-      if (url === "/jobs") return Promise.resolve(jobs);
+      if (url.startsWith("/jobs")) return Promise.resolve(jobs);
       if (url === "/settings/gps-auto-start")
         return Promise.resolve({ arrival_radius_meters: 100 });
       return Promise.resolve(null);
@@ -150,7 +151,7 @@ describe("syncJobGeofencesP37c", () => {
       makeJob({ id: "j2", status: "scheduled" }),
     ];
     mockGet.mockImplementation((url: string) => {
-      if (url === "/jobs") return Promise.resolve(jobs);
+      if (url.startsWith("/jobs")) return Promise.resolve(jobs);
       if (url === "/settings/gps-auto-start")
         return Promise.resolve({ arrival_radius_meters: 75 });
       return Promise.resolve(null);
@@ -172,7 +173,7 @@ describe("syncJobGeofencesP37c", () => {
       makeJob({ id: "j2", latitude: 33.45, longitude: -112.07 }),
     ];
     mockGet.mockImplementation((url: string) => {
-      if (url === "/jobs") return Promise.resolve(jobs);
+      if (url.startsWith("/jobs")) return Promise.resolve(jobs);
       if (url === "/settings/gps-auto-start")
         return Promise.resolve({ arrival_radius_meters: 75 });
       return Promise.resolve(null);
@@ -190,11 +191,11 @@ describe("syncJobGeofencesP37c", () => {
     mockStartGeofencing.mockResolvedValue(undefined);
 
     const jobs = [
-      makeJob({ id: "j1", timer_started_at: "2026-04-10T09:00:00Z" }),
+      makeJob({ id: "j1", timer_started_at: "2099-04-10T09:00:00Z" }),
       makeJob({ id: "j2" }),
     ];
     mockGet.mockImplementation((url: string) => {
-      if (url === "/jobs") return Promise.resolve(jobs);
+      if (url.startsWith("/jobs")) return Promise.resolve(jobs);
       if (url === "/settings/gps-auto-start")
         return Promise.resolve({ arrival_radius_meters: 75 });
       return Promise.resolve(null);
@@ -215,7 +216,7 @@ describe("syncJobGeofencesP37c", () => {
       makeJob({ id: `j${i}`, latitude: 33 + i * 0.01, longitude: -112 })
     );
     mockGet.mockImplementation((url: string) => {
-      if (url === "/jobs") return Promise.resolve(jobs);
+      if (url.startsWith("/jobs")) return Promise.resolve(jobs);
       if (url === "/settings/gps-auto-start")
         return Promise.resolve({ arrival_radius_meters: 75 });
       return Promise.resolve(null);
@@ -234,7 +235,7 @@ describe("syncJobGeofencesP37c", () => {
 
     const jobs = [makeJob({ id: "j1" })];
     mockGet.mockImplementation((url: string) => {
-      if (url === "/jobs") return Promise.resolve(jobs);
+      if (url.startsWith("/jobs")) return Promise.resolve(jobs);
       if (url === "/settings/gps-auto-start")
         return Promise.reject(new Error("timeout"));
       return Promise.resolve(null);
@@ -253,7 +254,7 @@ describe("syncJobGeofencesP37c", () => {
 
     const jobs = [makeJob({ id: "j1" })];
     mockGet.mockImplementation((url: string) => {
-      if (url === "/jobs") return Promise.resolve(jobs);
+      if (url.startsWith("/jobs")) return Promise.resolve(jobs);
       if (url === "/settings/gps-auto-start")
         return Promise.resolve({ arrival_radius_meters: 75 });
       return Promise.resolve(null);
@@ -293,5 +294,63 @@ describe("_testables helpers", () => {
     expect(_testables.JOB_GEOFENCE_TASK).toBe("p37c-job-arrival-geofence");
     expect(_testables.REGION_CAP).toBe(20);
     expect(_testables.FALLBACK_RADIUS_M).toBe(75);
+  });
+});
+
+describe("β-core 2 · today + upcoming window", () => {
+  const granted = { status: "granted" };
+  const day = (offset: number) => {
+    const d = new Date(Date.now() + offset * 86_400_000);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  };
+  const arm = (jobs: any[]) => {
+    mockGetForegroundPermissions.mockResolvedValue(granted);
+    mockGetBackgroundPermissions.mockResolvedValue(granted);
+    mockHasStartedGeofencing.mockResolvedValue(false);
+    mockStartGeofencing.mockResolvedValue(undefined);
+    mockGet.mockImplementation((url: string) =>
+      url.startsWith("/jobs") ? Promise.resolve(jobs)
+        : url === "/settings/gps-auto-start" ? Promise.resolve({ arrival_radius_meters: 75 }) : Promise.resolve(null));
+  };
+  const job = (id: string, date: string, over: any = {}) =>
+    ({ id, status: "scheduled", latitude: 33.4, longitude: -112, scheduled_date: date, ...over });
+
+  it("fetches /jobs with a start=today&end=today+14 window", async () => {
+    arm([]);
+    await syncJobGeofencesP37c();
+    expect(mockGet).toHaveBeenCalledWith(`/jobs?start=${day(0)}&end=${day(14)}`);
+  });
+
+  it("past jobs never burn the 20-region cap; soonest upcoming fill it", async () => {
+    const past = Array.from({ length: 25 }, (_, i) => job(`old${i}`, day(-30 + i)));
+    const upcoming = Array.from({ length: 22 }, (_, i) => job(`new${String(i).padStart(2, "0")}`, day(i % 10)));
+    arm([...past, ...upcoming]);
+    const r = await syncJobGeofencesP37c();
+    expect(r.registered).toBe(20);
+    expect(r.skipped_past).toBe(25);
+    expect(r.truncated).toBe(2);
+    const ids = mockStartGeofencing.mock.calls[0][1].map((x: any) => x.identifier);
+    expect(ids.some((i: string) => i.startsWith("job:old"))).toBe(false);
+  });
+
+  it("cancelled / canceled / skipped / completed excluded", async () => {
+    arm([
+      job("a", day(0), { status: "cancelled" }), job("b", day(0), { status: "Canceled" }),
+      job("c", day(1), { status: "skipped" }), job("d", day(1), { status: "completed" }), job("e", day(2)),
+    ]);
+    const r = await syncJobGeofencesP37c();
+    expect(r.registered).toBe(1);
+    expect(r.skipped_completed).toBe(4);
+  });
+
+  it("unchanged region set while running → no stop/start churn", async () => {
+    const jobs = [job("same", day(1))];
+    arm(jobs);
+    await syncJobGeofencesP37c();
+    mockStartGeofencing.mockClear(); mockStopGeofencing.mockClear();
+    mockHasStartedGeofencing.mockResolvedValue(true);
+    await syncJobGeofencesP37c();
+    expect(mockStopGeofencing).not.toHaveBeenCalled();
+    expect(mockStartGeofencing).not.toHaveBeenCalled();
   });
 });

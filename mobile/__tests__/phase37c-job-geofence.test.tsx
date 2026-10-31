@@ -49,7 +49,7 @@ beforeEach(() => {
 function _job(id: string, over: any = {}) {
   return {
     id, status: "scheduled",
-    scheduled_start: `2026-06-15T${String((parseInt(id, 36) % 20) + 8)
+    scheduled_start: `2099-06-15T${String((parseInt(id, 36) % 20) + 8)
                           .padStart(2, "0")}:00:00Z`,
     latitude: 33.5806, longitude: -112.2374, ...over,
   };
@@ -62,7 +62,7 @@ describe("jobGeofence · P37c region sync", () => {
       if (path === "/settings/gps-auto-start") {
         return Promise.resolve({ arrival_radius_meters: 120 });
       }
-      if (path === "/jobs") return Promise.resolve([_job("a")]);
+      if (path.startsWith("/jobs")) return Promise.resolve([_job("a")]);
       return Promise.resolve({});
     });
     const res = await syncJobGeofencesP37c();
@@ -75,7 +75,7 @@ describe("jobGeofence · P37c region sync", () => {
   it("falls back to 75m if settings fetch fails", async () => {
     mockGet.mockImplementation((path: string) => {
       if (path === "/settings/gps-auto-start") return Promise.reject(new Error("boom"));
-      if (path === "/jobs") return Promise.resolve([_job("a")]);
+      if (path.startsWith("/jobs")) return Promise.resolve([_job("a")]);
       return Promise.resolve({});
     });
     const res = await syncJobGeofencesP37c();
@@ -86,7 +86,7 @@ describe("jobGeofence · P37c region sync", () => {
     mockGet.mockImplementation((path: string) => {
       if (path === "/settings/gps-auto-start")
         return Promise.resolve({ arrival_radius_meters: 75 });
-      if (path === "/jobs") return Promise.resolve([
+      if (path.startsWith("/jobs")) return Promise.resolve([
         _job("a"),
         _job("b", { latitude: null, longitude: null }),
         _job("c", { status: "completed" }),
@@ -101,12 +101,12 @@ describe("jobGeofence · P37c region sync", () => {
 
   it("caps region set at 20 and reports truncated count", async () => {
     const many = Array.from({ length: 25 }, (_, i) =>
-      _job(`j${i}`, { scheduled_start: `2026-06-15T${String(i + 6).padStart(2, "0")}:00:00Z` }),
+      _job(`j${i}`, { scheduled_start: `2099-06-15T${String(i + 6).padStart(2, "0")}:00:00Z` }),
     );
     mockGet.mockImplementation((path: string) => {
       if (path === "/settings/gps-auto-start")
         return Promise.resolve({ arrival_radius_meters: 75 });
-      if (path === "/jobs") return Promise.resolve(many);
+      if (path.startsWith("/jobs")) return Promise.resolve(many);
       return Promise.resolve({});
     });
     const res = await syncJobGeofencesP37c();

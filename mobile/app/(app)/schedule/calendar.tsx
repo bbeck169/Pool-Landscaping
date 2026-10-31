@@ -110,6 +110,7 @@ import { resolveTechnicianId } from "@/lib/technicianResolver";
 // P2 #9 · day-view timestamp filter — mirrors web P13 day bucketing.
 import { jobDayKey, localDateKey } from "@/src/utils/scheduleDayKey";
 import { tenantTz } from "@/src/utils/tenantTime";
+import { notifyJobsChanged } from "@/src/background/jobGeofence";
 
 type Job = {
   id: string;
@@ -535,6 +536,7 @@ function ScheduleCalendarInner() {
       const arr = Array.isArray(data) ? data : (data.items || data.data || []);
       fetchedRangeRef.current = { start, end };
       setJobs(arr);
+      notifyJobsChanged(); // β-core 2 · re-sync P37c arrival geofences
     } catch (e: any) {
       // K15 · intentional abort from a newer load() — silently discard.
       if (ac.signal.aborted) return;
