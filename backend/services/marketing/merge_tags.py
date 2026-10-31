@@ -936,6 +936,36 @@ def _invoice_total(ctx: Dict[str, Any]) -> str:
         return "$0.00"
 
 
+def _invoice_balance(ctx: Dict[str, Any]) -> str:
+    """TD-sms-reminder-use-balance-not-total · Feb-2026.
+
+    Outstanding balance on a single invoice at render time:
+    ``total − amount_paid`` on the invoice doc, dollar-formatted.
+
+    Used by the ``invoice_past_due_7d`` reminder (email + SMS) so a
+    customer who has paid part of the invoice sees the amount they
+    still owe rather than the stale total. When ``amount_paid`` is
+    missing (fresh unpaid invoice), balance == total — identical
+    render to the legacy ``INVOICE_TOTAL`` resolver. When the
+    invoice has flipped to ``paid`` between enqueue and render,
+    balance renders as ``$0.00`` — a benign no-stale-render outcome.
+
+    Note: this is a single-invoice resolver (reads the invoice doc
+    already in ctx). The customer-level outstanding balance across
+    all open invoices is a different concept, computed by
+    ``services.customer_balance._agg_invoice_balance`` and exposed
+    via ``CUSTOMER_ACCOUNT_BALANCE`` /  ``customer.balance_due``.
+    """
+    inv = ctx.get("invoice") or {}
+    try:
+        total = float(inv.get("total") or 0)
+        paid = float(inv.get("amount_paid") or 0)
+        return f"${total - paid:,.2f}"
+    except (TypeError, ValueError):
+        return "$0.00"
+
+
+
 def _invoice_tax(ctx: Dict[str, Any]) -> str:
     inv = ctx.get("invoice") or {}
     try:
@@ -1384,6 +1414,15 @@ MERGE_TAGS: List[Dict[str, Any]] = [
     {"token": "INVOICE_TOTAL", "label": "Invoice Total",
      "category": "Invoice", "description": "Formatted invoice total.",
      "resolver": _invoice_total},
+    {"token": "INVOICE_BALANCE", "label": "Invoice Balance",
+     "category": "Invoice",
+     "description": ("Outstanding balance on the invoice "
+                       "(``total − amount_paid``), formatted "
+                       "as ``$1,234.56``. Prefer this over "
+                       "``INVOICE_TOTAL`` for past-due reminder "
+                       "templates so partial-payment invoices "
+                       "render the amount still owed."),
+     "resolver": _invoice_balance},
     {"token": "INVOICE_TAX", "label": "Invoice Tax",
      "category": "Invoice", "description": "Formatted invoice tax amount.",
      "resolver": _invoice_tax},

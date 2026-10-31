@@ -1405,7 +1405,45 @@ Dedicated `PaymentRow` component for enhanced payment-row rendering on `Customer
 - **Priority:** closed.
 
 
-## Audit-process lessons learned · td-lessons-doc-4 batch (Oct-2026 · post-TD-96-g1/g2 ship)
+## TD-sms-reminder-use-balance-not-total · Past-due reminder renders invoice total not balance — SHIPPED (Feb-2026)
+
+- **Ship:** `<pending — this commit>` `td-sms-reminder-use-balance-not-total` (`services/marketing/merge_tags.py` adds `_invoice_balance` resolver = ``total − amount_paid`` + new `INVOICE_BALANCE` `TOKEN_REGISTRY` row; `services/migrations/seed_system_templates.py` swaps `{{INVOICE_TOTAL}}` → `{{INVOICE_BALANCE}}` on BOTH the email body `:132` and SMS body `:153` of `invoice_past_due_7d`; module docstring `AMOUNT_DUE → INVOICE_TOTAL` note updated to point at `INVOICE_BALANCE` with the TD-link; new `tests/test_td_sms_reminder_use_balance.py` 14/14 pytest covering resolver semantics / token registration / end-to-end render / both-channel body contents / regression lock on the sibling-ticket scope guard).
+- **Why:** customers who paid part of the invoice between send and overdue were receiving reminders that quoted the stale pre-payment total. `balance = total - amount_paid` resolves at render time so the figure in the reminder matches what the customer actually owes.
+- **Semantic contract (resolver):** `{{INVOICE_BALANCE}}` reads `ctx["invoice"]` and renders `total − amount_paid`, two-decimal-dollar-formatted. When `amount_paid` is missing (fresh unpaid invoice) balance renders as total — identical copy to the pre-ship behavior. When the invoice has flipped to `paid` between enqueue and render, balance renders `$0.00` (benign no-stale-render outcome).
+- **Scope guardrails (what this commit did NOT touch):**
+  - `migrations/seed_invoice_reminder_template.py:42` — separate `invoice_reminder_email` tenant template still uses `{{INVOICE_TOTAL}}`. Logged as TD-invoice-reminder-email-seed-balance below.
+  - `services/marketing/merge_tags.py` dual-registry collision on `INVOICE_TOTAL` (`:1384` resolver vs `:2076` with label "Invoice — Balance"). Pre-existing drift unrelated to this ticket. Logged as TD-invoice-total-dual-registry-drift below.
+  - Existing seeded `marketing_templates` rows across already-provisioned tenants still carry `{{INVOICE_TOTAL}}` in their bodies — seed migrations are preserve-on-edit so re-running `seed_system_templates` on an existing tenant will NOT retroactively update their bodies. Logged as TD-invoice-reminder-balance-backfill below.
+- **Priority:** closed.
+
+
+## TD-invoice-reminder-email-seed-balance (candidate, P3 BE)
+
+- **Reporter:** TD-sms-reminder-use-balance-not-total close-out audit.
+- **Finding:** the sibling `invoice_reminder_email` seed at `migrations/seed_invoice_reminder_template.py:42` renders `balance of <b>${{INVOICE_TOTAL}}</b> due …` — same stale-total drift the SMS ticket fixed on `invoice_past_due_7d`, but on a different reminder surface (tenant-scoped, email-only). The scope-guard assertion `test_sibling_email_reminder_seed_still_uses_total_bookmark` in `tests/test_td_sms_reminder_use_balance.py` is the bookmark; closing this ticket flips that assertion.
+- **Fix scope:** swap `{{INVOICE_TOTAL}}` → `{{INVOICE_BALANCE}}` in `BODY_DEFAULT` at `migrations/seed_invoice_reminder_template.py:42` + update `MERGE_TAGS` list at `:55` to include `INVOICE_BALANCE` + flip the bookmark assertion in `tests/test_td_sms_reminder_use_balance.py` + update `tests/test_invoice_reminder_template_seed.py:67` to assert `{{INVOICE_BALANCE}}` instead of `{{INVOICE_TOTAL}}`. ~5 LOC code + ~3 LOC tests.
+- **Priority:** P3 (candidate, BE).
+
+
+## TD-invoice-total-dual-registry-drift (candidate, P3 BE)
+
+- **Reporter:** TD-sms-reminder-use-balance-not-total close-out audit.
+- **Finding:** `services/marketing/merge_tags.py` registers the `INVOICE_TOTAL` token **twice** with conflicting semantics:
+  - `:1384` — label `"Invoice Total"`, resolver `_invoice_total` → formats `ctx["invoice"]["total"]`. Pure total.
+  - `:2076` — label `"Invoice — Balance"`, description `"Outstanding balance on the invoice …"`, resolver reads a plain `ctx["invoice_total"]` string key.
+  - Both share the same token name `INVOICE_TOTAL`. Which resolver "wins" at render time depends on `TOKEN_REGISTRY` iteration order; the merge-tags admin UI will render whichever label it hits first.
+- **Fix scope:** disambiguate by either (a) renaming the `:2076` entry to a new token (e.g. `INVOICE_BALANCE_SNAPSHOT`) that reflects its distinct "pre-computed string" nature, OR (b) deleting the `:2076` duplicate if nothing on the send-side still populates `ctx["invoice_total"]`. Needs a grep of `ctx["invoice_total"]` populators + a decision from the operator on which path to take. ~5-10 LOC code + ~1 pytest update.
+- **Priority:** P3 (candidate, BE). Pre-existing drift unrelated to the past-due-reminder ticket.
+
+
+## TD-invoice-reminder-balance-backfill (candidate, P3 BE)
+
+- **Reporter:** TD-sms-reminder-use-balance-not-total close-out audit.
+- **Finding:** the `invoice_past_due_7d` ship updates the SEED file, but tenant provisioning is preserve-on-edit (`tests/test_invoice_reminder_template_seed.py:74-89` locks that re-running the seed does NOT overwrite customer-edited bodies). Already-seeded tenants will keep `{{INVOICE_TOTAL}}` in their reminder bodies until an admin manually edits or deletes-and-re-seeds. A one-shot migration can retroactively update rows whose body still matches the pre-ship default verbatim (safely skips any tenant that has customised the body).
+- **Fix scope:** new idempotent migration at `services/migrations/backfill_invoice_past_due_balance_v1.py` that `find`s `marketing_templates` rows where `system_key ∈ {system_tpl_invoice_past_due_7d_email, system_tpl_invoice_past_due_7d_sms}` AND `body == <frozen pre-ship default>` (keyed on locale), then `update_one` with the new default. Sentinel doc in `db.migrations`. Boot-registered + per-tenant hook. ~80-120 LOC + ~4 pytest cases (fresh tenant, edited-body tenant, re-run idempotency, multi-locale).
+- **Priority:** P3 (candidate, BE).
+
+
 
 ### TD-61 strike #17 — edit-time-sweep behavior class · mitigation threshold codified
 

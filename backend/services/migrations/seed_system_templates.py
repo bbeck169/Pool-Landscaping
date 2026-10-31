@@ -46,7 +46,12 @@ The user brief used friendly names (``PAY_INVOICE_LINK``,
 ``LEAVE_REVIEW_LINK``, ``AMOUNT_DUE``). We map them to the canonical
 tokens already registered in ``services/marketing/merge_tags.py``:
 
-  * ``AMOUNT_DUE``          →  ``INVOICE_TOTAL``
+  * ``AMOUNT_DUE``          →  ``INVOICE_BALANCE`` (outstanding
+                                 balance = ``total − amount_paid``;
+                                 preferred over ``INVOICE_TOTAL`` for
+                                 past-due reminders so partial-payment
+                                 invoices render the amount still owed —
+                                 TD-sms-reminder-use-balance-not-total)
   * ``PAY_INVOICE_LINK``    →  ``INVOICE_PAY_MAGIC_URL``
   * ``LEAVE_REVIEW_LINK``   →  ``REVIEW_PAGE``
 
@@ -129,7 +134,7 @@ def _build_templates(locale: str) -> List[Dict[str, Any]]:
                 "<p>Hi {{CUSTOMER_FIRST_NAME}},</p>"
                 "<p>Just a friendly note that invoice "
                 "<strong>{{INVOICE_NUMBER}}</strong> for "
-                "<strong>{{INVOICE_TOTAL}}</strong> is now 7 days past "
+                "<strong>{{INVOICE_BALANCE}}</strong> is now 7 days past "
                 "due. If you've already sent payment, thank you — please "
                 "ignore this message.</p>"
                 "<p>Otherwise, you can review your invoice here:</p>"
@@ -150,7 +155,7 @@ def _build_templates(locale: str) -> List[Dict[str, Any]]:
             "subject": "",
             "body": (
                 "Hi {{CUSTOMER_FIRST_NAME}} — friendly reminder that "
-                "invoice {{INVOICE_NUMBER}} ({{INVOICE_TOTAL}}) is 7 "
+                "invoice {{INVOICE_NUMBER}} ({{INVOICE_BALANCE}}) is 7 "
                 "days past due. Pay in one tap: {{INVOICE_PAY_MAGIC_URL}} "
                 "— {{COMPANY_NAME}}"
             ),
