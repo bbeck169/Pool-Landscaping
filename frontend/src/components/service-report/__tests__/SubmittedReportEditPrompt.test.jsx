@@ -146,9 +146,17 @@ describe("TD-g2 β · call-site regressions", () => {
       /import SubmittedReportEditPrompt[\s\S]{0,120}service-report\/SubmittedReportEditPrompt/,
     );
     // Admin role branch sets showUnlockPrompt; technician path still
-    // short-circuits silently (no setShowUnlockPrompt call).
+    // short-circuits silently (no setShowUnlockPrompt call).  Role
+    // set mirrors BE truth at ``jobs.py:4332`` — dispatcher is NOT
+    // included (BE /jobs/{jid}/unlock would 403 them).
     expect(SR).toMatch(
-      /_ADMIN_UNLOCK\s*=\s*new Set\([\s\S]{0,120}"admin",\s*"super_admin",\s*"manager",\s*"owner",\s*"dispatcher"/,
+      /_ADMIN_UNLOCK\s*=\s*new Set\(\s*\[\s*"admin",\s*"super_admin",\s*"manager",\s*"owner"\s*,?\s*\]\s*,?\s*\)/,
+    );
+    // Dispatcher must NOT appear inside the _ADMIN_UNLOCK Set
+    // literal — the BE endpoint 403s them, so letting them click
+    // the CTA would bounce.
+    expect(SR).not.toMatch(
+      /_ADMIN_UNLOCK\s*=\s*new Set\([\s\S]{0,160}"dispatcher"/,
     );
     expect(SR).toMatch(
       /if \(_ADMIN_UNLOCK\.has\(_lcRole\)\)[\s\S]{0,80}setShowUnlockPrompt\(true\)/,
@@ -167,7 +175,13 @@ describe("TD-g2 β · call-site regressions", () => {
       /import SubmittedReportEditPrompt[\s\S]{0,120}service-report\/SubmittedReportEditPrompt/,
     );
     expect(CM).toMatch(
-      /_ADMIN_UNLOCK_ROLES\s*=\s*new Set\([\s\S]{0,120}"admin",\s*"super_admin",\s*"manager",\s*"owner",\s*"dispatcher"/,
+      /_ADMIN_UNLOCK_ROLES\s*=\s*new Set\(\s*\[\s*"admin",\s*"super_admin",\s*"manager",\s*"owner"\s*,?\s*\]\s*,?\s*\)/,
+    );
+    // Dispatcher must NOT appear inside the _ADMIN_UNLOCK_ROLES Set
+    // literal — the BE endpoint 403s them, so letting them click the
+    // CTA would bounce.
+    expect(CM).not.toMatch(
+      /_ADMIN_UNLOCK_ROLES\s*=\s*new Set\([\s\S]{0,160}"dispatcher"/,
     );
     expect(CM).toMatch(
       /if \(_ADMIN_UNLOCK_ROLES\.has\(_lcRole\)\)[\s\S]{0,120}setShowUnlockPrompt/,

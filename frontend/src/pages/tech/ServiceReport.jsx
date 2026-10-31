@@ -198,15 +198,18 @@ export default function ServiceReport() {
   const autosave = useCallback(async () => {
     if (!dirtyRef.current || savingRef.current || !report) return;
     if (report.submitted_at) {
-      // Feb-2026 · TD-g2 β — admin/super_admin/manager/owner/
-      // dispatcher attempting to edit a submitted report: surface
-      // the "Unlock to edit" banner instead of silently dropping
-      // the write.  Technician path keeps the original silent
-      // short-circuit (shipped BE post-submit bypass at
-      // ``service_reports.py:604-610`` owns tech saves).
+      // Feb-2026 · TD-g2 β — admin/super_admin/manager/owner
+      // attempting to edit a submitted report: surface the "Unlock
+      // to edit" banner instead of silently dropping the write.
+      // Role set mirrors BE truth at ``jobs.py:4332`` + shipped FE
+      // at ``JobUnlockButton.jsx:21`` — dispatcher is NOT included
+      // (BE /jobs/{jid}/unlock would 403 them).  Technician path
+      // keeps the original silent short-circuit (shipped BE post-
+      // submit bypass at ``service_reports.py:604-610`` owns tech
+      // saves).
       const _lcRole = (user?.role || "").toLowerCase();
       const _ADMIN_UNLOCK = new Set(
-        ["admin", "super_admin", "manager", "owner", "dispatcher"],
+        ["admin", "super_admin", "manager", "owner"],
       );
       if (_ADMIN_UNLOCK.has(_lcRole)) {
         setShowUnlockPrompt(true);

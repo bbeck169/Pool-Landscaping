@@ -308,15 +308,18 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted, read
     // every field diff).  Other roles still short-circuit on
     // submitted rows — admins remain locked out of the PATCH per
     // "retain existing edit path" ruling.
-    // Feb-2026 · TD-g2 β — admin/super_admin/manager/owner/
-    // dispatcher on a submitted report: convert the silent short-
-    // circuit into a visible "Unlock to edit" banner so the admin
-    // sees why their edits aren't persisting.  Technician path
-    // unchanged (shipped BE post-submit bypass at
-    // ``service_reports.py:604-610`` still owns tech edits).
+    // Feb-2026 · TD-g2 β — admin/super_admin/manager/owner on a
+    // submitted report: convert the silent short-circuit into a
+    // visible "Unlock to edit" banner so the admin sees why their
+    // edits aren't persisting.  Role set mirrors BE truth at
+    // ``jobs.py:4332`` + shipped FE at ``JobUnlockButton.jsx:21``
+    // — dispatcher is NOT included (BE /jobs/{jid}/unlock would
+    // 403 them).  Technician path unchanged (shipped BE post-
+    // submit bypass at ``service_reports.py:604-610`` still owns
+    // tech edits).
     const _lcRole = (role || "").toLowerCase();
     const _ADMIN_UNLOCK_ROLES = new Set(
-      ["admin", "super_admin", "manager", "owner", "dispatcher"],
+      ["admin", "super_admin", "manager", "owner"],
     );
     if (cur.submitted_at && role !== "technician") {
       if (_ADMIN_UNLOCK_ROLES.has(_lcRole)) {

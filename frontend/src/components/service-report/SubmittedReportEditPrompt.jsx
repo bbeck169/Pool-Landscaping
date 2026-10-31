@@ -2,10 +2,13 @@
  * Feb-2026 · TD-g2-admin-409-vs-mobile-unlock · WEB β fix.
  *
  * Dismissible banner that converts the shipped silent-short-
- * circuit for admin/super_admin/manager/owner/dispatcher on a
+ * circuit for admin/super_admin/manager/owner on a
  * submitted service report into visible feedback. CTA points at
  * the shipped CHEM-LOCK ``JobUnlockButton`` (mounted at
  * ``JobDetail.jsx:791``) via the ``/jobs/{jid}#unlock`` deep-link.
+ * Role set mirrors BE truth at ``jobs.py:4332`` + shipped FE at
+ * ``JobUnlockButton.jsx:21`` — dispatcher is NOT included (BE
+ * /jobs/{jid}/unlock would 403 them).
  *
  * Guardrails:
  *   - Non-destructive by default: appears ONLY when the admin
