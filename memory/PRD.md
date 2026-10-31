@@ -121,6 +121,14 @@ Mobile parity for the web Templates Library (backend `/api/templates/*` + web un
   `set_offline` → title edit → "Offline — will sync", `template_drafts:*` + `template_drafts_pending_sync:*` written,
   Finalize blocked ("You have unsynced changes…") → reconnect → queue flushed in 7.0 s, "Saved HH:MM:SS", server
   title = "E2E offline edit" → finalize 200 → PDF 200. Smoke instance deleted. No external repo cloned.
+- **Re-verified 2026-10-31 at f19cc3945 (no code changes):** no Templates Library web/BE/mobile commits since
+  cc8858980. Jest 45/45. API: defs admin 23 / mike 8 / landscaper 8; mike create → PATCH 200 → `?mine=true` 200 →
+  finalize 200 → PATCH 409 → `/pdf` 200 `application/pdf` `%PDF-` → duplicate draft → delete 200/200. Expo-web as mike
+  (430pt): Library 8 Fill cards → open draft → `set_offline` → title edit → "Offline — will sync",
+  `template_drafts:*` + `template_drafts_pending_sync:*` written, Finalize blocked → reconnect → queue flushed in
+  4.0 s, "Saved HH:MM:SS", server title = "E2E offline edit" → finalize 200 → PDF 200. Smoke instance deleted. No
+  external repo cloned.
+
 
 
 ## 6. Marco Wake-Word — Phase 8M (Mobile arm-on-click) · shipped 2026-10-09
