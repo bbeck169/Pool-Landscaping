@@ -2296,7 +2296,7 @@ async def income_categories_duplicates_audit(
             {"$or": [{"line_items.income_category_id": None},
                      {"line_items.income_category_id":
                           {"$exists": False}}]},
-            {"line_items.category": {"$ne": None, "$ne": "",
+            {"line_items.category": {"$nin": [None, ""],
                                         "$exists": True}},
         ]}},
         {"$group": {"_id": "$line_items.category",
