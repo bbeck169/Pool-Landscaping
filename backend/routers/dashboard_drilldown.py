@@ -398,7 +398,18 @@ def _row_for_line_item(
 # ═════════════════════════════════════════════════════════════════════
 @router.get("/dashboard/income/by-category/rows")
 async def income_by_category_rows(
-    category: str = Query(..., description="Display label (e.g. 'Cleaning' or 'Uncategorized')"),
+    category: str = Query(..., description="Display label (e.g. 'Cleaning' or 'Uncategorized') — legacy name-match path; prefer ``category_key``."),
+    category_key: Optional[str] = Query(
+        None,
+        description=(
+            "Feb-2026 · TD-revenue-by-category-id-grouping — stable "
+            "bucket identity emitted by the Revenue by Category tile. "
+            "One of ``id:<uuid>``, ``name:<lower>``, ``pb:<lower>``, "
+            "or ``uncategorized``.  Preferred over ``category`` for "
+            "all new callers; eliminates the name-string collision "
+            "that caused Hardscaping clicks to return Irrigation rows."
+        ),
+    ),
     from_: str = Query(..., alias="from"),
     to: str = Query(...),
     limit: int = Query(_DEFAULT_LIMIT, ge=1, le=_MAX_LIMIT),
@@ -411,6 +422,15 @@ async def income_by_category_rows(
     tenant_id = tenant["id"]
 
     maps = await _load_income_category_maps(tenant_id)
+    # Feb-2026 · TD-revenue-by-category-id-grouping — when a stable
+    # bucket key is supplied, filter by it (eliminating the name-
+    # match collision class).  Back-compat: without ``category_key``,
+    # resolve each line via the identity helper and match by display
+    # name against the legacy ``category`` param so pre-ticket
+    # callers continue to work.
+    from routers.dashboard_revenue import (
+        _resolve_line_category_identity,
+    )
 
     matched: List[Dict[str, Any]] = []
     cur = await _paid_invoice_cursor(tenant_id, s_iso, e_iso)
@@ -418,19 +438,24 @@ async def income_by_category_rows(
         items = inv.get("line_items") or []
         recognised_any = False
         for idx, li in enumerate(items):
-            resolved_cat = _resolve_line_category(
-                li, maps["item_id_to_category"], maps["income_cat_by_id"],
-            )
-            if resolved_cat != category:
-                continue
+            bucket_key, resolved_cat, _orphan = \
+                _resolve_line_category_identity(
+                    li, maps["item_id_to_category"],
+                    maps["income_cat_by_id"],
+                )
+            if category_key is not None:
+                if bucket_key != category_key:
+                    continue
+            else:
+                if resolved_cat != category:
+                    continue
             recognised_any = True
             # P53 tail (Feb-2026) — service-category display uses the
             # same PRECEDENCE as income_by_service_category:
             # line.service_category_id first, pricebook fallback second.
             # This row is for the income-category drilldown so bucket
-            # selection is by ``resolved_cat`` (already line-first via
-            # ``_resolve_line_category``); only the displayed
-            # ``svc_name`` benefits from this fix.
+            # selection is by the identity helper above; only the
+            # displayed ``svc_name`` benefits from this fix.
             line_svc_id = li.get("service_category_id")
             if line_svc_id:
                 svc_id = line_svc_id
@@ -447,7 +472,11 @@ async def income_by_category_rows(
             inv_total = float(inv.get("total") or 0)
         except (TypeError, ValueError):
             inv_total = 0.0
-        if (category == _UNCATEGORISED and inv_total > 0
+        is_uncat_bucket = (
+            (category_key == "uncategorized") if category_key is not None
+            else (category == _UNCATEGORISED)
+        )
+        if (is_uncat_bucket and inv_total > 0
                 and not recognised_any and not items):
             matched.append({
                 "invoice_id": inv.get("id"),

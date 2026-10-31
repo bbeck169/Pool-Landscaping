@@ -48,6 +48,79 @@ _UUID_RE = re.compile(
     re.IGNORECASE,
 )
 
+# ═════════════════════════════════════════════════════════════════════
+# Shared category identity resolver (TD-revenue-by-category-id-grouping
+# · Feb-2026)
+#
+# PRE-TICKET: ``revenue_by_category`` grouped the pie chart by the
+# resolved NAME STRING (``totals.setdefault(cat, ...)``). Any
+# spelling/casing drift ("Landscape" vs "Landscaping") split one real
+# category into two tile rows; the sibling ``income_by_category_rows``
+# drill-down also matched by name, so clicking "Hardscaping" could
+# return Irrigation line items when the resolution ladder produced
+# divergent names for the same semantic bucket.
+#
+# POST-TICKET: both routes resolve each line item to a stable
+# ``(bucket_key, display_name)`` tuple. ``bucket_key`` is:
+#
+#   - ``f"id:{ic_id}"``   when the line has an ``income_category_id``
+#     FK that resolves to a live ``income_categories`` row (OR an
+#     inline ``category`` field that holds a UUID that resolves).
+#     This is the authoritative identity — any two lines sharing an
+#     FK bucket together regardless of inline-string drift.
+#   - ``f"name:<lower>"`` when the line only carries an inline string
+#     ``category`` (no FK, no UUID that resolves). Case-insensitive
+#     normalization folds "Landscape" and "landscape" together;
+#     "Landscape" and "Landscaping" still split, by design — a
+#     migration (sibling ticket) is required to re-root those into
+#     an id bucket.
+#   - ``f"pb:<lower>"``   when the line has no FK AND no inline
+#     ``category`` but its ``item_id`` resolves to a pricebook item
+#     whose ``category`` field is set. Case-insensitive. Keeps the
+#     Priority-6 (Bug 3) fallback path intact.
+#   - ``"uncategorized"`` for the final catch-all.
+#
+# Grouping by ``bucket_key`` eliminates the name-string bug class
+# while preserving a single human-readable ``display_name`` per
+# bucket (first-seen wins; FK bucket's name comes from the id→name
+# map so it stays canonical).
+# ═════════════════════════════════════════════════════════════════════
+_UNCATEGORISED_KEY = "uncategorized"
+
+
+def _resolve_line_category_identity(
+    li: Dict[str, Any],
+    item_id_to_category: Dict[str, str],
+    income_cat_by_id: Dict[str, str],
+) -> tuple[str, str, bool]:
+    """Return ``(bucket_key, display_name, hit_orphan_id)`` for a
+    single invoice line item.
+
+    ``hit_orphan_id`` is True when an ``income_category_id`` (or an
+    inline-UUID ``category``) failed to resolve against the live
+    ``income_categories`` map, so the caller can flag the resulting
+    Uncategorized bucket with ``is_orphan=True`` (parity with the
+    pre-ticket orphan-tracker behaviour)."""
+    ic_id = (li.get("income_category_id") or "").strip()
+    if ic_id:
+        resolved = income_cat_by_id.get(ic_id)
+        if resolved:
+            return (f"id:{ic_id}", resolved, False)
+        return (_UNCATEGORISED_KEY, _UNCATEGORISED, True)
+    inline_cat = (li.get("category") or "").strip()
+    if inline_cat:
+        if _UUID_RE.match(inline_cat):
+            resolved = income_cat_by_id.get(inline_cat)
+            if resolved:
+                return (f"id:{inline_cat}", resolved, False)
+            return (_UNCATEGORISED_KEY, _UNCATEGORISED, True)
+        return (f"name:{inline_cat.lower()}", inline_cat, False)
+    pb_cat = item_id_to_category.get(li.get("item_id") or "")
+    if pb_cat:
+        pb_clean = pb_cat.strip()
+        return (f"pb:{pb_clean.lower()}", pb_clean, False)
+    return (_UNCATEGORISED_KEY, _UNCATEGORISED, False)
+
 
 def _require_admin(user: dict) -> None:
     if (user or {}).get("role") not in ("admin", "super_admin"):
@@ -214,51 +287,32 @@ async def revenue_by_category(
                 if not iid or iid not in allowed_item_ids:
                     continue
             line_matched_any = True
-            # Category resolution order (Feb-2026 · Backlog #1 Part 1
-            # — extended to resolve income_category id → name):
-            #   1. ``line_item.income_category_id`` → name (canonical
-            #      new write path; wins even when ``category`` is
-            #      also set, because the id lookup is authoritative).
-            #   2. inline ``line_item.category`` — if the value is
-            #      UUID-shaped, treat as an id and resolve; if it
-            #      resolves, use the name; if it doesn't, coerce to
-            #      Uncategorized + flag orphan. Non-UUID strings pass
-            #      through verbatim (existing behaviour).
-            #   3. source pricebook item's ``category`` via item_id.
-            #   4. ``Uncategorized`` (visibility over silence).
-            cat: Optional[str] = None
-            hit_orphan_id = False
-            ic_id = (li.get("income_category_id") or "").strip()
-            if ic_id:
-                resolved = income_cat_by_id.get(ic_id)
-                if resolved:
-                    cat = resolved
-                else:
-                    hit_orphan_id = True
+            # Feb-2026 · TD-revenue-by-category-id-grouping — group
+            # by ``bucket_key`` (FK-rooted when possible) so
+            # "Landscape" vs "Landscaping" never splits one real
+            # category into two tile rows.  See the
+            # ``_resolve_line_category_identity`` docstring for the
+            # key semantics.
+            bucket_key, cat_display, hit_orphan_id = \
+                _resolve_line_category_identity(
+                    li, item_id_to_category, income_cat_by_id,
+                )
+            if hit_orphan_id:
+                ic_id = (li.get("income_category_id")
+                           or li.get("category") or "").strip()
+                if ic_id:
                     orphan_ids_seen.add(ic_id)
-            if cat is None:
-                inline_cat = (li.get("category") or "").strip()
-                if inline_cat:
-                    if _UUID_RE.match(inline_cat):
-                        resolved = income_cat_by_id.get(inline_cat)
-                        if resolved:
-                            cat = resolved
-                        else:
-                            hit_orphan_id = True
-                            orphan_ids_seen.add(inline_cat)
-                    else:
-                        cat = inline_cat
-            if cat is None:
-                pb_cat = item_id_to_category.get(li.get("item_id"))
-                cat = pb_cat or _UNCATEGORISED
             amt = (float(li.get("quantity") or 0)
                     * float(li.get("unit_price") or 0))
             recognised_amount += amt
-            bucket = totals.setdefault(cat, {"amount": 0.0, "count": 0})
+            bucket = totals.setdefault(bucket_key, {
+                "amount": 0.0, "count": 0,
+                "display_name": cat_display,
+            })
             bucket["amount"] += amt
             bucket["count"] += 1
-            if hit_orphan_id and cat == _UNCATEGORISED:
-                orphan_flag[_UNCATEGORISED] = True
+            if hit_orphan_id and bucket_key == _UNCATEGORISED_KEY:
+                orphan_flag[_UNCATEGORISED_KEY] = True
 
         # Priority 6 fallback — invoice with no matched lines (or
         # all-zero priced lines) is still real revenue. Charge the
@@ -277,45 +331,47 @@ async def revenue_by_category(
         )
         if needs_fallback:
             bucket = totals.setdefault(
-                _UNCATEGORISED, {"amount": 0.0, "count": 0},
+                _UNCATEGORISED_KEY,
+                {"amount": 0.0, "count": 0,
+                 "display_name": _UNCATEGORISED},
             )
             bucket["amount"] += inv_total
             bucket["count"] += 1
 
     items_out: List[Dict[str, Any]] = []
     grand_total = 0.0
-    # Reverse the id-map so we can populate ``category_id`` when the
-    # bucket key IS a known income_categories name.
-    name_to_id: Dict[str, str] = {}
-    for _cid, _cname in income_cat_by_id.items():
-        # Prefer the first-seen id per name (case-insensitive collision
-        # is rare; deterministic order comes from Mongo cursor).
-        name_to_id.setdefault(_cname.lower(), _cid)
-    for cat, b in sorted(totals.items(), key=lambda kv: kv[1]["amount"], reverse=True):
-        # Feb-2026 · Priority 6 — surface the fallback bucket with
-        # a distinct neutral grey (matches the sibling
-        # income-by-service-category tile) so operators can spot
-        # uncategorized revenue at a glance without hunting
-        # through the legend.
-        color = "#94A3B8" if cat == _UNCATEGORISED else _color_for(cat)
-        # Feb-2026 · Backlog #1 Part 1 — additive response shape:
-        # ``category_id`` (resolved when the bucket name maps back to
-        # a live income_categories row), ``category_name`` (the
-        # display label; NEVER a UUID), ``is_orphan`` (True iff this
-        # bucket was created by consolidating unresolved-UUID line
-        # items). FE reads ``category_name`` first with ``category``
-        # as backward-compat fallback.
+    for bucket_key, b in sorted(totals.items(),
+                                     key=lambda kv: kv[1]["amount"],
+                                     reverse=True):
+        display_name = b.get("display_name") or _UNCATEGORISED
+        # Feb-2026 · TD-revenue-by-category-id-grouping — surface
+        # ``category_id`` directly from the bucket key when it is
+        # FK-rooted (``id:<uuid>``); other key shapes (``name:``,
+        # ``pb:``, ``uncategorized``) emit ``category_id = None`` so
+        # the FE can route drill-down clicks via the fallback name
+        # path for those buckets.
         cat_id: Optional[str] = None
-        if cat != _UNCATEGORISED:
-            cat_id = name_to_id.get(cat.lower())
+        if bucket_key.startswith("id:"):
+            cat_id = bucket_key[3:]
+        color = ("#94A3B8" if bucket_key == _UNCATEGORISED_KEY
+                   else _color_for(display_name))
         items_out.append({
-            "category":      cat,                       # legacy alias
+            "category":      display_name,              # legacy alias
             "category_id":   cat_id,
-            "category_name": cat,
+            "category_name": display_name,
+            # Feb-2026 · TD-revenue-by-category-id-grouping — the
+            # tile legend click uses ``bucket_key`` as the stable
+            # identity for the drill-down filter.  Non-FK buckets
+            # (name:, pb:, uncategorized) still work via this key;
+            # the drill-down endpoint accepts it under the
+            # ``category_key`` query param.
+            "bucket_key":    bucket_key,
             "amount":        round(b["amount"], 2),
             "count":         b["count"],
             "color":         color,
-            "is_orphan":     bool(orphan_flag.get(cat, False)),
+            "is_orphan":     bool(
+                orphan_flag.get(bucket_key, False),
+            ),
         })
         grand_total += b["amount"]
 
