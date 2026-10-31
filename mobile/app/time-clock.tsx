@@ -19,6 +19,7 @@ import { Redirect, useRouter } from "expo-router";
 import NetInfo from "@react-native-community/netinfo";
 
 import { useAuth } from "@/src/auth";
+import { askAlwaysPermission } from "@/src/lib/askAlwaysPermission";
 import { isPoolTechWithoutTimeClock } from "@/src/lib/timeClockVisibility";
 import { api, getAuthToken } from "@/src/api";
 import { offlineWrite } from "@/src/services/offlineWrite";
@@ -213,6 +214,8 @@ function TimeClockScreen() {
         setInGeofence(!r.out_of_geofence);
       }
       if (queued) showToast("Clock-in queued — will sync when online.", "info");
+      // β-core 3 · explainer + "Always" ask BEFORE the tracker's own OS dialog.
+      await askAlwaysPermission(user);
       // G1: Start GPS batch tracker
       const token = await getAuthToken();
       GpsTracker.startTracking(token).then((ok) => setGpsActive(ok)).catch(() => {});

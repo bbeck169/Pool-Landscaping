@@ -5,6 +5,8 @@ import * as Location from "expo-location";
 import { useFocusEffect } from "expo-router";
 
 import { api } from "@/src/api";
+import { useAuth } from "@/src/auth";
+import { askAlwaysPermission } from "@/src/lib/askAlwaysPermission";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 
 const fmtTime = (iso?: string | null) => {
@@ -13,6 +15,7 @@ const fmtTime = (iso?: string | null) => {
 };
 
 export default function ClockInCard({ onChange }: { onChange?: () => void } = {}) {
+  const { user } = useAuth();
   const [status, setStatus] = useState<any>({ clocked_in: false, clocked_out: false, timesheet: null });
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -59,6 +62,7 @@ export default function ClockInCard({ onChange }: { onChange?: () => void } = {}
       const coords = await getLocationOrPrompt();
       if (!coords) return; // blocked without GPS
       await api.post(`/attendance/${kind}`, coords);
+      if (kind === "clock-in") askAlwaysPermission(user).catch(() => {}); // β-core 3
       await load();
       onChange?.();
     } catch (e: any) {

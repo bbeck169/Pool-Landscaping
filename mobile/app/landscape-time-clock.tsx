@@ -11,6 +11,7 @@ import * as Location from "expo-location";
 import { Ionicons } from "@expo/vector-icons";
 import { Redirect } from "expo-router";
 import { useAuth } from "@/src/auth";
+import { askAlwaysPermission } from "@/src/lib/askAlwaysPermission";
 import { isPoolTechWithoutTimeClock } from "@/src/lib/timeClockVisibility";
 import { api } from "@/src/api";
 import { offlineWrite } from "@/src/services/offlineWrite";
@@ -150,6 +151,7 @@ function LandscapingTimeClockScreen() {
         payload,
         onlineFn: () => api.post("/timeclock/punch", payload),
       });
+      if (type === "in") askAlwaysPermission(user).catch(() => {}); // β-core 3
       if (!queued) await load();
       else setError("Queued offline — will sync later.");
     } catch (e: any) {
