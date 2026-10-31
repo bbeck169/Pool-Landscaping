@@ -1444,6 +1444,27 @@ Dedicated `PaymentRow` component for enhanced payment-row rendering on `Customer
 - **Priority:** P3 (candidate, BE).
 
 
+## TD-quiet-hours-cron-tick-recovery · Recover stuck pending outbound_deferred rows — SHIPPED (Feb-2026)
+
+- **Ship:** `<pending — this commit>` `td-quiet-hours-cron-tick-recovery` (`backend/migrations/recover_outbound_deferred_stuck_pending_v1.py` + `backend/tests/test_td_quiet_hours_cron_tick_recovery.py` 8/8 pytest).
+- **What it does:** one-shot recovery script for `outbound_deferred` rows stuck in `status="pending"` whose `scheduled_for` has fallen behind UTC `now` by more than `--grace-minutes` (default 5). Covers missed-cron-tick / APScheduler-lag / server-restart-during-window failure modes. Reuses `services.quiet_hours_release._dispatch_row` verbatim so the post-release row state is byte-identical to what the live cron would have produced. Uses the same atomic `find_one_and_update` claim pattern (`claim_pending_batch` / `_claim_tenant_pending`) so a concurrent live worker cannot double-claim.
+- **CLI:** `--tenant-id <id>` XOR `--all-tenants` (mutex, one required); `--apply` (default dry-run); `--grace-minutes <N>` (default 5). Mirrors `merge_income_categories_duplicates_v1`. Writes one `migration_runs` audit doc per tenant per apply invocation.
+- **Scope guardrails (what the script does NOT touch):**
+  - `releasing`-status rows (even stale-`claimed_at` ones). The ambiguity between live-but-slow worker and crashed-mid-dispatch orphan requires an operator-steered stale-claim threshold. Logged as `TD-quiet-hours-releasing-orphan-recovery` below. The script DOES surface the orphaned-releasing count in dry-run output as a bookmark.
+  - APScheduler cron registration / cadence (`run_release_tick` on 5-min interval, unchanged).
+  - Mobile and FE.
+- **Preview reality check:** `python migrations/recover_outbound_deferred_stuck_pending_v1.py --all-tenants` reported `stuck_pending_count=0`, `orphaned_releasing_count=0` across 2,809 tenants at ship time. Script is a safety-net, not a repair of current damage.
+- **Priority:** closed.
+
+
+## TD-quiet-hours-releasing-orphan-recovery (candidate, P3 BE)
+
+- **Reporter:** TD-quiet-hours-cron-tick-recovery close-out audit.
+- **Finding:** the recovery script shipped as `recover_outbound_deferred_stuck_pending_v1.py` deliberately targets `status="pending"` rows only. Rows left in `status="releasing"` with stale `scheduled_for` are either (a) genuinely mid-dispatch by a live worker (long Resend / RingCentral backoff, 429 retry) or (b) orphaned by a worker that crashed between the atomic claim flip and the terminal status update. Distinguishing (a) from (b) requires a stale-`claimed_at` heuristic that risks double-dispatch when a worker is alive-but-slow.
+- **Fix scope:** extend the recovery script with a `--include-releasing` flag + a `--stale-claim-minutes <N>` threshold (operator-steered, probably 30-60 min to be well outside any realistic adapter backoff window). Targets rows where `status="releasing"` AND `claimed_at <= now - stale_claim_minutes`. Dispatch via `_dispatch_row` same as pending-only path. Add ~2 pytest cases: (i) `releasing` + fresh `claimed_at` NOT touched, (ii) `releasing` + stale `claimed_at` → released. ~30-50 LOC + ~2 tests. Operator must agree on the stale-claim threshold BEFORE ship (choose a value that is unambiguously outside the longest realistic adapter timeout).
+- **Priority:** P3 (candidate, BE). The `orphaned_releasing_count` surfaced by the shipped recovery script's dry-run output is the operational signal to dispatch this ticket (sustained non-zero counts over multiple runs = real orphans accumulating).
+
+
 
 ### TD-61 strike #17 — edit-time-sweep behavior class · mitigation threshold codified
 
