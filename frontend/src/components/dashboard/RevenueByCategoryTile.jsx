@@ -75,8 +75,16 @@ function CustomTooltip({ active, payload, total }) {
 export default function RevenueByCategoryTile({ range }) {
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
-  // Phase K41 · Feb-2026 — legend click drill-down.
+  // Phase K41 · Feb-2026 — legend click drill-down.  Carries both
+  // the display label (back-compat) and the stable ``bucket_key``
+  // the BE uses to filter by FK identity rather than name-string.
   const [drillCategory, setDrillCategory] = useState(null);
+  // Feb-2026 · TD-revenue-by-category-id-grouping · Bug A — tile
+  // subscribes to drill-down edits.  Incrementing this nonce
+  // retriggers the ``range``-keyed ``useEffect`` without a page
+  // reload so category edits in the modal land on the pie
+  // immediately after save.
+  const [refetchNonce, setRefetchNonce] = useState(0);
 
   useEffect(() => {
     if (!range?.start || !range?.end) return;
@@ -85,7 +93,7 @@ export default function RevenueByCategoryTile({ range }) {
     api.get(`/admin/dashboard/revenue-by-category?start=${range.start}&end=${range.end}`)
       .then(setData)
       .catch((e) => setErr(e?.message || "Failed to load."));
-  }, [range?.start, range?.end]);
+  }, [range?.start, range?.end, refetchNonce]);
 
   // Feb-2026 · Cleanup — wire ``displayCategoryLabel`` into the
   // render path.  ``data.items[*].category`` is the API-supplied
@@ -166,15 +174,21 @@ export default function RevenueByCategoryTile({ range }) {
           <ul className="flex-1 space-y-1.5 text-sm w-full"
               data-testid="revenue-cat-legend">
             {items.map((it) => (
-              <li key={it.category_id || it.category || it.displayLabel}
+              <li key={it.bucket_key || it.category_id || it.category || it.displayLabel}
                   className="flex items-center justify-between rounded-md px-1.5 py-1 cursor-pointer hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-400"
                   tabIndex={0}
                   role="button"
-                  onClick={() => setDrillCategory(it.displayLabel)}
+                  onClick={() => setDrillCategory({
+                    label: it.displayLabel,
+                    key: it.bucket_key || null,
+                  })}
                   onKeyDown={(e) => {
                     if (e.key === "Enter" || e.key === " ") {
                       e.preventDefault();
-                      setDrillCategory(it.displayLabel);
+                      setDrillCategory({
+                        label: it.displayLabel,
+                        key: it.bucket_key || null,
+                      });
                     }
                   }}
                   data-testid={`revenue-cat-legend-${it.displayLabel.replace(/\s+/g, "-")}`}>
@@ -196,10 +210,18 @@ export default function RevenueByCategoryTile({ range }) {
         onClose={() => setDrillCategory(null)}
         variant="income-by-category"
         params={{
-          category: drillCategory || "",
+          category: drillCategory?.label || "",
+          category_key: drillCategory?.key || "",
           from: range?.start,
           to: range?.end,
         }}
+        // Feb-2026 · Bug A — refetch the tile after any category
+        // edit in the drill-down so the pie reflects the change
+        // without a page reload.  The modal fires ``onEdited`` for
+        // every per-field save (income_category_id, business_unit,
+        // service_category_id, …); bumping the nonce retriggers
+        // the aggregation GET.
+        onEdited={() => setRefetchNonce((n) => n + 1)}
       />
     </div>
   );

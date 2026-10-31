@@ -1620,7 +1620,7 @@ function UndoBanner({ lastBulk, onUndone, onDismiss }) {
 /* ═══════════════════════════════════════════════════════════════
    Main modal
    ═══════════════════════════════════════════════════════════════ */
-function ModalBody({ variant, params, onOpenFullEdit }) {
+function ModalBody({ variant, params, onOpenFullEdit, onEdited }) {
   const [rows, setRows] = useState([]);
   const [total, setTotal] = useState(0);
   const [cursor, setCursor] = useState(null);
@@ -1689,7 +1689,15 @@ function ModalBody({ variant, params, onOpenFullEdit }) {
       return `/dashboard/data-integrity/rows?class=${encodeURIComponent(c)}&limit=100${cursor ? `&cursor=${cursor}` : ""}`;
     }
     if (variant === "income-by-category") {
-      return `/dashboard/income/by-category/rows?category=${encodeURIComponent(params.category)}&from=${params.from}&to=${params.to}&limit=100${cursor ? `&cursor=${cursor}` : ""}`;
+      // Feb-2026 · TD-revenue-by-category-id-grouping — forward the
+      // stable ``category_key`` (bucket_key) from the tile so the
+      // BE filters by FK identity, not by display-name string.
+      // Legacy ``category`` param preserved for back-compat with
+      // callers that haven't been updated yet.
+      const keyParam = params.category_key
+        ? `&category_key=${encodeURIComponent(params.category_key)}`
+        : "";
+      return `/dashboard/income/by-category/rows?category=${encodeURIComponent(params.category)}${keyParam}&from=${params.from}&to=${params.to}&limit=100${cursor ? `&cursor=${cursor}` : ""}`;
     }
     return `/dashboard/income/by-service/rows?service_category_id=${encodeURIComponent(params.service_category_id)}&from=${params.from}&to=${params.to}&limit=100${cursor ? `&cursor=${cursor}` : ""}`;
   }, [variant, params, cursor]);
@@ -1950,6 +1958,7 @@ function ModalBody({ variant, params, onOpenFullEdit }) {
                 serviceCategories={serviceCategories}
                 currentBucket={variant === "income-by-category" ? params?.category : null}
                 onOpenFull={onOpenFullEdit}
+                onEdited={onEdited}
               />
             ))}
           </tbody>
@@ -1989,6 +1998,7 @@ export default function DashboardDrillDownModal({
   onClose,
   variant,
   params,
+  onEdited,
 }) {
   const openFullEdit = useCallback((row) => {
     if (!row?.invoice_id) return;
@@ -2015,6 +2025,7 @@ export default function DashboardDrillDownModal({
             variant={variant}
             params={params}
             onOpenFullEdit={openFullEdit}
+            onEdited={onEdited}
           />
         </PortalErrorBoundary>
         <DialogFooter>

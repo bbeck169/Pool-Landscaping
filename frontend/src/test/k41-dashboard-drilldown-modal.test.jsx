@@ -88,15 +88,22 @@ describe("K41 · Tile wiring — legend click opens the modal", () => {
     expect(REV).toMatch(/import DashboardDrillDownModal/);
     expect(REV).toMatch(/tabIndex=\{0\}/);
     expect(REV).toMatch(/role="button"/);
-    expect(REV).toMatch(/onClick=\{\(\) => setDrillCategory\(it\.displayLabel\)\}/);
+    // Feb-2026 · TD-revenue-by-category-id-grouping — the click
+    // handler now forwards both the display label AND the stable
+    // ``bucket_key`` so the drill-down can filter by FK identity.
+    // Legacy expectation (bare display label) is replaced.
+    expect(REV).toMatch(/setDrillCategory\(\{[\s\S]{0,80}label:\s*it\.displayLabel/);
+    expect(REV).toMatch(/key:\s*it\.bucket_key\s*\|\|\s*null/);
     // Enter/space keyboard access
     expect(REV).toMatch(/if \(e\.key === "Enter" \|\| e\.key === " "\)/);
     // Cursor + hover affordance
     expect(REV).toMatch(/cursor-pointer/);
     expect(REV).toMatch(/hover:bg-slate-100/);
-    // Modal is mounted with the right variant + params
+    // Modal is mounted with the right variant + params; the FE
+    // reads the label through the richer selection shape now.
     expect(REV).toMatch(/variant="income-by-category"/);
-    expect(REV).toMatch(/category: drillCategory/);
+    expect(REV).toMatch(/category:\s*drillCategory\?\.label/);
+    expect(REV).toMatch(/category_key:\s*drillCategory\?\.key/);
   });
 
   it("IncomeByServiceCategoryTile — legend items open the modal", () => {
