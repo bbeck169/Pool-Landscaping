@@ -89,11 +89,23 @@ async def _get_gps_settings(tenant_id: str) -> Dict[str, Any]:
     return row
 
 
+# ── Issue 2 · Feb-2026 — unified clock-state gate ───────────────────
+# ``_get_open_shift`` historically consulted only ``time_entries`` so a
+# tech legitimately on shift via mobile punches (``timeclock_punches``)
+# or a GPS-arrival-started job timer (``job_timers``) got 409
+# ``not_clocked_in`` and the mobile client dropped the ping.  This
+# wrapper reuses the single authoritative reader in
+# ``services.clock_state`` (same soft-delete + tenant isolation
+# posture as the other unified readers).  Response shape preserved:
+# returns the matched row's id as the ``clock_in_id`` so downstream
+# ping docs still correlate to a shift row regardless of which
+# collection authored it.
 async def _get_open_shift(tenant_id: str, user_id: str) -> Optional[Dict[str, Any]]:
-    return await db.time_entries.find_one(
-        {"tenant_id": tenant_id, "user_id": user_id, "clock_out_at": None},
-        {"_id": 0},
-    )
+    from services.clock_state import find_open_shift_ref
+    ref = await find_open_shift_ref(user_id, tenant_id)
+    if not ref:
+        return None
+    return {"id": ref.get("shift_id"), "source": ref.get("source")}
 
 
 # ── POST /api/gps/pings ─────────────────────────────────────────────
