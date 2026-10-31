@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, Link as RouterLink } from "react-router-dom";
 import { useSetDynamicCrumb } from "@/components/nav/dynamicCrumbContext";
 import {
   ArrowLeft,
@@ -2437,6 +2437,32 @@ function RecordPaymentModal({ open, onClose, invoice, user, onDone, onError }) {
         use the "Charge card" flow for an existing saved card, or
         send the customer a payment link so they can save one from
         their portal.
+        {/*
+          Feb-2026 · TD-admin-manual-payment-save-card-feature ·
+          Commit 1c — in-banner deep-link to the shipped
+          ``AdminCardCapturePanel`` (CustomerDetail > Payments tab).
+          Preserves the ``20fcb8c4d`` decision — the banner copy
+          above is unchanged — but surfaces the shipped admin
+          save-card path so operators who open Record Payment
+          expecting save-card have a one-click bridge.  Hidden
+          when ``invoice.customer_id`` is missing (defensive;
+          current UX always has one).
+        */}
+        {invoice?.customer_id ? (
+          <>
+            {" "}
+            <RouterLink
+              to={`/customers/${invoice.customer_id}?tab=payments`}
+              onClick={onClose}
+              className="underline underline-offset-2 font-semibold hover:no-underline focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 rounded"
+              style={{ color: colors.onSurface || colors.text }}
+              data-testid="record-payment-save-card-info-cta"
+              aria-label="Open the customer page to save a card on file"
+            >
+              Save a card on this customer →
+            </RouterLink>
+          </>
+        ) : null}
       </div>
       {canBackfill ? (
         <div className="mt-3" data-testid="backfill-date-section">
