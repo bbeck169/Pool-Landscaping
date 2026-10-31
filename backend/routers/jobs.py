@@ -543,7 +543,7 @@ async def scope_jobs_query(user: dict, tenant: dict, status: Optional[str], tech
         # (same contract the auth-self Phase P9 lane uses at L387-466).
         _crew_rows = await db.crews.find(
             {"tenant_id": tenant.get("id"),
-             "tech_ids": {"$in": _variants or [technician_id]}},
+             "tech_ids": {"$in": _variants.all_ids or [technician_id]}},
             {"_id": 0, "id": 1},
         ).to_list(None)
         _crew_ids = [c["id"] for c in _crew_rows if c.get("id")]

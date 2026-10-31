@@ -57,6 +57,16 @@ def patch_db(monkeypatch):
     monkeypatch.setattr(_jobs, "db", state["db"])
 
     async def _fake_resolver(tech_id, tenant_id=None):   # noqa: ARG001
+        # 2026-02 · Bug A — the real resolver returns a
+        # ``TechIdVariants`` dataclass, not a list.  The admin lane
+        # dereferences ``.all_ids`` on it, so this mock must match
+        # that shape or ``scope_jobs_query`` raises ``AttributeError``.
+        from services.tech_id_resolver import TechIdVariants
+        variants = TechIdVariants(
+            input_id=tech_id, tenant_id=tenant_id,
+            technicians_id=tech_id, source="technicians",
+            all_ids=[tech_id],
+        )
         _or = {
             "$or": [
                 {"technician_id": tech_id},
@@ -65,7 +75,7 @@ def patch_db(monkeypatch):
                 {"tech_user_id": tech_id},
             ]
         }
-        return ([tech_id], _or)
+        return (variants, _or)
 
     import services.tech_id_resolver as _resolver_mod
     monkeypatch.setattr(
