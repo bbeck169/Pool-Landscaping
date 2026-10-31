@@ -2163,3 +2163,164 @@ async def ensure_indexes() -> None:
         },
     )
 
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Feb-2026 · TD-income-category-dupes-audit · Phase 1
+#
+# Admin audit endpoint — read-only, tenant-scoped — surfaces every
+# ``income_categories`` duplicate set in the caller's tenant plus
+# the inline-string-only line-item inventory. Operator runs this
+# in production BEFORE invoking the Phase 2 migration script so
+# the canonical pick per duplicate set is operator-reviewed.
+#
+# Normalization MUST match ``_resolve_line_category_identity`` from
+# ``routers/dashboard_revenue.py`` (commit ``05e6cf590``): both the
+# ``income_categories.name`` key and the inline-string ``line_item
+# .category`` field normalize to ``(value or "").strip().lower()``.
+# Reusing the SAME rule means the Phase 2 migration groups the
+# same way the audit shows — no drift between what the operator
+# previews and what the script does.
+#
+# ref_count semantics: number of ``invoice_line_items`` rows on
+# paid+unpaid invoices (soft-delete filtered) in this tenant whose
+# ``line_items.income_category_id`` equals the row's ``id``. Pure
+# FK pointer count — does NOT follow inline-string back-references.
+# would_be_canonical = row with MAX ref_count in the set; ties
+# broken by lexicographic ``name`` (deterministic across runs).
+# ═════════════════════════════════════════════════════════════════════
+def _normalize_cat_name(raw: Any) -> str:
+    """Byte-identical to ``_resolve_line_category_identity``'s
+    inline-string normalization (``.strip().lower()``). Kept inline
+    rather than imported so a future refactor of the dashboard
+    helper cannot silently drift the audit grouping."""
+    return str(raw or "").strip().lower()
+
+
+@router.get("/admin/income-categories/duplicates")
+async def income_categories_duplicates_audit(
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+) -> Dict[str, Any]:
+    """Audit endpoint for the Phase 2 duplicate-merge migration.
+
+    Returns every ``income_categories`` duplicate set in the
+    caller's tenant (grouped by normalized name), plus a tally of
+    line items whose ``income_category_id`` is null but whose
+    inline ``category`` string could be FK-rooted post-migration.
+    Pure read; never mutates.
+    """
+    _require_admin(user)
+    tid = tenant["id"]
+
+    # ── 1. Pull every live income_categories row in the tenant.
+    cats_cursor = db.income_categories.find(
+        {"tenant_id": tid, "$or": [
+            {"deleted_at": None}, {"deleted_at": {"$exists": False}},
+        ]},
+        {"_id": 0, "id": 1, "name": 1, "is_archived": 1},
+    )
+    cats: List[Dict[str, Any]] = await cats_cursor.to_list(10_000)
+
+    # ── 2. ref_count per income_categories.id — one aggregation
+    # over invoice line items in the tenant.  Only count real
+    # pointers (non-null ``income_category_id``).
+    ref_counts: Dict[str, int] = {}
+    agg_cursor = db.quotes.aggregate([
+        {"$match": {"tenant_id": tid, "doc_type": "invoice",
+                      "$or": [{"deleted_at": None},
+                              {"deleted_at": {"$exists": False}}]}},
+        {"$unwind": "$line_items"},
+        {"$match": {"line_items.income_category_id":
+                       {"$ne": None, "$exists": True}}},
+        {"$group": {"_id": "$line_items.income_category_id",
+                     "count": {"$sum": 1}}},
+    ])
+    async for row in agg_cursor:
+        rid = row.get("_id")
+        if rid:
+            ref_counts[rid] = int(row.get("count") or 0)
+
+    # ── 3. Group income_categories by normalized name; emit sets
+    # with >1 row as duplicates.  Determinism: sort rows within a
+    # set by (-ref_count, name) so would_be_canonical is stable.
+    from collections import defaultdict
+    by_norm: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    for c in cats:
+        by_norm[_normalize_cat_name(c.get("name"))].append(c)
+
+    duplicate_sets: List[Dict[str, Any]] = []
+    for norm, rows in sorted(by_norm.items()):
+        if len(rows) < 2 or not norm:
+            continue
+        enriched = [{
+            "id":    r["id"],
+            "name":  r.get("name") or "",
+            "ref_count": int(ref_counts.get(r["id"], 0)),
+            "is_archived": bool(r.get("is_archived")),
+        } for r in rows]
+        # Rank by ref_count desc, then name asc (lex tiebreak).
+        enriched.sort(key=lambda r: (-r["ref_count"], r["name"]))
+        for i, r in enumerate(enriched):
+            r["would_be_canonical"] = (i == 0)
+        duplicate_sets.append({
+            "canonical_name_normalized": norm,
+            "rows": enriched,
+        })
+
+    # ── 4. Inline-string-only line items — rows with no
+    # ``income_category_id`` but a non-empty inline ``category``
+    # string.  Group by normalized string; mark whether the
+    # normalized value resolves to any ``income_categories`` row
+    # (post-dedupe canonical pick) so the operator can preview the
+    # s1 backfill coverage.
+    name_to_canonical: Dict[str, str] = {}
+    for norm, rows in by_norm.items():
+        if not norm:
+            continue
+        enriched = [{
+            "id": r["id"],
+            "rc": int(ref_counts.get(r["id"], 0)),
+            "name": r.get("name") or "",
+        } for r in rows]
+        enriched.sort(key=lambda r: (-r["rc"], r["name"]))
+        name_to_canonical[norm] = enriched[0]["id"]
+
+    inline_by_norm: Dict[str, int] = defaultdict(int)
+    inline_cursor = db.quotes.aggregate([
+        {"$match": {"tenant_id": tid, "doc_type": "invoice",
+                      "$or": [{"deleted_at": None},
+                              {"deleted_at": {"$exists": False}}]}},
+        {"$unwind": "$line_items"},
+        {"$match": {"$and": [
+            {"$or": [{"line_items.income_category_id": None},
+                     {"line_items.income_category_id":
+                          {"$exists": False}}]},
+            {"line_items.category": {"$ne": None, "$ne": "",
+                                        "$exists": True}},
+        ]}},
+        {"$group": {"_id": "$line_items.category",
+                     "count": {"$sum": 1}}},
+    ])
+    async for row in inline_cursor:
+        norm = _normalize_cat_name(row.get("_id"))
+        if norm:
+            inline_by_norm[norm] += int(row.get("count") or 0)
+
+    inline_rows: List[Dict[str, Any]] = []
+    for norm, cnt in sorted(inline_by_norm.items(),
+                                key=lambda kv: (-kv[1], kv[0])):
+        inline_rows.append({
+            "normalized":       norm,
+            "count":            cnt,
+            "resolves_to_fk_id": name_to_canonical.get(norm),
+        })
+
+    return {
+        "tenant_id":                 tid,
+        "duplicate_sets":            duplicate_sets,
+        "inline_string_only_line_items": {
+            "total":             sum(inline_by_norm.values()),
+            "by_normalized_name": inline_rows,
+        },
+    }
