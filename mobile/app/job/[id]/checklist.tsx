@@ -56,6 +56,13 @@ import WaterBodyManager from "@/src/components/checklist/WaterBodyManager";
 import { WaterBody, makeEmptyBody, missingRequiredReadings } from "@/src/lib/waterBodies";
 import { expandChemistryLabel } from "@/src/lib/expandChemistryLabel";
 import { canEditCompletedJob } from "@/src/lib/k6Unlock";
+// TD-g2 — unlock-before-save on a submitted report (web β 1eff40b8a parity).
+import {
+  submittedSaveMode, isUnlockAdminRole, saveWithUnlock, unlockSubmittedJob,
+  mergeUnlockedReport, SUBMITTED_READ_ONLY_MESSAGE, type FlushSaveResult,
+} from "@/src/lib/submittedReportUnlock";
+import UnlockReasonModal from "@/src/components/checklist/UnlockReasonModal";
+import SubmittedReportUnlockNotice from "@/src/components/checklist/SubmittedReportUnlockNotice";
 import ClosedJobEditsBanner from "@/src/components/job/ClosedJobEditsBanner";
 import EditedAfterCompletionBadge from "@/src/components/job/EditedAfterCompletionBadge";
 import { retryWithBackoff } from "@/src/services/retryWithBackoff";
@@ -76,6 +83,9 @@ import MarcoVoiceButton from "@/src/components/marco/MarcoVoiceButton";
 import CheckInButtons from "@/src/components/fleet/CheckInButtons";
 
 const AUTOSAVE_DEBOUNCE_MS = 800;
+// TD-g2 — iOS cannot present a Modal while another is still dismissing;
+// wait this long before opening the unlock prompt from a dialog.
+const MODAL_HANDOFF_MS = 400;
 // Phase 37 — minimum time the pill stays on "Saving…" so techs actually
 // see the transition after a chip tap on the mobile checklist.
 const MIN_SAVING_MS = 400;
@@ -421,12 +431,30 @@ export default function JobChecklistScreen() {
   // now branches on ``ok`` and NEVER falsely claims success on failure
   // (pre-K61 bug — it always showed an "Saved" alert regardless of
   // whether the PATCH threw).
-  type FlushSaveResult = { ok: boolean; queued?: boolean; error?: string };
+  // TD-g2 — FlushSaveResult lives in src/lib/submittedReportUnlock.ts
+  // (adds needsUnlock / blocked / cancelled). The pill's tap-to-retry on a
+  // locked admin save routes through saveDraft (unlock orchestration).
+  const saveDraftRef = useRef<(() => void) | null>(null);
   const flushSave = useCallback(async (): Promise<FlushSaveResult> => {
     // Read from the ref so a queued autosave timer sees the newest
     // report state — not the one closed over at scheduleAutosave time.
     const current = reportRef.current;
-    if (!current || current.submitted_at) return { ok: true };
+    if (!current) return { ok: true };
+    // TD-g2 — role split on a submitted report; never a silent ok:true drop.
+    // technician → falls through to PATCH (BE post-submit bypass accepts).
+    const submittedMode = submittedSaveMode(role, current);
+    if (submittedMode === "read-only") {
+      savingShownAtRef.current = 0;
+      setSaveState("idle");
+      return { ok: false, blocked: true, error: SUBMITTED_READ_ONLY_MESSAGE };
+    }
+    if (submittedMode === "needs-unlock") {
+      // Edits stay dirty (nav guard still fires); the pill shows unsaved.
+      savingShownAtRef.current = 0;
+      setSaveState("error");
+      setPillState({ kind: "exhausted", onRetry: () => { saveDraftRef.current?.(); } });
+      return { ok: false, needsUnlock: true };
+    }
     if (!dirtyRef.current || savingRef.current) return { ok: true };
     savingRef.current = true;
     if (!savingShownAtRef.current) savingShownAtRef.current = Date.now();
@@ -516,7 +544,7 @@ export default function JobChecklistScreen() {
     } finally {
       savingRef.current = false;
     }
-  }, [id, online]);
+  }, [id, online, role]);
 
   const scheduleAutosave = useCallback(() => {
     dirtyRef.current = true;
@@ -532,6 +560,47 @@ export default function JobChecklistScreen() {
   useEffect(() => () => {
     if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
   }, []);
+
+  // ─── TD-g2 · unlock-before-save orchestration ───────────────────────
+  // Save draft / Save & close / Close-job pre-flush share runSave. An
+  // unlock-admin save on a submitted report asks for a reason, POSTs
+  // /jobs/{jid}/unlock, re-fetches the report (submitted_at cleared) with
+  // the local edits merged on top, then PATCHes. Later saves in the same
+  // session skip the prompt until the report is resubmitted.
+  const [unlockOpen, setUnlockOpen] = useState(false);
+  const [unlockBusy, setUnlockBusy] = useState(false);
+  const unlockResolverRef = useRef<((reason: string | null) => void) | null>(null);
+  const settleUnlockPrompt = useCallback((reason: string | null) => {
+    const resolve = unlockResolverRef.current;
+    unlockResolverRef.current = null;
+    if (reason === null) setUnlockOpen(false);
+    else setUnlockBusy(true);
+    resolve?.(reason);
+  }, []);
+  const runSave = useCallback(async (afterModalMs = 0): Promise<FlushSaveResult> => {
+    try {
+      return await saveWithUnlock({
+        flush: flushSave,
+        online,
+        requestReason: () => new Promise<string | null>((resolve) => {
+          unlockResolverRef.current = resolve;
+          setTimeout(() => setUnlockOpen(true), afterModalMs);
+        }),
+        unlock: (reason) => unlockSubmittedJob(String(id), reason),
+        refetch: () => api.get(`/jobs/${id}/service-report`),
+        applyUnlocked: (fresh) => {
+          const merged = mergeUnlockedReport(fresh, reportRef.current);
+          reportRef.current = merged;
+          setReport(merged);
+          dirtyRef.current = true;
+        },
+      });
+    } finally {
+      unlockResolverRef.current = null;
+      setUnlockOpen(false);
+      setUnlockBusy(false);
+    }
+  }, [flushSave, online, id]);
 
   // Merge a partial report change and mark dirty so autosave will flush.
   const patchReport = useCallback((patch: Record<string, any>) => {
@@ -605,9 +674,12 @@ export default function JobChecklistScreen() {
   }, [router]);
 
   const handleSaveAndClose = useCallback(async () => {
+    // TD-g2 — the unlock prompt replaces this dialog on a submitted report.
+    const needsUnlock = submittedSaveMode(role, reportRef.current) === "needs-unlock";
+    if (needsUnlock) setDirtyCloseOpen(false);
     setSaveAndClosing(true);
     dirtyRef.current = true; // force flush
-    const result = await flushSave();
+    const result = await runSave(needsUnlock ? MODAL_HANDOFF_MS : 0);
     setSaveAndClosing(false);
     if (result.ok) {
       dirtyRef.current = false;
@@ -623,11 +695,13 @@ export default function JobChecklistScreen() {
           router.back();
         }
       }, 50);
-    } else {
-      showToast("Couldn't save your changes — please check your connection and try again.");
-      // Keep dialog open, keep dirty
+    } else if (!result.cancelled) {
+      showToast(needsUnlock && result.error
+        ? result.error
+        : "Couldn't save your changes — please check your connection and try again.");
+      // Keep dirty (dialog stays open unless the unlock prompt replaced it)
     }
-  }, [flushSave, router, showToast]);
+  }, [runSave, role, router, showToast]);
 
   const handleDiscard = useCallback(() => {
     dirtyRef.current = false;
@@ -682,7 +756,7 @@ export default function JobChecklistScreen() {
   //
   const saveDraft = async () => {
     dirtyRef.current = true;
-    const result = await flushSave();
+    const result = await runSave();
     if (result.ok) {
       if (result.queued) {
         Alert.alert(
@@ -692,10 +766,15 @@ export default function JobChecklistScreen() {
       } else {
         showToast("Draft saved.");
       }
+    } else if (result.cancelled) {
+      // TD-g2 — unlock prompt dismissed: nothing saved, no toast.
+    } else if (result.blocked) {
+      Alert.alert("Report is submitted", result.error || SUBMITTED_READ_ONLY_MESSAGE);
     } else {
       Alert.alert("Save failed", result.error || "Try again.");
     }
   };
+  saveDraftRef.current = saveDraft;
 
   // ─── Close job ───────────────────────────────────────────────────────
   // P0 fix — replaced Alert.alert with in-tree Modals to prevent the
@@ -733,12 +812,16 @@ export default function JobChecklistScreen() {
     try {
       // 1) Final PATCH — flush any pending edits.
       dirtyRef.current = true;
-      const flushed = await flushSave();
+      // TD-g2 — same unlock orchestration as Save draft (submitted report).
+      const needsUnlock = submittedSaveMode(role, reportRef.current) === "needs-unlock";
+      const flushed = await runSave(needsUnlock ? MODAL_HANDOFF_MS : 0);
       if (!flushed.ok) {
-        Alert.alert(
-          "Save failed",
-          `${flushed.error || "Could not save your latest edits."}\n\nJob was not closed — please try again.`,
-        );
+        if (!flushed.cancelled) {
+          Alert.alert(
+            "Save failed",
+            `${flushed.error || "Could not save your latest edits."}\n\nJob was not closed — please try again.`,
+          );
+        }
         setSubmitting(false);
         return;
       }
@@ -932,6 +1015,10 @@ export default function JobChecklistScreen() {
       <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: 160 + insets.bottom }}>
         {/* TD-78b — "Closed job — edits logged" (completed + K6 role; web rule). */}
         {canEditCompletedJob(role, job) ? <ClosedJobEditsBanner /> : null}
+        {/* TD-g2 — unlock-admin on a submitted report: edits need an unlock reason. */}
+        {locked && !effectiveLocked && isUnlockAdminRole(role) ? (
+          <SubmittedReportUnlockNotice onUnlock={saveDraft} disabled={unlockOpen || submitting} />
+        ) : null}
         {/* WW — POST-edit badge (BE denorm); unlock gates above unchanged (D1 b). */}
         <View style={{ marginBottom: spacing.md }}><EditedAfterCompletionBadge visible={job?.edited_after_completion === true} /></View>
         <View style={styles.hero} testID="checklist-hero">
@@ -1210,6 +1297,14 @@ export default function JobChecklistScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* TD-g2 — unlock reason prompt (Save draft / Save & close / Close job). */}
+      <UnlockReasonModal
+        visible={unlockOpen}
+        busy={unlockBusy}
+        onCancel={() => settleUnlockPrompt(null)}
+        onSubmit={(reason) => settleUnlockPrompt(reason)}
+      />
 
       {/* Phase C1 · Dirty-close guard confirm dialog */}
       <Modal visible={dirtyCloseOpen} transparent animationType="fade" testID="checklist-dirty-close-dialog">

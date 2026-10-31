@@ -43,7 +43,11 @@ beforeAll(() => {
 
 describe("K61.b.2 · flushSave return-envelope contract", () => {
   it("declares the ``FlushSaveResult`` type with ok + queued + error", () => {
-    expect(source).toMatch(/type\s+FlushSaveResult\s*=\s*\{\s*ok:\s*boolean;\s*queued\?:\s*boolean;\s*error\?:\s*string\s*\}/);
+    // TD-g2 — the type moved to src/lib/submittedReportUnlock.ts (adds
+    // needsUnlock / blocked / cancelled); checklist imports it.
+    const lib = fs.readFileSync(path.resolve(__dirname, "../src/lib/submittedReportUnlock.ts"), "utf8");
+    expect(lib).toMatch(/type\s+FlushSaveResult\s*=\s*\{\s*ok:\s*boolean;\s*queued\?:\s*boolean;\s*error\?:\s*string;/);
+    expect(source).toMatch(/type FlushSaveResult,?\s*\}\s*from\s*"@\/src\/lib\/submittedReportUnlock"/);
   });
 
   it("flushSave declares the return type as Promise<FlushSaveResult>", () => {
@@ -81,7 +85,8 @@ describe("K61.b.2 · flushSave return-envelope contract", () => {
 
 describe("K61.b.2 · saveDraft branches on the flushSave result", () => {
   it("awaits flushSave into a ``result`` variable and reads ``result.ok``", () => {
-    expect(source).toMatch(/const\s+result\s*=\s*await\s+flushSave\(\)/);
+    // TD-g2 — saveDraft goes through runSave (flushSave + unlock orchestration).
+    expect(source).toMatch(/const\s+result\s*=\s*await\s+runSave\(\)/);
     expect(source).toMatch(/if\s*\(\s*result\.ok\s*\)/);
   });
 
@@ -111,13 +116,14 @@ describe("K61.b.2 · saveDraft branches on the flushSave result", () => {
 
 describe("K61.b.2 · closeJob pre-flush short-circuit", () => {
   it("captures flushSave's return into ``flushed`` and short-circuits on !flushed.ok", () => {
-    expect(source).toMatch(/const\s+flushed\s*=\s*await\s+flushSave\(\)/);
+    // TD-g2 — pre-flush goes through runSave (flushSave + unlock orchestration).
+    expect(source).toMatch(/const\s+flushed\s*=\s*await\s+runSave\(/);
     expect(source).toMatch(/if\s*\(\s*!flushed\.ok\s*\)/);
   });
 
   it("shows a ``Save failed`` alert and BAILS OUT before calling POST /submit on pre-flush failure", () => {
     // Locate the pre-flush block and check it contains the bailout.
-    const preflushBlock = source.slice(source.indexOf("const flushed = await flushSave()"));
+    const preflushBlock = source.slice(source.indexOf("const flushed = await runSave("));
     expect(preflushBlock.slice(0, 800)).toMatch(/Alert\.alert\(\s*["']Save failed["']/);
     expect(preflushBlock.slice(0, 800)).toMatch(/setSubmitting\(false\)/);
     expect(preflushBlock.slice(0, 800)).toMatch(/return;/);
