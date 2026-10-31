@@ -18,16 +18,13 @@ describe("Mobile arrival radius constants", () => {
     expect(Number(match![1])).toBe(75);
   });
 
-  it("geofence.ts RADIUS_M equals server (75m)", () => {
+  // β-core commit 1 — the dead `src/geofence.ts` (legacy `job-arrival-geofence`
+  // task, zero importers) was removed; the live arrival-geofence owner is
+  // `src/background/jobGeofence.ts` (radius locked below).
+  it("legacy src/geofence.ts stays deleted (single arrival-geofence owner)", () => {
     const fs = require("fs");
     const path = require("path");
-    const src = fs.readFileSync(
-      path.resolve(__dirname, "../src/geofence.ts"),
-      "utf8",
-    );
-    const match = src.match(/const RADIUS_M\s*=\s*(\d+)/);
-    expect(match).not.toBeNull();
-    expect(Number(match![1])).toBe(75);
+    expect(fs.existsSync(path.resolve(__dirname, "../src/geofence.ts"))).toBe(false);
   });
 
   it("jobGeofence.ts FALLBACK_RADIUS_M equals server (75m)", () => {
