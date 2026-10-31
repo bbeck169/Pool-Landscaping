@@ -1394,15 +1394,15 @@ Dedicated `PaymentRow` component for enhanced payment-row rendering on `Customer
 - **Priority:** P3 (candidate, web).
 
 
-## TD-96-g1-invoices (candidate, P3 BE/web)
+## TD-96-g1-invoices · Panel count vs filtered list disagree — SHIPPED (Oct-2026)
 
-- **Reporter:** mobile track recon.
-- **Finding:** panel's `linked_quotes_count` counts converted invoices via `$or` on `converted_from_lead_id`, but `/quotes?lead_id=X&view=all` returns quote-shaped rows only (`doc_type="quote"`). Counts disagree — "View all 2" shows 1 row on 1 live case. Semantic ambiguity: does "linked quotes" mean "docs that WERE quotes" (count current + reparented including those auto-converted to invoices) or "docs that ARE quotes" (narrow)?
-- **Fork options:**
-  - (i) **Tighten** `linked_quotes_count` to quotes-only (`doc_type="quote"` filter on the `$or`). Count matches `/quotes?lead_id=` output exactly.
-  - (ii) **Expand** `/quotes?lead_id=` to include invoice-shaped reparented docs (`doc_type ∈ {quote, invoice}` when `lead_id` is set). Semantic becomes "all docs that originated from this lead".
-- **Est LOC:** ~5-15 LOC BE either fork + ~1 pytest update.
-- **Priority:** P3 (candidate, BE/web). Operator picks fork.
+- **Ship:** `a3d8f4ab9` `td-96-g1-invoices-be` (operator picked **D1(ii) EXPAND**; `quotes.py:434` relaxes `doc_type="quote"` forcing when `lead_id` AND `view=all` are both set + 11/11 pytest in new `test_td_96_g1_invoices.py` covering both-shapes under `lead_id+view=all` / count parity with `linked_quotes_count` field / lifecycle-view regression ×4 / `view=all` without `lead_id` quote-only / `lead_id` without `view` regression / RBAC field tech / soft-delete invoice exclusion / cross-tenant invoice isolation / `doc_type` field present on every row for FE routing branch) · `7bed06d51` `td-96-g1-invoices-fe` (`QuotesList.jsx` fetchRows gains `_mixedShapes` guard — drops `doc_type=quote` from querystring when `leadFilter && view==="all"`, lifecycle views keep quote-only; row `onClick` ternary routes `r.doc_type==="invoice"` → `/invoices/{r.id}` else `/quotes/{r.id}` + 6/6 vitest in new `QuotesListMixedShapesInvoices.test.jsx`) · `e7ce866d2` `td-96-g1-web-view` follow-up (`LeadDetail.jsx:779` View all link appends `&view=all` so the mixed-shape path activates end-to-end; without this the QuotesList viewRaw defaults to `open` and reparented invoices stay hidden). Recon doc at `ab5cd0302` (`memory/td96_g1_invoices_recon.md`).
+- **Fork chosen:** (ii) **EXPAND** — preserves TD-96-g2 panel visibility intent, honors the reparent step's intent to carry invoices forward (`routers/leads.py:828-842` stamps `converted_from_lead_id` on BOTH quote AND invoice shapes without discrimination), and fixes an unintended `view`-branch × `lead_id`-branch layering interaction rather than changing design intent.
+- **Semantic contract (BE):** `GET /quotes?lead_id=X&view=all` drops the `doc_type="quote"` scope and returns mixed quote-shaped + invoice-shaped reparented docs. Lifecycle views (`open` / `accepted` / `converted` / `declined`) keep `doc_type="quote"` because those statuses only live on quote-shaped docs. `view=all` **without** `lead_id` stays quote-only (standalone dashboard "All" tab mental model is "all quotes"). `lead_id` without `view` stays doc-type-agnostic (preserves TD-96-g1 `/quotes?lead_id=` parity with `linked_quotes_count`).
+- **FE flow:** LeadDetail "View all" → `/quotes?lead=X&view=all` → QuotesList.fetchRows omits `doc_type` → `/api/quotes?lead_id=X&view=all` → BE guard skips `doc_type=quote` → mixed quote+invoice response → QuotesList row `onClick` branches on `doc_type` → correct detail page.
+- **Tenant isolation:** preserved on both legs (BE `test_td_96_g1_invoices.py` locks cross-tenant invoice non-leak; the lead_id `$or` composes under the shared tenant-scoped base query).
+- **Mobile impact:** API-stable contract — `linked_quotes_count` and `GET /leads/{lid}/quotes` were already both-shapes before the ship. No mobile changes needed; `LeadLinkedQuotesPanel` keeps the same "View all {total}" label.
+- **Priority:** closed.
 
 
 ## Audit-process lessons learned · td-lessons-doc-4 batch (Oct-2026 · post-TD-96-g1/g2 ship)
