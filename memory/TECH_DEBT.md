@@ -3790,51 +3790,22 @@ Create path writes `line_items[].category` (string, display name) and leaves the
 - Operator chat ticket (Feb-2026, 3 screenshots).
 - Edit-modal reference contract: Commit A `f1034dbfc` (BE), Commit B `f48245c89` + source payload under `2cd55eddd` (FE).
 
-## TD-admin-manual-payment-save-card-feature · OPEN · Feb-2026 (P2 · FEATURE · product sign-off required)
+## TD-admin-manual-payment-save-card-feature · Admin save-card from manual payment surface — SHIPPED (Feb-2026)
 
-**Origin:** Operator Bug 2 report ("'Save card' on manual payment doesn't persist") — payment-audit (Deliverable 1-2 under FIN-PAID-STATUS-PARITY). Audit confirmed `RecordPaymentModal` in `frontend/src/pages/quotes/QuoteInvoiceDetail.jsx:2372-2453` has NO save-card UI by design. Commit 2a (`20fcb8c4d`) shipped a clarifying info banner; this TD scopes the NEW FEATURE if product decides the admin manual flow SHOULD support card capture.
-
-**Operator-visible gap:**
-Today, an admin recording an "external card" payment (customer handed over a card, admin ran it elsewhere e.g. terminal, now records in CRM) has no way to tokenise the card for future autobilling. The customer has to separately navigate to the portal Payment Methods page, OR the admin has to send a magic-link invoice.
-
-**Why this is a FEATURE, not a bug:**
-"Manual" payment = cash / check / external card. The modal payload at `QuoteInvoiceDetail.jsx:2394` is strictly `{amount, paid_at?}` — no card number is entered in the modal. Adding save-card requires inverting the mental model: the admin would run a *real* card charge through Stripe (same as `/charge-saved-card` or the magic-link capture path) and have the resulting PM auto-attached.
-
-**Scope stub for implementation (do NOT implement without product sign-off):**
-
-1. **Product decision — pick one UX:**
-   - (α) New "Charge new card" button in the invoice detail that opens a dedicated Stripe-Elements modal, creates a `PaymentIntent` with `setup_future_usage="off_session"`, attaches the PM via `_save_pm_after_first_payment` (shipped webhook helper at `backend/services/payments/stripe_charge.py:1787`). Keeps `RecordPaymentModal` strictly manual. Clearest UX.
-   - (β) Add an optional "Save new card to file" sub-flow inside `RecordPaymentModal` that, when enabled, swaps the modal to a Stripe-Elements embed and dispatches a real Stripe charge instead of the manual `record-payment` endpoint. Risk: UX conflation of two different payment flows under one modal.
-   - (γ) New admin "Add card to file for customer" surface on the customer detail page (completely divorced from invoice flow). Uses `SetupIntent` without charging. Reuses the `/customer-portal/payment-methods/add-card` playbook. Separation of concerns argument.
-
-2. **Backend scope (α-path, likely preferred):**
-   - New `POST /invoices/{iid}/charge-new-card` endpoint under `backend/routers/invoice_charge_new_card.py` (sibling of `invoice_charge_saved_card.py`).
-   - Reuses `stripe_charge.py` helpers — `create_payment_intent` (new helper? or extend the shipped one) with `setup_future_usage="off_session"` + `confirm=True` + `payment_method` from the Elements client-side submit.
-   - Webhook consumer `payment_intent.succeeded` already flips `payment_status`+`status` to `"paid"` under Fix A at `stripe_charge.py:1898+1969` — no new reconciler needed, state flip is free.
-   - PM mirror via `_save_pm_after_first_payment` (gated on `crm_save_for_future="1"` metadata — same wire as magic-link).
-
-3. **Frontend scope (α-path):**
-   - New `ChargeNewCardDialog.jsx` (sibling of `InvoiceChargeSavedCardDialog.jsx`).
-   - Mount Stripe Elements, confirm the PaymentIntent, submit `pm_id` to the new BE endpoint.
-   - "Save card for future" checkbox default-ON (matches `PaymentForm.jsx` magic-link UX).
-   - Invoice detail — add "Charge new card" button next to "Charge saved card" when the customer has 0 PMs OR has PMs but admin wants to capture a new one.
-
-4. **Risk flags:**
-   - PCI scope — Stripe Elements keeps the pod out of PCI card-data scope, but confirm BE never sees raw PAN.
-   - Idempotency — the new endpoint needs the same `invoice_charge_attempts` audit row the shipped `/charge-saved-card` writes (prevents double-charge on retry).
-   - Dual-write risk — if operator records a cash payment on an invoice that ALREADY has a succeeded card charge, we'd overpay. Confirm `record_payment` tolerates amount>remaining (shipped: `min(paid, total)` caps at total — no over-posting, but UX should warn).
-
-**Risk:** Medium — Stripe integration surface, PCI concerns (mitigated by Elements), 2-3 commits of fresh code (BE endpoint + FE dialog + wiring + pytest + vitest).
-
-**Priority:** P2. The absence doesn't block any revenue path — admins can save cards via the portal flow or via the magic-link flow. This is a UX convenience ticket.
-
-**Status:** OPEN. **FEATURE scope — do NOT implement without a product-side sign-off on the (α / β / γ) UX choice.** The shipped info banner from Commit 2a (`20fcb8c4d`) is the operator-facing stopgap until this ticket is scheduled.
-
-**Cross-refs:**
-- Commit 2a `20fcb8c4d` — RecordPaymentModal info banner (stopgap clarification).
-- Commit A/B of the paid-invoice metadata dispatch — unrelated, cited for the same modal's existing deps.
-- `backend/services/payments/stripe_charge.py:1787` `_save_pm_after_first_payment` — the shipped webhook helper the α-path would reuse.
-- `frontend/src/components/invoices/InvoiceChargeSavedCardDialog.jsx` — the sibling dialog the α-path would mirror.
+- **Ship:** `e2ead28a4` `TD-admin-manual-payment-save-card-feature · Commit 1c: deep-link Record Payment banner to AdminCardCapturePanel` (`frontend/src/pages/quotes/QuoteInvoiceDetail.jsx` adds a `RouterLink` inside the existing "Not saving a card" banner that routes to `/customers/${invoice.customer_id}?tab=payments`, closing the Record Payment modal via `onClick={onClose}` and leveraging the shipped tab-restore at `CustomerDetail.jsx:961-976` so arrival auto-selects the Payments tab + 9/9 new vitest at `frontend/src/test/record-payment-save-card-deeplink.test.jsx` + 4/4 banner-lock regression hold at `frontend/src/test/record-payment-save-card-info.test.jsx`). Resolution via operator path 1(c) — a FE-only deep-link bridge, not any of the α/β/γ UX options in the original stub.
+- **Fork chosen:** 1(c) — bridge the operator's mental model to the shipped admin save-card surface via a one-click link inside the Record Payment banner, instead of (α) new "Charge new card" button, (β) saving-card sub-flow inside RecordPaymentModal, or (γ) new standalone admin surface. All three were leapfrogged by the discovery that **the admin save-card feature already shipped** at `AdminCardCapturePanel.jsx` (Phase 14a + B1 Feb-2026).
+- **Shipped admin save-card surfaces (reality check reused as resolution):**
+  - `frontend/src/components/customers/AdminCardCapturePanel.jsx` — full SetupIntent + Stripe Elements attach + remove flow for BOTH card AND ACH (`us_bank_account`). Mounts under `CustomerDetail.jsx:2578-2580` behind `tab === "payments"`.
+  - BE endpoints already live: `POST /payments/stripe/setup-intent` + `POST /payments/stripe/attach` (admin-scoped, consumed by the panel at `AdminCardCapturePanel.jsx:12-14`).
+  - Multi-tenant Stripe routing already handled: `OAUTH_STRIPE_CONNECT` connected-account model with `STRIPE_PLATFORM_FALLBACK_ENABLED=true` fallback (`services/payments/tenant_base.py:118`).
+  - Second admin-initiated save-card path at `backend/routers/customers_bulk_card_capture.py:306` for magic-link capture (admin triggers, customer completes on their phone/email).
+- **Why NOT α/β/γ:** the stub drafted α (new "Charge new card" button) under the assumption that no admin save-card surface existed. Audit (Feb-2026) found that assumption wrong — `AdminCardCapturePanel` had already shipped Phase 14a. All three UX options would have duplicated existing shipped code with net-zero capability gain. Preserving the `20fcb8c4d` Feb-2026 "manual payment never saves a card" decision + routing operators to the already-shipped surface is the minimum-net-new-code resolution.
+- **Semantic contract preserved:**
+  - `20fcb8c4d` Feb-2026 "Not saving a card" banner copy, testid, and modal placement **UNCHANGED**. The 4 shipped vitest cases at `record-payment-save-card-info.test.jsx` still pass bit-for-bit.
+  - `status="paid"` manual-payment invariant from Payment Bug 1 commits (`faf27ad91` / `9403e0428` / `84d3603a7`) untouched.
+  - Record Payment modal payload at `QuoteInvoiceDetail.jsx:2394` still strictly `{amount, paid_at?}` — no Stripe surface added inside the modal.
+- **Non-touches (explicit):** `AdminCardCapturePanel` and its endpoints, mobile, portal, webhooks, any other Stripe route.
+- **Priority:** closed.
 
 
 ## TD-portal-save-card-lift-double-guard · OPEN · Feb-2026 (P2 · product decision required)
