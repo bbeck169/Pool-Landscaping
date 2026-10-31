@@ -59,7 +59,7 @@ import { canEditCompletedJob } from "@/src/lib/k6Unlock";
 // TD-g2 — unlock-before-save on a submitted report (web β 1eff40b8a parity).
 import {
   submittedSaveMode, isUnlockAdminRole, saveWithUnlock, unlockSubmittedJob,
-  mergeUnlockedReport, SUBMITTED_READ_ONLY_MESSAGE, type FlushSaveResult,
+  mergeUnlockedReport, reclassifyAfterSave, SUBMITTED_READ_ONLY_MESSAGE, type FlushSaveResult,
 } from "@/src/lib/submittedReportUnlock";
 import UnlockReasonModal from "@/src/components/checklist/UnlockReasonModal";
 import SubmittedReportUnlockNotice from "@/src/components/checklist/SubmittedReportUnlockNotice";
@@ -642,20 +642,37 @@ export default function JobChecklistScreen() {
   // ChecklistModal.handleReclassify) — writes `service_type` on the
   // job via PUT /api/jobs/{id} and refetches both job + report so the
   // Chemical Readings section repopulates from the fresh template.
+  //
+  // TD-g2 follow-up — the pre-flush goes through runSave (same unlock
+  // orchestration as Save draft). The refetch below replaces local state,
+  // so the PUT only fires after the flush landed; cancel / error / offline
+  // / read-only abort with the unsaved edits left on screen.
   const handleReclassify = useCallback(async (nextServiceType: string) => {
     if (!id || !nextServiceType) return;
-    try { await flushSave(); } catch { /* non-blocking */ }
-    await api.put(`/jobs/${id}`, { service_type: nextServiceType });
-    const [j, r] = await Promise.all([
-      api.get(`/jobs/${id}`),
-      api.get(`/jobs/${id}/service-report`),
-    ]);
-    setJob(j);
-    setReport(r);
-    reportRef.current = r;
-    dirtyRef.current = false;
-    setSaveState("idle");
-  }, [id, flushSave]);
+    const pre = await reclassifyAfterSave({
+      save: () => runSave(),
+      reclassify: async () => {
+        await api.put(`/jobs/${id}`, { service_type: nextServiceType });
+        const [j, r] = await Promise.all([
+          api.get(`/jobs/${id}`),
+          api.get(`/jobs/${id}/service-report`),
+        ]);
+        setJob(j);
+        setReport(r);
+        reportRef.current = r;
+        dirtyRef.current = false;
+        setSaveState("idle");
+      },
+    });
+    if (pre.ok) {
+      showToast("Service type updated.");
+    } else if (!pre.cancelled) {
+      Alert.alert(
+        pre.blocked ? "Report is submitted" : "Service type not changed",
+        pre.error || "Your edits couldn't be saved, so the service type was not changed.",
+      );
+    }
+  }, [id, runSave, showToast]);
 
   // ─── Phase C1 · Dirty-close guard ────────────────────────────────────
   //
@@ -990,8 +1007,11 @@ export default function JobChecklistScreen() {
   // `role` is already declared at line 89 (component top scope) — reuse
   // it here rather than shadowing (fixes the eas-export SyntaxError
   // from the prior ticket).
+  // TD-g2 follow-up — admin side = the canonical unlock set
+  // (admin/super_admin/manager/owner = BE update_job ADMIN_ROLES); "owner"
+  // is the only addition. canWrite (:121) still gates the screen.
   const canEditServiceType: boolean = !effectiveLocked && (
-    role === "admin" || role === "super_admin" || role === "manager" ||
+    isUnlockAdminRole(role) ||
     (role === "technician" && !!myTechId
       && myTechId === job.technician_id)
   );

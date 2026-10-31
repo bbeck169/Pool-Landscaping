@@ -137,3 +137,22 @@ export async function saveWithUnlock(deps: SaveWithUnlockDeps): Promise<FlushSav
   deps.applyUnlocked(fresh);
   return deps.flush();
 }
+
+/**
+ * TD-g2 follow-up · service-type reclassify. The PUT /jobs/{id} write has
+ * no submitted lock, but (a) the pre-flush of unsaved edits does, (b) the
+ * refetch after the PUT replaces local state, and (c) GET service-report
+ * only re-detects the template while `submitted_at` is unset
+ * (service_reports.py ~459). So the reclassify runs ONLY after the
+ * save/unlock orchestration succeeded; any other outcome aborts it with
+ * the local edits untouched.
+ */
+export async function reclassifyAfterSave(deps: {
+  save: () => Promise<FlushSaveResult>;
+  reclassify: () => Promise<void>;
+}): Promise<FlushSaveResult> {
+  const pre = await deps.save();
+  if (!pre.ok) return pre;
+  await deps.reclassify();
+  return { ok: true };
+}

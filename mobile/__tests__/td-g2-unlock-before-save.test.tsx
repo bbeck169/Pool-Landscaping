@@ -32,7 +32,7 @@ import { ApiError } from "@/src/api";
 // eslint-disable-next-line import/first
 import {
   UNLOCK_ADMIN_ROLES, submittedSaveMode, isValidUnlockReason, saveWithUnlock,
-  unlockSubmittedJob, mergeUnlockedReport, UNLOCK_OFFLINE_MESSAGE, UNLOCK_REFETCH_FAILED_MESSAGE,
+  unlockSubmittedJob, mergeUnlockedReport, reclassifyAfterSave, UNLOCK_OFFLINE_MESSAGE, UNLOCK_REFETCH_FAILED_MESSAGE,
   type FlushSaveResult,
 } from "@/src/lib/submittedReportUnlock";
 // eslint-disable-next-line import/first
@@ -138,6 +138,71 @@ describe("TD-g2 · saveWithUnlock orchestration", () => {
     expect(mockPost).toHaveBeenCalledWith("/jobs/J1/unlock", { reason: "Fixing wrong FC reading" });
     const m = mergeUnlockedReport({ id: "sr1", notes: "srv", template: "pool" }, { notes: "local", submitted_at: "old" });
     expect(m).toEqual({ id: "sr1", notes: "local", template: "pool" });
+  });
+});
+
+describe("TD-g2 follow-up · reclassify through the unlock orchestration", () => {
+  const reclass = (h: ReturnType<typeof harness>) => {
+    const reclassify = jest.fn(async () => { h.calls.push("reclassify"); });
+    return { reclassify, run: () => reclassifyAfterSave({ save: h.run, reclassify }) };
+  };
+  it("admin: prompt → unlock → refetch/merge → PATCH → reclassify, in order", async () => {
+    const h = harness({ first: { ok: false, needsUnlock: true } });
+    const r = reclass(h);
+    expect(await r.run()).toEqual({ ok: true });
+    expect(h.calls).toEqual(["flush", "prompt", "unlock", "refetch", "apply", "flush", "reclassify"]);
+  });
+  it("admin cancels → no unlock, no reclassify (edits untouched)", async () => {
+    const h = harness({ first: { ok: false, needsUnlock: true }, reason: null });
+    const r = reclass(h);
+    expect(await r.run()).toEqual({ ok: false, cancelled: true });
+    expect(r.reclassify).not.toHaveBeenCalled();
+    expect(h.applyUnlocked).not.toHaveBeenCalled();
+  });
+  it.each([
+    [new AE("Forbidden", 403, null)], [new AE("Server", 503, null)], [new TypeError("Network request failed")],
+  ])("unlock failure %#: error returned, reclassify aborted", async (err) => {
+    const h = harness({ first: { ok: false, needsUnlock: true }, unlockErr: err });
+    const r = reclass(h);
+    const res = await r.run();
+    expect(res.ok).toBe(false);
+    expect(res.error).toBeTruthy();
+    expect(r.reclassify).not.toHaveBeenCalled();
+    expect(h.applyUnlocked).not.toHaveBeenCalled();
+  });
+  it("technician / already-unlocked-in-session: no prompt, reclassify fires", async () => {
+    const h = harness({ first: { ok: true } });
+    const r = reclass(h);
+    expect(await r.run()).toEqual({ ok: true });
+    expect(h.calls).toEqual(["flush", "reclassify"]);
+  });
+  it("read-only role: blocked, reclassify not fired", async () => {
+    const h = harness({ first: { ok: false, blocked: true, error: "locked" } });
+    const r = reclass(h);
+    expect(await r.run()).toEqual({ ok: false, blocked: true, error: "locked" });
+    expect(r.reclassify).not.toHaveBeenCalled();
+  });
+  it("offline admin: no prompt, no queue, reclassify not fired", async () => {
+    const h = harness({ first: { ok: false, needsUnlock: true }, online: false });
+    const r = reclass(h);
+    expect(await r.run()).toEqual({ ok: false, error: UNLOCK_OFFLINE_MESSAGE });
+    expect(h.calls).toEqual(["flush"]);
+  });
+  it("plain save failure (PATCH error) also aborts — refetch can no longer wipe edits", async () => {
+    const h = harness({ first: { ok: false, error: "Save failed" } });
+    const r = reclass(h);
+    expect((await r.run()).ok).toBe(false);
+    expect(r.reclassify).not.toHaveBeenCalled();
+  });
+  it("checklist wiring: handleReclassify uses reclassifyAfterSave + runSave; no bare flushSave", () => {
+    const body = SRC.slice(SRC.indexOf("const handleReclassify = useCallback"), SRC.indexOf("}, [id, runSave, showToast]);"));
+    expect(body).toContain("await reclassifyAfterSave({");
+    expect(body).toContain("save: () => runSave(),");
+    expect(body).not.toContain("flushSave(");
+    expect(body.indexOf("api.put(`/jobs/${id}`")).toBeGreaterThan(body.indexOf("reclassify: async () =>"));
+    expect(body).toContain("} else if (!pre.cancelled) {");
+    expect(body.indexOf('showToast("Service type updated.")')).toBeGreaterThan(body.indexOf("if (pre.ok)"));
+    expect(SRC).toMatch(/const canEditServiceType: boolean = !effectiveLocked && \(\s*isUnlockAdminRole\(role\) \|\|/);
   });
 });
 
