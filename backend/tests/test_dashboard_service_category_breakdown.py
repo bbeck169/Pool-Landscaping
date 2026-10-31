@@ -226,3 +226,89 @@ def test_403_for_non_admin_manager_roles(bad_user):
     with pytest.raises(HTTPException) as exc:
         require_admin_or_manager(user=bad_user)
     assert exc.value.status_code == 403
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Feb-2026 · Bug B — tz-naive paid_at no longer crashes the endpoint.
+# ``_parse_iso`` now forces ``tzinfo=UTC`` on any naive parse result
+# so the ``paid_dt < month_start`` comparison stays well-typed
+# regardless of how upstream wrote the field.
+# ═══════════════════════════════════════════════════════════════════
+def _tz_aware_this_month_iso():
+    """ISO string WITH Z suffix — tz-aware, mid-month."""
+    now = datetime.now(timezone.utc)
+    return datetime(now.year, now.month, 15, 12, 0, 0,
+                      tzinfo=timezone.utc).isoformat()
+
+
+def _tz_naive_this_month_iso():
+    """ISO string WITHOUT any tz offset — tz-naive, mid-month.
+    Pre-fix, this triggered a TypeError on the paid_dt < month_start
+    comparison because month_start carries tzinfo=UTC."""
+    now = datetime.now(timezone.utc)
+    return datetime(now.year, now.month, 15, 12, 0, 0).isoformat()
+
+
+def _tz_naive_last_month_iso():
+    now = datetime.now(timezone.utc)
+    year = now.year
+    month = now.month - 1
+    if month < 1:
+        month = 12
+        year -= 1
+    return datetime(year, month, 1, 12, 0, 0).isoformat()
+
+
+# 1. tz-aware paid_at → counted (regression lock on shipped behavior).
+def test_tz_aware_paid_at_still_counted():
+    _run(_seed_tenant())
+    _run(_seed_cust(f"{PREFIX}-c-tz-aware", "pool"))
+    _run(_seed_invoice(f"{PREFIX}-i-tz-aware", f"{PREFIX}-c-tz-aware",
+                        250.0, _tz_aware_this_month_iso()))
+    out = _run(_call(ADMIN))
+    assert out["pool"]["mtd_revenue"] == 250.0
+
+
+# 2. tz-naive paid_at this month → counted (previously crashed).
+def test_tz_naive_paid_at_this_month_counted_as_utc():
+    _run(_seed_tenant())
+    _run(_seed_cust(f"{PREFIX}-c-tz-naive-this", "pool"))
+    _run(_seed_invoice(f"{PREFIX}-i-tz-naive-this",
+                        f"{PREFIX}-c-tz-naive-this",
+                        175.0, _tz_naive_this_month_iso()))
+    # Pre-fix: TypeError inside the endpoint, HTTP 500.
+    # Post-fix: naive dt is coerced to UTC, comparison stays
+    # well-typed, invoice is counted.
+    out = _run(_call(ADMIN))
+    assert out["pool"]["mtd_revenue"] == 175.0
+
+
+# 3. paid_at before start-of-month is excluded regardless of tz.
+def test_paid_at_before_month_excluded_regardless_of_tz():
+    _run(_seed_tenant())
+    _run(_seed_cust(f"{PREFIX}-c-last-naive", "pool"))
+    _run(_seed_invoice(f"{PREFIX}-i-last-naive",
+                        f"{PREFIX}-c-last-naive",
+                        500.0, _tz_naive_last_month_iso()))
+    out = _run(_call(ADMIN))
+    # Row seeded but paid_at is last month → excluded from MTD.
+    assert out["pool"]["mtd_revenue"] == 0.0
+    # Customer still counts in the bucket's ``customers`` tally
+    # (eligibility is category-based, not payment-based).
+    assert out["pool"]["customers"] == 1
+
+
+# 4. paid_at after start-of-month is included regardless of tz —
+#    seed both a tz-aware and tz-naive invoice for the same customer
+#    and confirm both revenues sum into the bucket.
+def test_paid_at_after_month_included_regardless_of_tz():
+    _run(_seed_tenant())
+    _run(_seed_cust(f"{PREFIX}-c-mixed-tz", "landscaping"))
+    _run(_seed_invoice(f"{PREFIX}-i-aware",
+                        f"{PREFIX}-c-mixed-tz",
+                        100.0, _tz_aware_this_month_iso()))
+    _run(_seed_invoice(f"{PREFIX}-i-naive",
+                        f"{PREFIX}-c-mixed-tz",
+                        50.0, _tz_naive_this_month_iso()))
+    out = _run(_call(ADMIN))
+    assert out["landscaping"]["mtd_revenue"] == 150.0

@@ -78,9 +78,18 @@ def _parse_iso(s: str | None) -> datetime | None:
     if not s or not isinstance(s, str):
         return None
     try:
-        return datetime.fromisoformat(s.replace("Z", "+00:00"))
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
     except Exception:
         return None
+    # Feb-2026 · Bug B — any paid_at persisted without a timezone
+    # (legacy writes, imports, naive-datetime bugs upstream) is
+    # treated as UTC so the ``paid_dt < month_start`` comparison
+    # below never crashes with the offset-naive-vs-aware TypeError
+    # that bricked the whole /dashboard/service-category-breakdown
+    # response.
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
 
 
 @router.get("/dashboard/service-category-breakdown")
