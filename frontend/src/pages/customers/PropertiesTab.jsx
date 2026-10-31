@@ -18,6 +18,7 @@ import { api } from "@/api";
 import { colors } from "@/theme";
 import { Button, Chip, EmptyState, Modal, TextInput } from "@/components/ui-kit";
 import PropertyDrawer from "./PropertyDrawer";
+import PropertyCategorySelector from "@/components/customers/PropertyCategorySelector";
 
 const MAX_PROPERTIES = 8;
 
@@ -255,62 +256,6 @@ export default function PropertiesTab({ customer, onToast, onRefreshCustomer }) 
     </div>
   );
 }
-
-function PropertyCategorySelector({ propertyId, current, onPick }) {
-  // Ticket AA · Feb-2026 — three-chip inline selector matching the
-  // ServiceCategoryControl visual language.  Click a chip to PATCH;
-  // click the selected chip to clear.
-  const OPTIONS = [
-    { value: "pool",         label: "Pool",         tone: "sky" },
-    { value: "landscaping",  label: "Landscaping",  tone: "emerald" },
-    { value: "both",         label: "Both",         tone: "violet" },
-  ];
-  const toneBg = {
-    sky:     { on: "#DBEAFE", off: "transparent",  fg: "#1E3A8A", border: "#93C5FD" },
-    emerald: { on: "#D1FAE5", off: "transparent",  fg: "#064E3B", border: "#6EE7B7" },
-    violet:  { on: "#EDE9FE", off: "transparent",  fg: "#4C1D95", border: "#C4B5FD" },
-  };
-  return (
-    <div
-      className="inline-flex items-center gap-1"
-      // Prevent card's onClick (opens drawer) from firing when the
-      // operator picks a chip.
-      onClick={(e) => e.stopPropagation()}
-      data-testid={`pc-category-group-${propertyId}`}
-      role="radiogroup"
-      aria-label="Property service category"
-    >
-      {OPTIONS.map((o) => {
-        const selected = current === o.value;
-        const t = toneBg[o.tone];
-        return (
-          <button
-            key={o.value}
-            type="button"
-            role="radio"
-            aria-checked={selected}
-            onClick={() => onPick?.(o.value)}
-            title={selected
-              ? `Clear category (currently ${o.label})`
-              : `Set category to ${o.label}`}
-            className="px-2 py-0.5 rounded-full text-[11px] font-semibold transition hover:brightness-95"
-            style={{
-              backgroundColor: selected ? t.on : t.off,
-              color: selected ? t.fg : t.fg,
-              border: `1px solid ${selected ? t.border : t.border}`,
-              opacity: selected ? 1 : 0.55,
-            }}
-            data-testid={`pc-cat-${o.value}-${propertyId}`}
-            data-selected={selected ? "true" : "false"}
-          >
-            {o.label}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
 
 function PropertyCard({ property, onOpen, onDuplicate, onDeleteAsk, onCategoryChange, draggable, onDragStart, onDragOver, onDragEnd }) {
   const contact = property.site_contact || {};

@@ -20,6 +20,8 @@ import { MediaLibraryPicker } from "@/components/marketing/MediaLibraryPicker";
 import { ActivationControl } from "@/components/customers/ActivationControl";
 import { CombinedCategoryBadge }
   from "@/components/customers/CombinedCategoryBadge";
+import CombinedCategoryPopoverBadge
+  from "@/components/customers/CombinedCategoryPopoverBadge";
 import CustomerEquipmentLibrary from "@/components/customers/CustomerEquipmentLibrary";
 import CustomerWarrantiesLibrary from "@/components/customers/CustomerWarrantiesLibrary";
 import CustomerActionDropdowns from "@/components/customers/CustomerActionDropdowns";
@@ -1533,18 +1535,30 @@ export default function CustomerDetail() {
                   Inactive
                 </span>
               ) : null}
-              {/* Ticket AA · Feb-2026 — the P2 #6 editable
-                  ``<ServiceCategoryControl>`` was retired in
-                  favour of a read-only combined badge computed
-                  from the customer's property-level categories.
-                  Per-property authoring lives on each
-                  ``PropertyCard`` chip-group in the Properties
-                  tab below.  TD-aa-customer-category-cascade
+              {/* Ticket γ · Feb-2026 — the P2 #6 editable
+                  ``<ServiceCategoryControl>`` was retired by
+                  Ticket AA in favour of a read-only combined
+                  badge computed from the customer's property-
+                  level categories.  Ticket γ keeps that
+                  derivation rule byte-identical but makes the
+                  badge CLICKABLE for admin / super_admin / owner
+                  roles: it opens an in-place popover listing
+                  every property with its label + chip-group
+                  selector, writing through the same per-property
+                  ``PATCH /properties/{pid}`` endpoint the
+                  Properties tab uses.  Lower roles see the pre-γ
+                  static chip (no new privileges granted).
+                  ``TD-aa-customer-category-cascade`` still
                   tracks making the legacy
                   ``PATCH /customers/{cid}/service-category``
                   endpoint cascade to its properties on write
                   (not just at migration time). */}
-              <CombinedCategoryBadge properties={properties} />
+              <CombinedCategoryPopoverBadge
+                properties={properties}
+                userRole={authUser?.role}
+                onToast={setToast}
+                onRefreshCustomer={() => load?.()}
+              />
               <ActivationControl
                 customer={customer}
                 onOptimisticFlip={(next) => setCustomer((c) => ({ ...c, is_active: next }))}
