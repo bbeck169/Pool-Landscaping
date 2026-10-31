@@ -2823,6 +2823,25 @@ async def _background_seed():
             )
         except Exception as _e:  # noqa: BLE001
             logger.warning("[inventory_alerts] scheduler wiring failed: %s", _e)
+        # Feb-2026 · Job Timers · stale timer sweep (Ask 3 of the
+        # mobile-location-services BE audit).  Hourly tick that
+        # closes ``job_timers`` rows older than 16h (env override
+        # ``JOB_TIMERS_STALE_THRESHOLD_HOURS``) via the shipped
+        # ``close_open_timers_for_job`` helper with reason=
+        # ``stale_sweep``.  See ``services/job_timers_stale_sweep.py``.
+        try:
+            from services import job_timers_stale_sweep as _jt_sweep  # noqa: WPS433
+            scheduler.add_job(
+                _jt_sweep.sweep_stale_job_timers, "interval",
+                hours=1, id="job_timers_stale_sweep",
+                replace_existing=True,
+            )
+            logger.info("scheduler: job_timers stale sweep registered "
+                            "(hourly interval)")
+        except Exception as _e:  # noqa: BLE001
+            logger.warning(
+                "[job_timers_stale_sweep] scheduler wiring failed: %s", _e,
+            )
         # Phase 34 · Feb 2026 — Weekly Bulk Actions Digest.
         # Monday 08:00 UTC. See services/weekly_bulk_actions_digest.py
         # for the rollup logic. Tenants with zero bulk actions in the
