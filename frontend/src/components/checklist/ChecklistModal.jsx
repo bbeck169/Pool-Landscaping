@@ -95,6 +95,8 @@ import PhotoUploader from "@/components/checklist/PhotoUploader";
 // component so the wizard can mount an identical dialog. C1 / C1.1
 // testids are preserved via default props on the shared component.
 import DirtyCloseConfirm from "@/components/checklist/DirtyCloseConfirm";
+import SubmittedReportEditPrompt
+  from "@/components/service-report/SubmittedReportEditPrompt";
 
 const AUTOSAVE_DEBOUNCE_MS = 800;
 // Phase 37 — minimum time the pill stays on "Saving…" so techs actually
@@ -239,6 +241,10 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted, read
   // paths (Save & exit button, submit success, recap dismissal)
   // still call ``onClose`` directly — they're not implicit closes.
   const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false);
+  // Feb-2026 · TD-g2 β — admin unlock prompt visibility (set by
+  // the autosave short-circuit path when an admin tries to edit
+  // a submitted report).
+  const [showUnlockPrompt, setShowUnlockPrompt] = useState(false);
   // Phase C1.1 · Feb-2026 — in-flight save-and-close state so the
   // Discard dialog can disable its destructive path while a
   // flushSave() is running.  ``isSaving`` is a state (not a ref)
@@ -302,7 +308,22 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted, read
     // every field diff).  Other roles still short-circuit on
     // submitted rows — admins remain locked out of the PATCH per
     // "retain existing edit path" ruling.
-    if (cur.submitted_at && role !== "technician") return;
+    // Feb-2026 · TD-g2 β — admin/super_admin/manager/owner/
+    // dispatcher on a submitted report: convert the silent short-
+    // circuit into a visible "Unlock to edit" banner so the admin
+    // sees why their edits aren't persisting.  Technician path
+    // unchanged (shipped BE post-submit bypass at
+    // ``service_reports.py:604-610`` still owns tech edits).
+    const _lcRole = (role || "").toLowerCase();
+    const _ADMIN_UNLOCK_ROLES = new Set(
+      ["admin", "super_admin", "manager", "owner", "dispatcher"],
+    );
+    if (cur.submitted_at && role !== "technician") {
+      if (_ADMIN_UNLOCK_ROLES.has(_lcRole)) {
+        try { setShowUnlockPrompt?.(true); } catch { /* non-blocking */ }
+      }
+      return;
+    }
     if (!dirtyRef.current || savingRef.current) return;
     savingRef.current = true;
     // If patchReport already flipped us to "saving", keep the timestamp;
@@ -791,6 +812,12 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted, read
             {submitError}
           </div>
         ) : null}
+
+        <SubmittedReportEditPrompt
+          show={showUnlockPrompt}
+          onDismiss={() => setShowUnlockPrompt(false)}
+          jobId={jobId}
+        />
 
         {useWizard ? (
           <WaterBodyManager

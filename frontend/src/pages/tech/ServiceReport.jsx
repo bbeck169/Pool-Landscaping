@@ -23,6 +23,8 @@ import { CORE_KEYS as _CORE_READING_KEYS } from "@/utils/chemistryGate";
 // chemicals-added amount field uses so intermediate "7." decimal
 // states aren't eaten by the HTML5 ``type="number"`` browser gate.
 import DecimalInput from "@/components/common/DecimalInput";
+import SubmittedReportEditPrompt
+  from "@/components/service-report/SubmittedReportEditPrompt";
 // Phase CHEM1 · Feb-2026 — the "*" marker mirrors the backend Required
 // Four. ``canonicalReadingKey`` folds ``alkalinity`` onto
 // ``total_alkalinity``, so the marker set carries both spellings and
@@ -104,6 +106,8 @@ export default function ServiceReport() {
   const [jobMeta, setJobMeta] = useState(null);
   const [busy, setBusy] = useState(false);
   const [dirty, setDirty] = useState(false);
+  // Feb-2026 · TD-g2 β — admin unlock prompt visibility.
+  const [showUnlockPrompt, setShowUnlockPrompt] = useState(false);
   const [saveState, setSaveState] = useState("idle"); // idle | saving | saved | error
   const [submitting, setSubmitting] = useState(false);
   const [postSubmitToast, setPostSubmitToast] = useState("");
@@ -193,7 +197,22 @@ export default function ServiceReport() {
   // Autosave loop
   const autosave = useCallback(async () => {
     if (!dirtyRef.current || savingRef.current || !report) return;
-    if (report.submitted_at) return;
+    if (report.submitted_at) {
+      // Feb-2026 · TD-g2 β — admin/super_admin/manager/owner/
+      // dispatcher attempting to edit a submitted report: surface
+      // the "Unlock to edit" banner instead of silently dropping
+      // the write.  Technician path keeps the original silent
+      // short-circuit (shipped BE post-submit bypass at
+      // ``service_reports.py:604-610`` owns tech saves).
+      const _lcRole = (user?.role || "").toLowerCase();
+      const _ADMIN_UNLOCK = new Set(
+        ["admin", "super_admin", "manager", "owner", "dispatcher"],
+      );
+      if (_ADMIN_UNLOCK.has(_lcRole)) {
+        setShowUnlockPrompt(true);
+      }
+      return;
+    }
     savingRef.current = true;
     setSaveState("saving");
     try {
@@ -520,6 +539,13 @@ export default function ServiceReport() {
   return (
     <TemplateFieldProvider fieldsById={_tpl.fieldsById}>
     <div className="max-w-4xl mx-auto p-4 md:p-6" data-testid="svc-report-page">
+      <div className="mb-3">
+        <SubmittedReportEditPrompt
+          show={showUnlockPrompt}
+          onDismiss={() => setShowUnlockPrompt(false)}
+          jobId={id}
+        />
+      </div>
       {postSubmitToast && (
         <div className="fixed top-4 right-4 z-50 rounded-xl shadow-xl p-4 max-w-sm"
              style={{ background: "#059669", color: "#fff" }}

@@ -41,6 +41,23 @@ export default function JobUnlockButton({ job, user, onUnlocked }) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
+  // Feb-2026 · TD-g2 β — auto-open the modal when the parent
+  // deep-links via ``/jobs/{jid}#unlock`` (used by
+  // ``SubmittedReportEditPrompt`` CTA so an admin landing from a
+  // submitted-report edit attempt lands directly on the unlock
+  // dialog instead of hunting for the button).
+  React.useEffect(() => {
+    if (!isAdmin || !isLocked) return;
+    if (typeof window === "undefined") return;
+    if (window.location.hash === "#unlock") {
+      setOpen(true);
+      try { history.replaceState(null, "",
+                                   window.location.pathname
+                                   + window.location.search); }
+      catch { /* non-blocking */ }
+    }
+  }, [isAdmin, isLocked]);
+
   if (!isAdmin || !isLocked) return null;
 
   const reasonValid = reason.trim().length >= 8;
