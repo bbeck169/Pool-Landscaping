@@ -4062,7 +4062,7 @@ mirrors the web tile but does NOT yet include `next_week`. Add parity:
 - Shipped BE commit `44024703f` — β1 null-dated placeholder contract (still live).
 - `TD-mobile-portal-next-visit-empty-state` — mobile placeholder-rendering chore (contract unchanged; update block appended above).
 
-## TD-mobile-dashboard-active-inactive-tiles-theme-value · OPEN · Nov-2026 (P3 · mobile test harness)
+## TD-mobile-dashboard-active-inactive-tiles-theme-value · SHIPPED `0f6b4edf9` · Nov-2026 (P3 · mobile test harness)
 - **Symptom**: `mobile/__tests__/dashboard-active-inactive-tiles.test.tsx` fails to load (0 tests run):
   `TypeError: Cannot read properties of undefined (reading 'bg')` at `src/components/ui/AppTextInput.tsx:31:34`
   (`backgroundColor: inputColors.bg` in a module-scope `StyleSheet.create`), reached via
@@ -4074,3 +4074,19 @@ mirrors the web tile but does NOT yet include `next_week`. Add parity:
   `ServiceCategoryTileRow.tsx` swapped in (that commit only touched that file + the td84 test).
 - **Fix shape (when picked up)**: add `inputColors: { bg, text, … }` to the suite's theme mock (or spread
   `jest.requireActual("@/src/theme")`). Test-only change.
+- **Shipped** `0f6b4edf9`: suite theme mock gained `inputColors: { bg: "#FFFFFF", text: "#000080",
+  placeholder: "rgba(0,0,128,0.55)" }` (mirrors `src/theme.ts:74`). Suite loads: 3 passed, 2 skipped
+  (the `it.skip`s are the pre-existing K78 / Phase Hygiene B quarantine of the stale Active/Inactive
+  value tests, unrelated to this drift).
+
+## TD-mobile-theme-mock-inputColors-drift-sweep · OPEN · Nov-2026 (P3 · mobile test harness)
+- **Same drift, 15 more suites**: their `jest.mock("@/src/theme", …)` factory has no `inputColors`, and
+  their import graph reaches `src/components/ui/AppTextInput.tsx:31` (`inputColors.bg` at module load).
+  Found by running all 51 suites that mock the theme without `inputColors` (16 failed with this error
+  incl. the one shipped above; none failed for another reason):
+  appointments-header, bulk-charge-ach-mobile, customer-delete-409-toast, customers-list-soft-deleted-chip,
+  demo-login, f2c1-booking-photos, hotfix-m3-d2d-zillow, k32-tech-scoped-schedule, parity-phase-a,
+  phase29b-mute-control-sheet, phase36-followup-mobile-tags-patch, portal-access-panel,
+  reset-token-expired, route-entry-classifier, send-to-customer-sheet.
+- **Fix shape**: add the same `inputColors` line to each mock (test-only). Post-load assertion failures,
+  if any, need a separate look; they were masked by the load failure.
