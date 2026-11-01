@@ -81,3 +81,45 @@ it("S6 · dashboard mounts the row after the KPI grid, gated to admin + manager 
   expect(row).toBeGreaterThan(grid);
   expect(src.indexOf("<DashboardActionCards />")).toBeGreaterThan(row);
 });
+
+// Tile overflow fix — StatLine (Active jobs / MTD revenue) on every stat tile.
+it("S7 · stat lines wrap + shrink-to-fit instead of bleeding past the tile (small + large values)", async () => {
+  const { StyleSheet } = require("react-native");
+  const { STAT_VALUE_MIN_FONT_SCALE } = require("@/src/components/dashboard/ServiceCategoryTileRow");
+  mockGet.mockResolvedValue({
+    pool: { customers: 1234, active_jobs: 999, mtd_revenue: 1234567.89 },
+    landscaping: { customers: 7, active_jobs: 3, mtd_revenue: 0 },
+    both: { customers: 2, active_jobs: 12345, mtd_revenue: 98765.43 },
+    unset: { customers: 529 },
+  });
+  const q = render(<ServiceCategoryTileRow width={138} />);
+  await waitFor(() => expect(q.getByTestId("kpi-service-category-pool-mtd-value")).toBeTruthy());
+  const text = (id: string) => q.getByTestId(id).props.children;
+  expect(text("kpi-service-category-pool-mtd-value")).toBe("$1,234,567.89");
+  expect(text("kpi-service-category-pool-active-jobs-value")).toBe("999");
+  expect(text("kpi-service-category-landscaping-mtd-value")).toBe("$0.00");
+  expect(text("kpi-service-category-landscaping-active-jobs-value")).toBe("3");
+  expect(text("kpi-service-category-both-active-jobs-value")).toBe("12,345");
+  expect(STAT_VALUE_MIN_FONT_SCALE).toBe(0.7);
+  for (const k of ["pool", "landscaping", "both"]) {
+    for (const suf of ["active-jobs", "mtd"]) {
+      const row = StyleSheet.flatten(q.getByTestId(`kpi-service-category-${k}-${suf}`).props.style);
+      expect(row.flexDirection).toBe("row");
+      expect(row.flexWrap).toBe("wrap");
+      const label = q.getByTestId(`kpi-service-category-${k}-${suf}-label`);
+      expect(StyleSheet.flatten(label.props.style).flexShrink).toBe(1);
+      const value = q.getByTestId(`kpi-service-category-${k}-${suf}-value`);
+      expect(value.props.numberOfLines).toBe(1);
+      expect(value.props.adjustsFontSizeToFit).toBe(true);
+      expect(value.props.minimumFontScale).toBe(0.7);
+      const vs = StyleSheet.flatten(value.props.style);
+      expect(vs.flexShrink).toBe(1);
+      expect(vs.maxWidth).toBe("100%");
+    }
+  }
+  // Regression lock — tile identity, header count + Not-set tile untouched.
+  expect(q.getByTestId("kpi-service-category-pool-customers").props.children).toBe("1,234");
+  expect(q.queryByTestId("kpi-service-category-unset-mtd")).toBeNull();
+  const pool = StyleSheet.flatten(q.getByTestId("kpi-service-category-pool").props.style);
+  expect(pool).toMatchObject({ width: 138, backgroundColor: "#ECFEFF", borderColor: "#06B6D4", borderLeftWidth: 4 });
+});

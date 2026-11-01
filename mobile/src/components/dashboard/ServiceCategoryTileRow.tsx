@@ -30,11 +30,26 @@ const TILES: { key: ServiceCategoryKey; icon: any; bg: string; border: string; i
 ];
 const n = (v: unknown) => Number(v || 0).toLocaleString();
 
+// Tile overflow fix — the row wraps, so a value that can't sit beside its
+// label drops onto its own line (label stacked above value). A value wider
+// than the whole row shrinks to fit (≥ 70%, same numberOfLines +
+// adjustsFontSizeToFit pattern as the dashboard payment widget) instead of
+// bleeding past the tile border.
+export const STAT_VALUE_MIN_FONT_SCALE = 0.7;
+
 function StatLine({ label, value, testID }: { label: string; value: string; testID: string }) {
   return (
     <View style={s.stat} testID={testID}>
-      <Text style={s.statLabel}>{label}</Text>
-      <Text style={s.statValue}>{value}</Text>
+      <Text style={s.statLabel} testID={`${testID}-label`}>{label}</Text>
+      <Text
+        style={s.statValue}
+        numberOfLines={1}
+        adjustsFontSizeToFit
+        minimumFontScale={STAT_VALUE_MIN_FONT_SCALE}
+        testID={`${testID}-value`}
+      >
+        {value}
+      </Text>
     </View>
   );
 }
@@ -97,8 +112,8 @@ const s = StyleSheet.create({
   title: { fontFamily: font.bold, fontSize: 11, letterSpacing: 0.5, textTransform: "uppercase", color: "#1F2937", opacity: 0.75 },
   count: { fontFamily: font.bold, fontSize: fontSize.xl, color: "#111827", marginTop: 2 },
   caption: { fontFamily: font.regular, fontSize: 11, color: "#111827", opacity: 0.6 },
-  stat: { flexDirection: "row", alignItems: "baseline", justifyContent: "space-between", gap: spacing.xs },
-  statLabel: { fontFamily: font.semibold, fontSize: 10, letterSpacing: 0.3, textTransform: "uppercase", color: "#1F2937", opacity: 0.7 },
-  statValue: { fontFamily: font.medium, fontSize: fontSize.sm, color: "#111827" },
+  stat: { flexDirection: "row", flexWrap: "wrap", alignItems: "baseline", justifyContent: "space-between", columnGap: spacing.xs },
+  statLabel: { flexShrink: 1, fontFamily: font.semibold, fontSize: 10, letterSpacing: 0.3, textTransform: "uppercase", color: "#1F2937", opacity: 0.7 },
+  statValue: { flexShrink: 1, maxWidth: "100%", fontFamily: font.medium, fontSize: fontSize.sm, color: "#111827" },
   skeleton: { height: 132, borderRadius: radius.lg, backgroundColor: "#F3F4F6", borderWidth: 1, borderColor: "#E5E7EB" },
 });
