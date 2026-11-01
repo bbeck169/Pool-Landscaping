@@ -3996,3 +3996,16 @@ mirrors the web tile but does NOT yet include `next_week`. Add parity:
 - Retired BE commit `3a618bc5e` — hybrid `service_category` fallback (superseded).
 - Shipped BE commit `44024703f` — β1 null-dated placeholder contract (still live).
 - `TD-mobile-portal-next-visit-empty-state` — mobile placeholder-rendering chore (contract unchanged; update block appended above).
+
+## TD-mobile-dashboard-active-inactive-tiles-theme-value · OPEN · Nov-2026 (P3 · mobile test harness)
+- **Symptom**: `mobile/__tests__/dashboard-active-inactive-tiles.test.tsx` fails to load (0 tests run):
+  `TypeError: Cannot read properties of undefined (reading 'bg')` at `src/components/ui/AppTextInput.tsx:31:34`
+  (`backgroundColor: inputColors.bg` in a module-scope `StyleSheet.create`), reached via
+  `app/(app)/index.tsx:22` → `src/components/dashboard/RevenueDateRangeFilter.tsx:16` → `AppTextInput`.
+- **Root cause**: the suite's `jest.mock("@/src/theme", …)` factory (test file :44) has no `inputColors`
+  export (real export: `src/theme.ts:74`). Test-harness drift: the mock predates the dashboard importing
+  `RevenueDateRangeFilter` → `AppTextInput`. Not a product bug.
+- **Verified pre-existing**: same error at `dbe6f9ba7` and with its parent `81469e7f6`'s
+  `ServiceCategoryTileRow.tsx` swapped in (that commit only touched that file + the td84 test).
+- **Fix shape (when picked up)**: add `inputColors: { bg, text, … }` to the suite's theme mock (or spread
+  `jest.requireActual("@/src/theme")`). Test-only change.
