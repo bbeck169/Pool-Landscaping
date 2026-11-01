@@ -1449,12 +1449,32 @@ Dedicated `PaymentRow` component for enhanced payment-row rendering on `Customer
 ## TD-invoice-reminder-email-seed-balance (candidate, P3 BE)
 
 
-## TD-invoice-reminder-balance-backfill (candidate, P3 BE)
+## TD-invoice-reminder-balance-backfill · Rewrite stale `{{INVOICE_TOTAL}}` on tenant past-due-reminder rows — SHIPPED (Feb-2026)
 
+- **Ship:** `<pending — this commit>` `td-invoice-reminder-balance-backfill` (`backend/migrations/backfill_invoice_reminder_balance_v1.py` + `backend/tests/test_td_invoice_reminder_balance_backfill.py` 10/10 pytest).
+- **What it does:** one-shot, idempotent, preserve-on-edit scanner that rewrites `{{INVOICE_TOTAL}}` → `{{INVOICE_BALANCE}}` in operator-authored past-due-reminder `marketing_templates` rows whose `body`/`subject` carries balance semantics. Targets the three shipped seed anchors: `system_key ∈ {system_tpl_invoice_past_due_7d_email, system_tpl_invoice_past_due_7d_sms}` and `code = "invoice_reminder_email"`. Scoped to `tenant_id != None` so the tenant-less global fallback row is excluded.
+- **Preserve-on-edit via strict predicate (same convention as `portal_invite_split_email_temppassword_paragraph_v1`):** rows that carry the token but reshape the body/subject to drop balance words (`balance`, `outstanding`, `owed`, `past due`) are classified as `no_balance_semantic` and left untouched. Operators can force the rewrite with `--include-non-balance-semantic` when the heuristic misses.
+- **Multi-field rewrite:** `{{INVOICE_TOTAL}}` is rewritten in BOTH `body` AND `subject` when it appears in either (operator intent on a reminder is one coherent surface). SMS rows (`subject=None`) are not corrupted — the write path omits the subject field when it started as `None`.
+- **CLI:** `--tenant-id <id>` XOR `--all-tenants` (mutex, one required); `--apply` (default dry-run); `--include-non-balance-semantic` (escape hatch). Mirrors `recover_outbound_deferred_stuck_pending_v1`. Writes one `migration_runs` audit doc per tenant per apply invocation.
+- **Fail-closed-per-tenant:** a tenant whose cursor errors mid-scan records partial counts + `status="error"` on its audit row + the exception is swallowed so other tenants continue cleanly. Locked by `test_fail_closed_per_tenant`.
+- **Idempotency:** second `--apply` is a no-op via per-row predicate (`no_invoice_total_token` skip reason). No sentinel doc required — the predicate carries the invariant. Locked by `test_second_apply_is_idempotent_noop`.
+- **Scope guardrails (what the script does NOT touch):**
+  - Shipped seed bodies (`seed_system_templates.py` + `seed_invoice_reminder_template.py`) — post-Ticket-1 + post-`TD-sms-reminder-use-balance-not-total` they already use `{{INVOICE_BALANCE}}`, so predicate naturally misses.
+  - The tenant-less global fallback row of `invoice_reminder_email` (`tenant_id=None`) — explicit `$ne` guard in the match query.
+  - Non-invoice-reminder templates (job completed, service reports, marketing campaigns, receipts, confirmations, estimates, etc.) — the match query never selects them.
+  - Mobile, FE, and all other BE routes.
+- **Preview reality check:** `python migrations/backfill_invoice_reminder_balance_v1.py --all-tenants` (dry-run) reported `rows_matched=2 / rows_rewritten=0 / tenants_with_matches=1` across the preview mongo at ship time. Both matched rows are the pre-SMS-ticket seed shape (`system_tpl_invoice_past_due_7d_email` + `_sms` on one tenant that had been seeded before `TD-sms-reminder-use-balance-not-total` shipped). Operator decides when to `--apply`.
+- **Boot wiring:** none. CLI-triggered only (same posture as `recover_outbound_deferred_stuck_pending_v1`).
+- **Priority:** closed.
+
+
+## TD-invoice-reminder-balance-backfill (candidate — HISTORIC)
+
+- **Status:** superseded by the SHIPPED entry above.
 - **Reporter:** TD-sms-reminder-use-balance-not-total close-out audit.
 - **Finding:** the `invoice_past_due_7d` ship updates the SEED file, but tenant provisioning is preserve-on-edit (`tests/test_invoice_reminder_template_seed.py:74-89` locks that re-running the seed does NOT overwrite customer-edited bodies). Already-seeded tenants will keep `{{INVOICE_TOTAL}}` in their reminder bodies until an admin manually edits or deletes-and-re-seeds. A one-shot migration can retroactively update rows whose body still matches the pre-ship default verbatim (safely skips any tenant that has customised the body).
-- **Fix scope:** new idempotent migration at `services/migrations/backfill_invoice_past_due_balance_v1.py` that `find`s `marketing_templates` rows where `system_key ∈ {system_tpl_invoice_past_due_7d_email, system_tpl_invoice_past_due_7d_sms}` AND `body == <frozen pre-ship default>` (keyed on locale), then `update_one` with the new default. Sentinel doc in `db.migrations`. Boot-registered + per-tenant hook. ~80-120 LOC + ~4 pytest cases (fresh tenant, edited-body tenant, re-run idempotency, multi-locale).
-- **Priority:** P3 (candidate, BE).
+- **Delta vs ship:** the shipped scanner is BROADER than this candidate planned — it also handles the `code="invoice_reminder_email"` tenant-override rows (same drift pattern, different seed anchor), AND uses a semantic predicate (balance-word heuristic) instead of body-byte-equality so operators who hand-edited around the token still get the rewrite as long as they preserved the balance intent. The `--include-non-balance-semantic` escape hatch covers the long-tail hand-reword case.
+- **Priority:** closed via supersede.
 
 
 ## TD-quiet-hours-cron-tick-recovery · Recover stuck pending outbound_deferred rows — SHIPPED (Feb-2026)
