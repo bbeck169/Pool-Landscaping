@@ -34,6 +34,7 @@ export const K50_JOB_STATUS_BG: Readonly<Record<string, string>> =
     open: "#EAF7F0",
     scheduled: "#EAF7F0",
     in_progress: "#FEF3C7",
+<<<<<<< Updated upstream
     // Feb-2026 · Schedule finished-state card styling — parity with web
     // e62babc5f (frontend/src/lib/jobStatus.js). All finished states
     // (completed / closed / cancelled / skipped) → Tailwind gray-100 so
@@ -82,6 +83,29 @@ export function isFinishedJobStatus(status?: string | null): boolean {
  *  null so the renderer keeps its existing default text color. */
 export function jobStatusTextColor(status?: string | null): string | null {
   return isFinishedJobStatus(status) ? K50_FINISHED_FG : null;
+=======
+    // Oct-2026 mobile hotfix — completed/closed cards RECEDE: soft green
+    // emerald-50 #ECFDF5 (was bold coral-red #ff4542, web 85fd76f17).
+    // Deliberate MOBILE-ONLY divergence from web (operator request: red
+    // was hard to read + visually dominant). Standard dark text stays.
+    completed: "#ECFDF5",
+    cancelled: "#FECACA",
+    skipped: "#FED7AA",
+  });
+
+/** Receded completed-card treatment (Oct-2026 mobile hotfix).
+ *  BG derived from the map so the card + helpers can't drift apart.
+ *  On #ECFDF5: primary text #09090B ≈ 19:1, secondary #52525B ≈ 7.3:1
+ *  (replaces the old white flip; service-tag hues like #059669 would
+ *  sit < 4.5:1 on green), ✓ accent dark green #065F46 ≈ 7.3:1. */
+export const K50_COMPLETED_BG = K50_JOB_STATUS_BG.completed;
+export const K50_COMPLETED_MUTED_FG = "#52525B";
+export const K50_COMPLETED_ACCENT = "#065F46";
+
+/** True for completed / closed / done (anything resolving to the completed bg). */
+export function isCompletedCardStatus(status?: string | null): boolean {
+  return jobStatusColor(status) === K50_COMPLETED_BG;
+>>>>>>> Stashed changes
 }
 
 const _ALIAS: Readonly<Record<string, string>> = Object.freeze({
