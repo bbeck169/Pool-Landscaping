@@ -1417,23 +1417,36 @@ Dedicated `PaymentRow` component for enhanced payment-row rendering on `Customer
 - **Priority:** closed.
 
 
+## TD-invoice-total-dual-registry-drift · Dedupe `INVOICE_TOTAL` registry entries — SHIPPED (Feb-2026)
+
+- **Ship:** `<pending — this commit>` `td-invoice-total-dual-registry-drift` (deletes the Batch 4 `INVOICE_TOTAL` dupe at `backend/services/marketing/merge_tags.py:2115` carrying label `"Invoice — Balance"` / category `Finance` / flat-ctx-key λ; adds a note on the canonical `INVOICE_BALANCE` entry at `:1417` pointing at the removed Batch 4 tile; new `backend/tests/test_td_invoice_total_dual_registry_drift.py` 6/6 pytest).
+- **Finding (as audited):** `_TAG_INDEX` is a dict comprehension (`merge_tags.py:2281`) — Python last-wins — so pre-ticket every `{{INVOICE_TOTAL}}` render fired the Batch 4 λ at `:2115` and read whatever the sender stuffed into the flat `ctx['invoice_total']` key (balance in the invoice-reminder path, total in the dunning path — ambiguous by construction). The canonical `_invoice_total` resolver at `:1414` was dead code via the public renderer.
+- **Fix shape (base case A, approved by operator):** delete the dupe only. Keep the canonical `INVOICE_TOTAL` entry (label "Invoice Total", resolver `_invoice_total`, reads `ctx['invoice']['total']`). Keep the canonical `INVOICE_BALANCE` entry at `:1417` as the correct replacement picker tile for operators who want balance semantics. No FE touch, no seed migration, no bundled DB rewrite.
+- **Phase 9D cascade note (characterization lock):** the renderer's step-1 flat-key override (`render_template:_sub` at `:2509-2525`) intercepts `ctx['invoice_total']` BEFORE the catalog resolver fires. So the delete is observable only on ctxs that lack the flat key — in particular, legacy senders populating the flat key (`emailer.py:719` invoice-reminder path) see IDENTICAL behavior post-ship. The dedupe closes the registry-level ambiguity; the end-to-end render for existing callers is unchanged. New `test_phase9d_flat_key_override_still_intercepts_before_catalog` locks this.
+- **Operator-authored template silent-flip risk (surfaced, accepted):** operators who used the removed "Invoice — Balance" picker tile to insert `{{INVOICE_TOTAL}}` into a custom template with balance intent will see a semantic flip on partial-payment invoices IF their send-path does not populate the flat key. Paired follow-up `TD-invoice-reminder-balance-backfill` will scan + rewrite with preserve-on-edit semantics.
+- **Out of scope (adjacent drift — logged below as `TD-batch4-merge-tag-dupe-sweep`):** `INVOICE_NUMBER:2109`, `INVOICE_DUE_DATE:2120`, `ESTIMATE_NUMBER:2137`, `ESTIMATE_TOTAL:2143` share the same Batch 4 dupe + flat-ctx-key λ pattern; each needs its own Phase 0 before any delete.
+- **Priority:** closed.
+
+
+## TD-batch4-merge-tag-dupe-sweep (candidate, P3 BE)
+
+- **Reporter:** TD-invoice-total-dual-registry-drift close-out audit.
+- **Finding:** the Phase EMAIL-MIGRATE Batch 4 block in `backend/services/marketing/merge_tags.py` (around `:2100-2160`) registers additional token entries that are duplicates of canonical registry entries elsewhere in `MERGE_TAGS`, all with the same anti-pattern: inline λ that reads a FLAT ctx key (e.g. `ctx["invoice_number"]`) rather than the canonical nested shape (`ctx["invoice"]["number"]`). Because `_TAG_INDEX` is dict-comp last-wins, every one of these dupes shadows its canonical counterpart. Known pattern applies to:
+  - `INVOICE_NUMBER` at `:2109` vs canonical `:1429` (resolver `_invoice_number`).
+  - `INVOICE_DUE_DATE` at `:2120` vs canonical `:1432` (resolver `_invoice_due`).
+  - `ESTIMATE_NUMBER` at `:2137` vs canonical `:1400` (resolver reads `ctx["estimate"]["id"]`).
+  - `ESTIMATE_TOTAL` at `:2143` vs canonical `:1397` (resolver `_estimate_total`).
+  - Possibly more — a full sweep of the Batch 4 block (`:2100-2160`) is needed.
+- **Fix scope:** one TD per token (matching `TD-invoice-total-dual-registry-drift` scope-bounds). Each ticket needs:
+  1. Phase 0 audit of all flat-ctx-key setters AND operator-authored template rows that may rely on the shadow.
+  2. Delete-the-dupe or hard-swap-the-λ decision (same options A/B/C/D menu).
+  3. Paired template-rewrite scanner for operator-authored templates if the delete flips semantics on any partial-pay / unused-nested-ctx edge.
+  Each delete is ~5 LOC. The sweep as a whole is 4-6 tickets.
+- **Phase 9D cascade reality check:** the renderer's step-1 flat-key override makes most of these dupes harmless end-to-end (same reasoning as `TD-invoice-total-dual-registry-drift`), BUT the registry-level ambiguity still bites the merge-tag picker (two tiles for the same token with different labels / categories) and makes future refactoring unsafe. Dedupe is correct; just not urgent.
+- **Priority:** P3 (candidate, BE). No prod incidents attached; purely tech-debt sweep.
+
+
 ## TD-invoice-reminder-email-seed-balance (candidate, P3 BE)
-
-- **Reporter:** TD-sms-reminder-use-balance-not-total close-out audit.
-- **Finding:** the sibling `invoice_reminder_email` seed at `migrations/seed_invoice_reminder_template.py:42` renders `balance of <b>${{INVOICE_TOTAL}}</b> due …` — same stale-total drift the SMS ticket fixed on `invoice_past_due_7d`, but on a different reminder surface (tenant-scoped, email-only). The scope-guard assertion `test_sibling_email_reminder_seed_still_uses_total_bookmark` in `tests/test_td_sms_reminder_use_balance.py` is the bookmark; closing this ticket flips that assertion.
-- **Fix scope:** swap `{{INVOICE_TOTAL}}` → `{{INVOICE_BALANCE}}` in `BODY_DEFAULT` at `migrations/seed_invoice_reminder_template.py:42` + update `MERGE_TAGS` list at `:55` to include `INVOICE_BALANCE` + flip the bookmark assertion in `tests/test_td_sms_reminder_use_balance.py` + update `tests/test_invoice_reminder_template_seed.py:67` to assert `{{INVOICE_BALANCE}}` instead of `{{INVOICE_TOTAL}}`. ~5 LOC code + ~3 LOC tests.
-- **Priority:** P3 (candidate, BE).
-
-
-## TD-invoice-total-dual-registry-drift (candidate, P3 BE)
-
-- **Reporter:** TD-sms-reminder-use-balance-not-total close-out audit.
-- **Finding:** `services/marketing/merge_tags.py` registers the `INVOICE_TOTAL` token **twice** with conflicting semantics:
-  - `:1384` — label `"Invoice Total"`, resolver `_invoice_total` → formats `ctx["invoice"]["total"]`. Pure total.
-  - `:2076` — label `"Invoice — Balance"`, description `"Outstanding balance on the invoice …"`, resolver reads a plain `ctx["invoice_total"]` string key.
-  - Both share the same token name `INVOICE_TOTAL`. Which resolver "wins" at render time depends on `TOKEN_REGISTRY` iteration order; the merge-tags admin UI will render whichever label it hits first.
-- **Fix scope:** disambiguate by either (a) renaming the `:2076` entry to a new token (e.g. `INVOICE_BALANCE_SNAPSHOT`) that reflects its distinct "pre-computed string" nature, OR (b) deleting the `:2076` duplicate if nothing on the send-side still populates `ctx["invoice_total"]`. Needs a grep of `ctx["invoice_total"]` populators + a decision from the operator on which path to take. ~5-10 LOC code + ~1 pytest update.
-- **Priority:** P3 (candidate, BE). Pre-existing drift unrelated to the past-due-reminder ticket.
 
 
 ## TD-invoice-reminder-balance-backfill (candidate, P3 BE)

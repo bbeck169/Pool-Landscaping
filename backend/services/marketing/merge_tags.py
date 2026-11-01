@@ -1421,7 +1421,11 @@ MERGE_TAGS: List[Dict[str, Any]] = [
                        "as ``$1,234.56``. Prefer this over "
                        "``INVOICE_TOTAL`` for past-due reminder "
                        "templates so partial-payment invoices "
-                       "render the amount still owed."),
+                       "render the amount still owed.  "
+                       "TD-invoice-total-dual-registry-drift · "
+                       "Feb-2026 — this is the correct replacement "
+                       "picker tile for the removed Batch 4 "
+                       "\"Invoice — Balance\" / Finance dupe below."),
      "resolver": _invoice_balance},
     {"token": "INVOICE_TAX", "label": "Invoice Tax",
      "category": "Invoice", "description": "Formatted invoice tax amount.",
@@ -2112,11 +2116,25 @@ MERGE_TAGS: List[Dict[str, Any]] = [
                        "(``invoice_number`` → ``doc_number`` → id "
                        "short-form)."),
      "resolver": lambda ctx: _safe_str(ctx.get("invoice_number") or "")},
-    {"token": "INVOICE_TOTAL", "label": "Invoice — Balance",
-     "category": "Finance",
-     "description": ("Outstanding balance on the invoice, formatted "
-                       "as ``$1,234.56``."),
-     "resolver": lambda ctx: _safe_str(ctx.get("invoice_total") or "")},
+    # ─── TD-invoice-total-dual-registry-drift · Feb-2026 — The
+    # Batch 4 ``INVOICE_TOTAL`` dupe that lived here (label
+    # ``"Invoice — Balance"`` / category ``Finance`` / flat-ctx-key λ
+    # reading ``ctx["invoice_total"]``) has been REMOVED.  The dict-
+    # comp ``_TAG_INDEX`` builder was last-wins, so the dupe shadowed
+    # the canonical ``_invoice_total`` resolver at the ``Invoice``-
+    # category entry above; every ``{{INVOICE_TOTAL}}`` render fired
+    # through the λ and read whatever the sender had stuffed into
+    # the flat ``invoice_total`` ctx key (balance in the invoice-
+    # reminder path, total in the dunning path — ambiguous by
+    # construction).  Canonical ``INVOICE_TOTAL`` → total (via
+    # ``_invoice_total``) is now the sole semantic.  Operators who
+    # authored custom templates using the removed "Invoice — Balance"
+    # picker tile should migrate to ``{{INVOICE_BALANCE}}`` — the
+    # sibling ticket ``TD-invoice-reminder-balance-backfill`` ships a
+    # dry-run scanner that rewrites past-due-reminder bodies with
+    # preserve-on-edit semantics.  The ``INVOICE_BALANCE`` entry at
+    # the ``Invoice`` category above is the correct replacement
+    # picker tile.
     {"token": "INVOICE_DUE_DATE", "label": "Invoice — Due Date",
      "category": "Finance",
      "description": "Localised due-date label for the reminder email.",
