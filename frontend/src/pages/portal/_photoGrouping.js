@@ -1,19 +1,19 @@
 /**
  * Portal media grouping helper · Feb-2026.
  *
- * Shared between ``pages/portal/PortalPhotos.jsx`` (legacy page,
- * currently shadowed by `App.js:1629` behind `App.js:1621`'s
- * `PortalPhotosPage` route — tracked by
- * ``TD-portal-photos-videos-legacy-cleanup``) and
- * ``pages/portal/PortalPhotosPage.jsx`` (active page) so both
- * surfaces call a single owner.
+ * Canonical home for the Portal Photos + Videos grouping logic
+ * — consumed by ``pages/portal/PortalPhotosPage.jsx`` and
+ * ``pages/portal/PortalVideosPage.jsx``.  The videos adapter at
+ * the bottom of this file field-maps the videos payload onto the
+ * photos shape and delegates to the shared helper.
  *
- * Pre-shared history: the function lived inline in
- * ``PortalPhotos.jsx:51-87`` under TD-76c (Feb-2026).  The shape
- * is unchanged; this file is a straight extraction so the
- * canonical vitest at ``test/portal-photos-td76-canonical.test.jsx``
- * continues to import ``groupPhotosByDateAndVisit`` from the
- * same two-file surface (re-export from the legacy page).
+ * Pre-shared history: the function lived inline in the now-
+ * deleted ``pages/portal/PortalPhotos.jsx:51-87`` under TD-76c
+ * (Feb-2026).  Extraction landed at ``bbecd6da1``
+ * (TD-portal-photos-page-wire-grouping); the legacy file was
+ * removed in ``TD-portal-photos-videos-legacy-cleanup``.  The
+ * shape of the helper is unchanged across that history — this
+ * module is the single source of truth going forward.
  */
 
 // TD-76c · Feb-2026 — grouping helper.  Exported so vitest can

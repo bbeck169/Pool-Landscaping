@@ -132,7 +132,6 @@ const SupplierSyncAnalytics = React.lazy(() => import(/* webpackChunkName: "p-re
 // Feb-2026 · K55.a — import removed as part of the SuperCool +
 // HomeWorks integration sunset (PHASE_K55_a_FRONTEND_REMOVAL.md).
 const AutoVisitEmailSettings = React.lazy(() => import(/* webpackChunkName: "p-settings-autovisitemailsettings" */ "@/pages/settings/AutoVisitEmailSettings"));
-const PortalPhotos = React.lazy(() => import(/* webpackChunkName: "p-portal-portalphotos" */ "@/pages/portal/PortalPhotos"));
 const PortalReviews = React.lazy(() => import(/* webpackChunkName: "p-portal-portalreviews" */ "@/pages/portal/PortalReviews"));
 const AdminReviewsPage = React.lazy(() => import(/* webpackChunkName: "p-admin-adminreviewspage" */ "@/pages/admin/AdminReviewsPage"));
 // Phase 11 · Feb-2026 — recurring labor costs admin surface. Admin
@@ -174,7 +173,6 @@ const PortalPreferences = React.lazy(() => import(/* webpackChunkName: "p-portal
 const PrivacyPolicy = React.lazy(() => import(/* webpackChunkName: "p-privacypolicy" */ "@/pages/PrivacyPolicy"));
 const TermsOfService = React.lazy(() => import(/* webpackChunkName: "p-termsofservice" */ "@/pages/TermsOfService"));
 const AiTransparency = React.lazy(() => import(/* webpackChunkName: "p-aitransparency" */ "@/pages/AiTransparency"));
-const PortalVideos = React.lazy(() => import(/* webpackChunkName: "p-portal-portalvideos" */ "@/pages/portal/PortalVideos"));
 const CommsTemplatesLibrary = React.lazy(() => import(/* webpackChunkName: "p-comms-commspages" */ "@/pages/comms/CommsPages").then(m => ({ default: m.CommsTemplatesLibrary })));
 const CommsEmailBuilder = React.lazy(() => import(/* webpackChunkName: "p-comms-commspages" */ "@/pages/comms/CommsPages").then(m => ({ default: m.CommsEmailBuilder })));
 const CommsSmsBuilder = React.lazy(() => import(/* webpackChunkName: "p-comms-commspages" */ "@/pages/comms/CommsPages").then(m => ({ default: m.CommsSmsBuilder })));
@@ -1626,8 +1624,6 @@ export default function App() {
                 traffic to ``/portal/request-service`` so we don't leave
                 a 404 landmine. */}
             <Route path="portal/book" element={<Navigate to="/portal/request-service" replace />} />
-            <Route path="portal/photos" element={<PortalPhotos />} />
-            <Route path="portal/videos" element={<PortalVideos />} />
             <Route path="admin/comms/templates"       element={<AdminOnly><CommsTemplatesLibrary /></AdminOnly>} />
             <Route path="admin/comms/email"           element={<AdminOnly><CommsTemplatesLibrary /></AdminOnly>} />
             <Route path="admin/comms/email/new"       element={<AdminOnly><CommsEmailBuilder /></AdminOnly>} />

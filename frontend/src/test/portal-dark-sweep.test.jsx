@@ -31,9 +31,7 @@ const read = (rel) =>
 // portal pages MUST be added here so the sweep guard tracks them.
 const PORTAL_PAGES_UNDER_SHELL = [
   "src/pages/portal/PortalHome.jsx",
-  "src/pages/portal/PortalPhotos.jsx",
   "src/pages/portal/PortalPhotosPage.jsx",
-  "src/pages/portal/PortalVideos.jsx",
   "src/pages/portal/PortalVideosPage.jsx",
   "src/pages/portal/PortalServiceReports.jsx",
   "src/pages/portal/PortalTerms.jsx",

@@ -1490,14 +1490,38 @@ Dedicated `PaymentRow` component for enhanced payment-row rendering on `Customer
 - **Priority:** closed.
 
 
-## TD-portal-photos-videos-legacy-cleanup (candidate, P3 FE)
+## TD-portal-photos-videos-legacy-cleanup · Delete dead-code legacy Portal Photos/Videos files — SHIPPED (Feb-2026)
 
-- **Reporter:** TD-portal-photos-page-wire-grouping close-out audit.
-- **Finding:** `App.js:1621` + `:1629` register two `portal/photos` routes; React Router v6 picks the first match, so `:1629` → `PortalPhotos` is dead code. Same shadowing applies to `App.js:1622` (`PortalVideosPage`) vs `:1630` (`PortalVideos`). Keeping dead files invites future devs to edit the wrong source (the Feb-2026 TD-76c author added grouping to the dead file, not the active one — which is exactly the bug this cycle closed).
-- **Fix scope:** (1) delete `frontend/src/pages/portal/PortalPhotos.jsx` + `frontend/src/pages/portal/PortalVideos.jsx`. (2) delete the shadowed routes `App.js:1629-1630` + the two `React.lazy()` import rows for the deleted components (`App.js:135, 177`). (3) delete the sibling canonical vitest `test/portal-photos-td76-canonical.test.jsx` whose only import target is the legacy file — OR migrate its 11 cases onto the shared `_photoGrouping.js` module (the preferred path, keeps the regression-lock on the helper). (4) grep for any other imports of the legacy files (none expected per Feb-2026 audit, but belt-and-braces). ~1 commit, ~5 LOC net code delete + ~550 LOC file deletes + 1 test migration. Pure FE, no BE.
-- **Blocker:** should ship AFTER TD-portal-videos-page-wire-grouping so the videos-side helper has a shared-module home before the legacy videos file is deleted.
-- **Addendum (Feb-2026, via TD-portal-videos-page-wire-grouping ship):** `PortalVideos.jsx` is **doubly dead** — not only route-shadowed under `App.js:1622` but also **payload-shape-mismatched** against the shipped BE. The legacy file's IIFE at `:142-168` iterates `res.groups`, a shape the shipped `routers/portal_videos.py:72` has never emitted (BE returns `{videos: [flat list], total}` per the docstring at `:30`). Legacy videos grouping has rendered zero rows per customer since the TD-67 BE pivot. Safe to delete without any behavior change. The legacy Photos file is "only" route-shadowed (single-dead), whereas Videos is route-shadowed AND wire-dead (double-dead). This asymmetry simplifies the cleanup — no need to migrate any live render logic out of either file.
-- **Priority:** P3 (candidate, FE).
+- **Ship:** `<pending — this commit>` `td-portal-photos-videos-legacy-cleanup` — closes the three-ticket Photos/Videos arc.
+- **Trilogy ship SHAs:**
+  - `bbecd6da1` — Phase 1 (`TD-portal-photos-page-wire-grouping`): extract helper to shared `_photoGrouping.js`, wire active Photos page.
+  - `49c795b45` — Phase 2 (`TD-portal-videos-page-wire-grouping`): add videos adapter in shared module, wire active Videos page.
+  - `<pending — this commit>` — Phase 3 (legacy cleanup): delete dead files + prune shadowed routes.
+- **Files deleted:**
+  - `frontend/src/pages/portal/PortalPhotos.jsx` (~211 LOC, dead code — route-shadowed under `App.js:1627`, no live callers).
+  - `frontend/src/pages/portal/PortalVideos.jsx` (~274 LOC, doubly-dead — route-shadowed + payload-shape-mismatched against the shipped BE since TD-67).
+  - `frontend/src/test/portal-videos-lightbox.test.jsx` (5 cases, all source-greped the deleted legacy file; active-page sibling `test/portal-videos-page-lightbox.test.jsx` already covers the same shared-Lightbox contract on `PortalVideosPage.jsx`).
+- **App.js pruned (surgical, 4 lines):** `:135` lazy `PortalPhotos` import, `:177` lazy `PortalVideos` import, `:1627` shadowed `/portal/photos` route, `:1628` shadowed `/portal/videos` route. Active routes at `:1619-1620` (pointing at `PortalPhotosPage` / `PortalVideosPage`) **intact**.
+- **Tests migrated (per-file fate):**
+  - `test/portal-photos-td76-canonical.test.jsx` **MIGRATED**, 11→7 cases. Repointed `groupPhotosByDateAndVisit` import from the deleted legacy file to `pages/portal/_photoGrouping.js`. Dropped 4 "TD-76d · PortalPhotos" source-grep cases that pinned behavior on the deleted file (`thumb_url`/`full_url` consumption + `withAuthToken` absence); these are testing-dead-code for the active `PortalPhotosPage.jsx` surface which uses the different `authedImgUrl(p.url)` + token-stamping contract. Kept the 2 PortalServiceReports cases (lock live behavior on a still-shipping page) + 5 `groupPhotosByDateAndVisit` tree-shape cases (lock the shared helper's deterministic tiebreak contract — direct unit tests complementary to the end-to-end cases on `portal-photos-page.test.jsx`).
+  - `test/portal-videos-lightbox.test.jsx` **DELETED** — all 5 cases source-greped the deleted legacy videos file; coverage is byte-identical to the active-page sibling `test/portal-videos-page-lightbox.test.jsx` (same 5 shared-Lightbox-wire-up assertions on `PortalVideosPage.jsx`).
+  - `test/portal-dark-sweep.test.jsx` **PRUNED** — dropped the 2 entries for the deleted files from the `PORTAL_PAGES_UNDER_SHELL` list. Remaining 20 cases unchanged.
+- **Shared-module tidy:** `pages/portal/_photoGrouping.js` module-header comment updated to reflect post-delete reality (the pre-shared history line still cites the TD-76c origin for git-blame traceability).
+- **Regression lock across the Photos+Videos surface — all green:**
+  - `portal-photos-page.test.jsx` 10/10 (grouped active page)
+  - `portal-photos-td76-canonical.test.jsx` 7/7 (migrated — helper tree + PortalServiceReports contracts)
+  - `portal-videos-page.test.jsx` 10/10 (grouped active page)
+  - `portal-videos-page-lightbox.test.jsx` 5/5 (shared-Lightbox wire-up)
+  - `portal-dark-sweep.test.jsx` 20/20 (dark-palette compliance sweep)
+  - **Total: 52/52 cases green.**
+- **No live coverage lost.** 9 deleted test cases (4 legacy PortalPhotos source-greps + 5 legacy PortalVideos source-greps) all pinned behavior on files that no longer exist; equivalent live-surface coverage was already provided by sibling test files before this commit.
+- **Non-touches (explicit):**
+  - `PortalPhotosPage.jsx` / `PortalVideosPage.jsx` — the active surfaces. Untouched.
+  - `_photoGrouping.js` module body — only the stale legacy-page comment was tidied; the two exports and their logic are byte-identical.
+  - BE: `routers/portal_photos.py` / `routers/portal_videos.py` / `services/customer_media.py` — untouched.
+  - Mobile, admin, other portal pages, shared `<Lightbox>` component — untouched.
+- **CSS leftover (documented, not touched):** `frontend/src/styles/portal-dark.css:52` still mentions `PortalVideos` by name in a comment that also references the active-page sibling. Comment-only, no functional impact. Explicit non-touch to keep this commit's concern tight — not worth a sibling commit either.
+- **Priority:** closed.
 
 
 

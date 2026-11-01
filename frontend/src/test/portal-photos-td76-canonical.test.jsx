@@ -1,18 +1,28 @@
 /**
- * TD-76d/e · Feb-2026 — Phase A FE canonical-field consumption +
- * Portal Photos grouped-layout contract.
+ * TD-76d/e · Feb-2026 — canonical-field consumption + grouping
+ * helper contract.
  *
- * Coverage:
- *   1. ``PortalPhotos.jsx`` + ``PortalServiceReports.jsx`` read
- *      ``thumb_url`` / ``full_url`` directly — no FE path
- *      composition remains on these two surfaces.
- *   2. ``withAuthToken`` is no longer imported / called in the
- *      jobPhotos render path of ``PortalServiceReports.jsx`` (TD-67
- *      token stamping is replaced by BE-resolved URLs).
- *   3. ``groupPhotosByDateAndVisit`` produces the operator-spec
- *      grouped tree: date groups DESC, visits within a day sorted
- *      by ``submitted_at`` ASC with ``job_id`` as the deterministic
- *      tiebreak.
+ * **TD-portal-photos-videos-legacy-cleanup · Feb-2026** migrated
+ * this file's import target from the deleted
+ * ``pages/portal/PortalPhotos.jsx`` to the shared
+ * ``pages/portal/_photoGrouping.js`` module and pruned the 4
+ * PortalPhotos source-grep cases that pinned behavior on the
+ * deleted file (``thumb_url``/``full_url`` consumption +
+ * ``withAuthToken`` absence).  Those cases are testing-dead-code
+ * for the active ``PortalPhotosPage.jsx`` surface which uses a
+ * different URL contract (``authedImgUrl(p.url)`` + token
+ * stamping).  The 2 PortalServiceReports cases + 5
+ * ``groupPhotosByDateAndVisit`` tree-shape cases survived
+ * because they lock live behavior on surfaces that still ship.
+ *
+ * Coverage retained:
+ *   * ``PortalServiceReports.jsx`` reads ``thumb_url``/``full_url``
+ *     directly — no FE path composition remains on the jobPhotos
+ *     render path, no ``withAuthToken(_raw, _tok)`` wrapping.
+ *   * ``groupPhotosByDateAndVisit`` (shared helper) produces the
+ *     operator-spec grouped tree: date groups DESC, visits within
+ *     a day sorted by ``submitted_at`` ASC with ``job_id`` lex
+ *     tiebreak, "Unknown date" bucket at the end.
  */
 import fs from "fs";
 import path from "path";
@@ -20,34 +30,15 @@ import { describe, it, expect } from "vitest";
 
 import {
   groupPhotosByDateAndVisit,
-} from "../pages/portal/PortalPhotos.jsx";
+} from "../pages/portal/_photoGrouping.js";
 
 const R = (p) => fs.readFileSync(path.resolve(__dirname, p), "utf-8");
-const PHOTOS_SRC = R("../pages/portal/PortalPhotos.jsx");
 const SR_SRC = R("../pages/portal/PortalServiceReports.jsx");
 
 
 // ────────────────────────────────────────────────────────────────
-// 1. FE purge locks — canonical fields consumed directly.
+// 1. PortalServiceReports consumes canonical thumb_url/full_url.
 // ────────────────────────────────────────────────────────────────
-describe("TD-76d · PortalPhotos consumes canonical thumb_url/full_url", () => {
-  it("<img> src reads p.thumb_url first", () => {
-    expect(PHOTOS_SRC).toMatch(/<img\s+src=\{p\.thumb_url\s*\|\|/);
-  });
-
-  it("lightbox items read p.full_url first", () => {
-    expect(PHOTOS_SRC).toMatch(/photo\.full_url\s*\|\|/);
-  });
-
-  it("no FE path composition — no `/api/public/service/` string literal in PortalPhotos.jsx", () => {
-    expect(PHOTOS_SRC).not.toMatch(/`\/api\/public\/service\//);
-  });
-
-  it("no `withAuthToken` import in PortalPhotos.jsx", () => {
-    expect(PHOTOS_SRC).not.toMatch(/withAuthToken/);
-  });
-});
-
 describe("TD-76d · PortalServiceReports consumes canonical thumb_url/full_url", () => {
   it("jobPhotos grid src reads p.thumb_url first (no path composition)", () => {
     // The jobPhotos grid _raw assignment now starts with
