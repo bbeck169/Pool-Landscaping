@@ -1457,9 +1457,43 @@ Dedicated `PaymentRow` component for enhanced payment-row rendering on `Customer
 - **Priority:** closed.
 
 
-## TD-quiet-hours-releasing-orphan-recovery (candidate, P3 BE)
+## TD-portal-photos-page-wire-grouping · Portal Photos page adopts shipped TD-76c grouping — SHIPPED (Feb-2026)
 
-- **Reporter:** TD-quiet-hours-cron-tick-recovery close-out audit.
+- **Ship:** `<pending — this commit>` `td-portal-photos-page-wire-grouping` (new `frontend/src/pages/portal/_photoGrouping.js` shared module; `frontend/src/pages/portal/PortalPhotos.jsx` re-exports from the shared module so the canonical vitest import target holds; `frontend/src/pages/portal/PortalPhotosPage.jsx` adopts the helper + flat-index iteration via `flattenGrouped`, renders labeled date-divider headers between calendar-day groups with `role="separator"` + `<h2>` + `aria-labelledby` wiring; `frontend/src/test/portal-photos-page.test.jsx` grows from 3→10 cases + fixes two pre-existing failures that used stale `file_id`-prefixed testids; `frontend/src/test/portal-photos-td76-canonical.test.jsx` 11/11 regression-lock still green).
+- **Why:** `TD-76c` (Feb-2026) shipped the grouping helper + grouped render on `PortalPhotos.jsx`, but the Phase-18b portal-shell rollout created a replacement wrapper (`PortalPhotosPage.jsx`) that forgot to adopt it. The active route at `App.js:1621` points at the wrapper, so the shipped grouping has been dark ever since. This commit wires the active page onto the same shared helper the legacy page already consumes — no behavior change on the legacy page.
+- **Semantic contract (grouping):**
+  - Day bucket = `(submitted_at ‖ uploaded_at ‖ created_at).slice(0, 10)` ISO slice.
+  - Group order = newest first via `b.localeCompare(a)` lex sort (ISO yyyy-mm-dd sorts correctly as text).
+  - Within-day visit order = `firstStamp` ASC with `visitKey` lex tiebreak (shipped TD-76c contract).
+  - Header render = `toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric", year: "numeric" })` → browser timezone (matches shipped portal convention at `PortalHome.jsx:33,746`, `PortalServiceReports.jsx:116,297`, `PortalAgreementRenew.jsx:40`, `PortalReferralsPage.jsx:42`; NOT tenant timezone — rationale was explicitly to preserve portal consistency rather than add new BE/FE tz plumbing).
+- **Pagination safety:** every `items` change triggers `groupPhotosByDateAndVisit` to rebucket from scratch, so trailing + leading same-day items across `Load more` boundaries fuse into one group automatically (locked by test 8).
+- **Lightbox contract preserved:** flat `startIndex + j` index threading means a tile's click resolves to the right slot in the flat ordered-photos list the shared `<Lightbox>` consumes. Legacy `portal-photo-${i}` testids retained on buttons so shipped selectors keep working.
+- **Scope guardrails (what this commit did NOT touch):**
+  - `PortalVideosPage.jsx` — parallel bug (active page lacks grouping; legacy `PortalVideos.jsx:165-166` has it). Logged as TD-portal-videos-page-wire-grouping below.
+  - `PortalPhotos.jsx` / `PortalVideos.jsx` legacy files + the shadowed routes at `App.js:1629-1630`. Dead code via first-match route shadowing. Logged as TD-portal-photos-videos-legacy-cleanup below.
+  - BE: `routers/portal_photos.py` + `services/customer_media.py` sort order (`uploaded_at` DESC) and tenant/customer scoping untouched.
+  - Mobile, admin, other portal pages, lightbox component.
+- **Priority:** closed.
+
+
+## TD-portal-videos-page-wire-grouping (candidate, P3 FE)
+
+- **Reporter:** TD-portal-photos-page-wire-grouping close-out audit.
+- **Finding:** `frontend/src/pages/portal/PortalVideosPage.jsx` is the active `/portal/videos` route (`App.js:1622`). It renders a flat ungrouped grid, mirroring the exact bug the Photos ticket just closed. The legacy `PortalVideos.jsx:165-166` has an inline `toLocaleDateString(…)` call indicating the TD-76c-style grouping was present but is route-shadowed under the same first-match pattern.
+- **Fix scope:** (1) extract the matching legacy grouping helper (likely `groupVideosByDateAndVisit`) into the shared `frontend/src/pages/portal/_photoGrouping.js` or a sibling `_videoGrouping.js`. (2) wire the active `PortalVideosPage.jsx` grid onto it. (3) new vitest at `test/portal-videos-page.test.jsx` mirroring the 7 new grouping cases this ticket's test file ships. ~1 commit, ~150 LOC FE + ~250 LOC tests. Pure FE, no BE.
+- **Priority:** P3 (candidate, FE).
+
+
+## TD-portal-photos-videos-legacy-cleanup (candidate, P3 FE)
+
+- **Reporter:** TD-portal-photos-page-wire-grouping close-out audit.
+- **Finding:** `App.js:1621` + `:1629` register two `portal/photos` routes; React Router v6 picks the first match, so `:1629` → `PortalPhotos` is dead code. Same shadowing applies to `App.js:1622` (`PortalVideosPage`) vs `:1630` (`PortalVideos`). Keeping dead files invites future devs to edit the wrong source (the Feb-2026 TD-76c author added grouping to the dead file, not the active one — which is exactly the bug this cycle closed).
+- **Fix scope:** (1) delete `frontend/src/pages/portal/PortalPhotos.jsx` + `frontend/src/pages/portal/PortalVideos.jsx`. (2) delete the shadowed routes `App.js:1629-1630` + the two `React.lazy()` import rows for the deleted components (`App.js:135, 177`). (3) delete the sibling canonical vitest `test/portal-photos-td76-canonical.test.jsx` whose only import target is the legacy file — OR migrate its 11 cases onto the shared `_photoGrouping.js` module (the preferred path, keeps the regression-lock on the helper). (4) grep for any other imports of the legacy files (none expected per Feb-2026 audit, but belt-and-braces). ~1 commit, ~5 LOC net code delete + ~550 LOC file deletes + 1 test migration. Pure FE, no BE.
+- **Blocker:** should ship AFTER TD-portal-videos-page-wire-grouping so the videos-side helper has a shared-module home before the legacy videos file is deleted.
+- **Priority:** P3 (candidate, FE).
+
+
+
 - **Finding:** the recovery script shipped as `recover_outbound_deferred_stuck_pending_v1.py` deliberately targets `status="pending"` rows only. Rows left in `status="releasing"` with stale `scheduled_for` are either (a) genuinely mid-dispatch by a live worker (long Resend / RingCentral backoff, 429 retry) or (b) orphaned by a worker that crashed between the atomic claim flip and the terminal status update. Distinguishing (a) from (b) requires a stale-`claimed_at` heuristic that risks double-dispatch when a worker is alive-but-slow.
 - **Fix scope:** extend the recovery script with a `--include-releasing` flag + a `--stale-claim-minutes <N>` threshold (operator-steered, probably 30-60 min to be well outside any realistic adapter backoff window). Targets rows where `status="releasing"` AND `claimed_at <= now - stale_claim_minutes`. Dispatch via `_dispatch_row` same as pending-only path. Add ~2 pytest cases: (i) `releasing` + fresh `claimed_at` NOT touched, (ii) `releasing` + stale `claimed_at` → released. ~30-50 LOC + ~2 tests. Operator must agree on the stale-claim threshold BEFORE ship (choose a value that is unambiguously outside the longest realistic adapter timeout).
 - **Priority:** P3 (candidate, BE). The `orphaned_releasing_count` surfaced by the shipped recovery script's dry-run output is the operational signal to dispatch this ticket (sustained non-zero counts over multiple runs = real orphans accumulating).

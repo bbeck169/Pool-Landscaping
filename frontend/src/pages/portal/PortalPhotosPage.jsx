@@ -4,8 +4,17 @@
  * Aggregated gallery of every image visible to the current portal
  * customer — job files + customer-linked files + service report photos.
  * Backend: GET /api/portal/photos.
+ *
+ * TD-portal-photos-page-wire-grouping · Feb-2026 — adopts the
+ * shipped TD-76c grouping helper so the active page renders
+ * labeled date-divider headers between calendar-day groups
+ * (newest first).  Date buckets use the customer's BROWSER
+ * timezone, matching the shipped portal convention elsewhere
+ * (`PortalHome.jsx:33,746`, `PortalServiceReports.jsx:116,297`,
+ * etc.).  The helper itself lives at `./_photoGrouping` so this
+ * file and the legacy `PortalPhotos.jsx` share one owner.
  */
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { X, Image as ImageIcon } from "lucide-react";
 // DTP-1 · Feb-2026 — dark theme pilot. Alias so every inline
 // ``colors.X`` read below resolves to the portal-dark palette
@@ -22,6 +31,11 @@ import Lightbox from "@/components/portal/Lightbox";
 // export(s) in this file so content renders inside the Phase
 // 3d-portal white dashboard card on the deep-navy page bg.
 import PortalPageShell from "@/components/portal/PortalPageShell";
+// TD-portal-photos-page-wire-grouping · Feb-2026 — shared helpers.
+import {
+  groupPhotosByDateAndVisit,
+  flattenGrouped,
+} from "./_photoGrouping";
 
 
 const PAGE = 24;
@@ -87,6 +101,32 @@ export default function PortalPhotosPage() {
     load(next);
   };
 
+  // TD-portal-photos-page-wire-grouping · Feb-2026 — ``items`` is
+  // the flat BE-sorted list (DESC ``uploaded_at`` at
+  // ``services/customer_media.py:521``).  ``groups`` is the
+  // grouped-by-calendar-day tree the TD-76c helper produces.
+  // ``orderedPhotos`` is the SAME flat stream the lightbox
+  // consumes, iterated via the group → visit → photo order the
+  // helper produced — guaranteeing a tile's ``startIndex + j``
+  // click resolves to the right lightbox index.  Across
+  // ``Load more`` pages, trailing + leading same-day items fuse
+  // into one group automatically because the helper rebuckets
+  // on every ``items`` change — no duplicate dividers.
+  const groups = useMemo(
+    () => groupPhotosByDateAndVisit(items || []),
+    [items],
+  );
+  const orderedPhotos = useMemo(() => flattenGrouped(groups), [groups]);
+  const groupsWithFlatIndex = useMemo(() => {
+    const out = [];
+    let acc = 0;
+    for (const g of groups) {
+      out.push({ group: g, startIndex: acc });
+      for (const v of g.visits) acc += v.photos.length;
+    }
+    return out;
+  }, [groups]);
+
   return (
     <PortalPageShell>
     <div className="max-w-6xl mx-auto p-4" data-testid="portal-photos-page">
@@ -134,54 +174,79 @@ export default function PortalPhotosPage() {
         </div>
       ) : (
         <>
-          <div
-            className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3"
-            data-testid="portal-photos-grid"
-          >
-            {items.map((p, i) => {
-              // TD-67 · Feb-2026 — BE emits ``url, thumb, caption,
-              // job_id, job_title, service_type, submitted_at,
-              // report_id, source, mime`` (see
-              // ``routers/portal_photos.py``). It does NOT emit
-              // ``file_id``, which the pre-TD-67 render tried to
-              // use as the React key — every tile keyed on
-              // ``undefined``, producing a duplicate-key warning
-              // + unstable ``portal-photo-undefined`` testids. We
-              // compose a stable key from the identifiers the BE
-              // DOES emit (``source|report_id|job_id|i``) so the
-              // DOM diff stays stable across loads AND the testid
-              // is uniquely addressable per tile.
-              const _key = `${p.source || "src"}|${p.report_id || p.job_id || "x"}|${i}`;
-              return (
-                <button
-                  key={_key}
-                  onClick={() => setLightboxIdx(i)}
-                  className="rounded-xl overflow-hidden transition hover:brightness-95"
-                  style={{ background: colors.surfaceSecondary,
-                            border: `1px solid ${colors.border}` }}
-                  data-testid={`portal-photo-${i}`}
+          {/*
+            TD-portal-photos-page-wire-grouping · Feb-2026 —
+            labeled date-divider headers between calendar-day
+            groups.  Within a day the shipped TD-76c visit-sort
+            is preserved via ``flattenGrouped``, keeping the
+            lightbox click→index mapping deterministic.  Legacy
+            ``portal-photo-${i}`` testids are preserved on the
+            buttons so shipped vitest / e2e selectors keep
+            resolving.
+          */}
+          <div data-testid="portal-photos-grouped">
+            {groupsWithFlatIndex.map(({ group, startIndex }) => (
+              <section
+                key={group.day}
+                className="mb-6"
+                data-testid={`portal-photos-date-group-${group.day}`}
+                aria-labelledby={`portal-photos-date-header-${group.day}`}
+              >
+                <h2
+                  id={`portal-photos-date-header-${group.day}`}
+                  className="text-sm font-black uppercase tracking-wide mb-2"
+                  style={{ color: colors.onSurface }}
+                  data-testid={`portal-photos-date-header-${group.day}`}
                 >
-                  <img
-                    src={authedImgUrl(p.url)}
-                    alt={p.caption || p.job_title || "Service photo"}
-                    loading="lazy"
-                    className="w-full h-40 object-cover"
-                  />
-                  <div className="p-2 text-left">
-                    <div className="text-xs font-semibold truncate"
-                          style={{ color: colors.onSurface }}
-                          title={p.job_title || ""}>
-                      {p.job_title || "Portal upload"}
-                    </div>
-                    <div className="text-xs" style={{ color: colors.muted }}>
-                      {p.submitted_at || p.uploaded_at
-                        ? new Date(p.submitted_at || p.uploaded_at).toLocaleDateString()
-                        : ""}
-                    </div>
-                  </div>
-                </button>
-              );
-            })}
+                  {group.header}
+                </h2>
+                <div
+                  role="separator"
+                  aria-hidden="true"
+                  className="mb-4"
+                  style={{ borderTop: `1px solid ${colors.border}` }}
+                  data-testid={`portal-photos-date-divider-${group.day}`}
+                />
+                <div
+                  className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3"
+                  data-testid={`portal-photos-grid-${group.day}`}
+                >
+                  {group.visits.flatMap((v) => v.photos).map((p, j) => {
+                    const i = startIndex + j;
+                    const _key = `${p.source || "src"}|${p.report_id || p.job_id || "x"}|${i}`;
+                    return (
+                      <button
+                        key={_key}
+                        onClick={() => setLightboxIdx(i)}
+                        className="rounded-xl overflow-hidden transition hover:brightness-95"
+                        style={{ background: colors.surfaceSecondary,
+                                  border: `1px solid ${colors.border}` }}
+                        data-testid={`portal-photo-${i}`}
+                      >
+                        <img
+                          src={authedImgUrl(p.url)}
+                          alt={p.caption || p.job_title || "Service photo"}
+                          loading="lazy"
+                          className="w-full h-40 object-cover"
+                        />
+                        <div className="p-2 text-left">
+                          <div className="text-xs font-semibold truncate"
+                                style={{ color: colors.onSurface }}
+                                title={p.job_title || ""}>
+                            {p.job_title || "Portal upload"}
+                          </div>
+                          <div className="text-xs" style={{ color: colors.muted }}>
+                            {p.submitted_at || p.uploaded_at
+                              ? new Date(p.submitted_at || p.uploaded_at).toLocaleDateString()
+                              : ""}
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
+            ))}
           </div>
 
           {items.length < total ? (
@@ -201,7 +266,7 @@ export default function PortalPhotosPage() {
           <Lightbox> component; legacy testids preserved via
           testidPrefix). */}
       <Lightbox
-        items={(items || []).map((p) => ({
+        items={orderedPhotos.map((p) => ({
           url:   authedImgUrl(p.url),
           kind:  "image",
           title: p.job_title || p.caption || "Photo",

@@ -21,6 +21,15 @@ import { api } from "@/api";
 // DTP-2 · Feb-2026 — dark portal palette.
 import { portalColors as colors } from "@/theme";
 import Lightbox from "@/components/portal/Lightbox";
+// TD-portal-photos-page-wire-grouping · Feb-2026 — the TD-76c
+// grouping helper has been extracted to a shared module so the
+// active ``PortalPhotosPage.jsx`` can import the same primitive.
+// This file re-exports it unchanged so the canonical vitest at
+// ``test/portal-photos-td76-canonical.test.jsx`` keeps its
+// shipped import target.
+import {
+  groupPhotosByDateAndVisit as _groupPhotosByDateAndVisit,
+} from "./_photoGrouping";
 
 const FILTERS = [
   { key: "", label: "All service types" },
@@ -28,63 +37,13 @@ const FILTERS = [
   { key: "Monthly Landscaping", label: "Landscape" },
 ];
 
-// TD-76c · Feb-2026 — grouping helper.  Exported so the vitest can
-// pin the deterministic tiebreak contract without re-rendering.
-//
-// Return shape:
-//   [
-//     { day: "2026-10-14", header: "Tuesday, Oct 14, 2026", visits: [
-//       { visitKey: "job-id-or-?", jobTitle: "Weekly Pool Cleaning",
-//         photos: [...] },
-//       ...
-//     ] },
-//     ...
-//   ]
-//
-// Sort rules:
-//   * Date groups: newest first (``day.localeCompare`` DESC — ISO
-//     dates sort lexicographically so this is the correct direction).
-//   * Visits within a day: ``submitted_at`` ASC (earliest visit of
-//     the day appears first), ``job_id`` lex ASC as the final
-//     deterministic tiebreak.
-//   * Photos within a visit: insertion order preserved from BE.
-export function groupPhotosByDateAndVisit(photos) {
-  const byDay = new Map();
-  for (const p of photos || []) {
-    const stamp = p.submitted_at || p.uploaded_at || p.created_at || "";
-    const day = stamp.slice(0, 10) || "Unknown date";
-    const visitKey = p.job_id || p.report_id || "no-visit";
-    if (!byDay.has(day)) byDay.set(day, new Map());
-    const dayMap = byDay.get(day);
-    if (!dayMap.has(visitKey)) {
-      dayMap.set(visitKey, {
-        visitKey,
-        jobTitle: p.job_title || p.service_type || "Service visit",
-        firstStamp: stamp,
-        photos: [],
-      });
-    }
-    const v = dayMap.get(visitKey);
-    if (!v.firstStamp || (stamp && stamp < v.firstStamp)) v.firstStamp = stamp;
-    v.photos.push(p);
-  }
-  const dayKeys = Array.from(byDay.keys()).sort((a, b) => b.localeCompare(a));
-  const fmtHeader = (d) => {
-    if (d === "Unknown date") return d;
-    try {
-      return new Date(d + "T00:00:00").toLocaleDateString(undefined,
-        { weekday: "long", month: "short", day: "numeric", year: "numeric" });
-    } catch { return d; }
-  };
-  return dayKeys.map((day) => {
-    const visits = Array.from(byDay.get(day).values()).sort((a, b) => {
-      const t = (a.firstStamp || "").localeCompare(b.firstStamp || "");
-      if (t !== 0) return t;
-      return (a.visitKey || "").localeCompare(b.visitKey || "");
-    });
-    return { day, header: fmtHeader(day), visits };
-  });
-}
+// Re-export under the shipped name for backwards compatibility.
+export const groupPhotosByDateAndVisit = _groupPhotosByDateAndVisit;
+
+// TD-76c · Feb-2026 — ``groupPhotosByDateAndVisit`` was moved to
+// ``./_photoGrouping`` and re-exported at the top of this file so
+// the existing canonical vitest import keeps working.  Keeping
+// the inline body here would drift the two definitions.
 
 export default function PortalPhotos() {
   const [data, setData] = useState({ photos: [], total: 0 });
