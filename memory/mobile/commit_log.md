@@ -2440,3 +2440,11 @@
 - **Changes**: `reclassifyAfterSave({ save: runSave, reclassify })`: PUT + refetch only after the save/unlock orchestration succeeds. Cancel = silent; error / offline / read-only / PATCH failure → Alert, no PUT, edits intact; success → toast "Service type updated." canEditServiceType admin side = `isUnlockAdminRole(role)` (adds "owner"; canWrite still gates the screen).
 - **Checks**: td-g2 33/33; k61 = the 2 pre-existing failures; job-k6-unlock + service-type-picker pass. tsc 627 (−2: the narrowed-role comparisons are gone). eslint 0 errors. Live admin render of the submitted job checklist OK, no page errors (picker not exercised: it shows only on unclassified jobs).
 - **Files modified**: mobile/app/job/[id]/checklist.tsx, mobile/src/lib/submittedReportUnlock.ts, mobile/__tests__/td-g2-unlock-before-save.test.tsx
+
+## Iteration 189 — Dashboard Service Category tile stat overflow
+- **Commit**: `dbe6f9ba7`
+- **Date**: 2026-11-01
+- **Root cause (measured)**: `ServiceCategoryTileRow.tsx` StatLine = non-wrapping row/space-between with no flexShrink on label or value. Long unbreakable money()/toLocaleString values bled past the tile padding (mocked $1,234,567.89 at 320dp: right edge 150 in a 138dp tile, content edge 125). Live data ($0.00, ≤3-digit counts) doesn't overflow in the web preview. BE sends dollars as a float; formatter unchanged.
+- **Fix**: row flexWrap + columnGap (a value that doesn't fit drops under its label); label flexShrink 1; value flexShrink 1 / maxWidth 100% / numberOfLines 1 + adjustsFontSizeToFit + minimumFontScale 0.7. Applies to all 6 stat lines (Pool / Landscaping / Both × Active jobs / MTD revenue).
+- **Checks**: td84 7/7 (new S7). tsc 627 (unchanged). After-fix measurement at 375/360/320 with the same mock: 0 overflow.
+- **Files modified**: mobile/src/components/dashboard/ServiceCategoryTileRow.tsx, mobile/__tests__/td84-mobile-service-category.test.tsx
