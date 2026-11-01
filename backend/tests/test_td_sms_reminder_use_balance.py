@@ -153,23 +153,23 @@ def test_past_due_email_body_renders_balance_for_partial_payment():
 
 
 # ═══════════════════════════════════════════════════════════════════
-# 4 · Regression lock on the other reminder surface (out of scope
-#     for this ticket — logged as TD-invoice-reminder-email-seed-
-#     balance). This test ASSERTS the drift STILL EXISTS so a future
-#     author can't close that follow-up ticket without updating this
-#     fixture, forcing a conscious decision about scope.
+# 4 · Sibling reminder surface — ``invoice_reminder_email`` seed.
+#     Was a "scope-guard still-uses-total" bookmark at
+#     ``38670451f`` ship time; flipped positive at
+#     ``TD-invoice-reminder-email-seed-balance`` close-out.  The
+#     sibling seed now also uses ``{{INVOICE_BALANCE}}`` with the
+#     ``_invoice_balance`` resolver wired through the emailer's
+#     render context (``emailer.py:695`` passes ``"invoice": inv``).
 # ═══════════════════════════════════════════════════════════════════
 
-def test_sibling_email_reminder_seed_still_uses_total_bookmark():
-    """Scope guard — the ``invoice_reminder_email`` seed at
-    ``migrations/seed_invoice_reminder_template.py`` is a SEPARATE
-    reminder surface deliberately scoped out of this ticket.  When
-    the sibling follow-up ``TD-invoice-reminder-email-seed-balance``
-    ships, flip this assertion to ``INVOICE_BALANCE`` and update the
-    sibling seed in the same commit."""
+def test_sibling_email_reminder_seed_uses_invoice_balance():
+    """The ``invoice_reminder_email`` seed body renders the
+    outstanding balance (``total − amount_paid``) via the
+    ``{{INVOICE_BALANCE}}`` merge-tag.  Flipped from the
+    pre-TD-invoice-reminder-email-seed-balance bookmark that
+    asserted the drift still existed.  Keeps a bit of coverage on
+    the sibling file so a future ``INVOICE_BALANCE`` → stale-swap
+    regression trips here immediately."""
     from migrations.seed_invoice_reminder_template import BODY_DEFAULT
-    assert "{{INVOICE_TOTAL}}" in BODY_DEFAULT, (
-        "Sibling seed changed shape — close "
-        "TD-invoice-reminder-email-seed-balance in the same commit "
-        "and flip this assertion to {{INVOICE_BALANCE}}."
-    )
+    assert "{{INVOICE_BALANCE}}" in BODY_DEFAULT
+    assert "{{INVOICE_TOTAL}}" not in BODY_DEFAULT

@@ -39,7 +39,7 @@ BODY_DEFAULT = (
     '<h2>Friendly reminder</h2>'
     '<p>Hi {{CUSTOMER_NAME}},</p>'
     '<p>Invoice <b>{{INVOICE_NUMBER}}</b> has an outstanding '
-    'balance of <b>${{INVOICE_TOTAL}}</b> due '
+    'balance of <b>${{INVOICE_BALANCE}}</b> due '
     '{{INVOICE_DUE_DATE}}.</p>'
     '<p><a href="{{PAY_LINK}}" '
     'style="background:#DC2626;color:#fff;padding:12px 20px;'
@@ -52,7 +52,7 @@ BODY_DEFAULT = (
 TEXT_DEFAULT = ""
 
 MERGE_TAGS = [
-    "CUSTOMER_NAME", "INVOICE_NUMBER", "INVOICE_TOTAL",
+    "CUSTOMER_NAME", "INVOICE_NUMBER", "INVOICE_BALANCE",
     "INVOICE_DUE_DATE", "DAYS_OVERDUE", "PAY_LINK", "COMPANY_NAME",
 ]
 

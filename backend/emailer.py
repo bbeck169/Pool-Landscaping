@@ -696,6 +696,25 @@ async def send_invoice_reminder_email(inv: dict) -> bool:
                         "tenant": _tenant or {},
                         "customer": cust,
                         "customer_name": cust.get("name") or "there",
+                        # TD-invoice-reminder-email-seed-balance ·
+                        # Feb-2026 — pass the full invoice doc so
+                        # the ``{{INVOICE_BALANCE}}`` resolver
+                        # (``merge_tags.py:_invoice_balance``, which
+                        # reads ``ctx["invoice"]["total"]`` +
+                        # ``ctx["invoice"]["amount_paid"]``) sees
+                        # the fields it needs.  The flat
+                        # ``invoice_total`` key below is
+                        # historical: before the shipped seed body
+                        # swapped ``{{INVOICE_TOTAL}}`` →
+                        # ``{{INVOICE_BALANCE}}`` the dual-registry
+                        # drift at ``merge_tags.py:2076`` made the
+                        # old ``{{INVOICE_TOTAL}}`` resolve against
+                        # this flat key — which was stuffed with
+                        # the balance value.  Both the body copy
+                        # ("outstanding balance of …") AND the
+                        # rendered figure line up now without
+                        # relying on that quirk.
+                        "invoice": inv,
                         "invoice_number": subject_num,
                         "invoice_total": f"{balance:,.2f}",
                         "invoice_due_date": (

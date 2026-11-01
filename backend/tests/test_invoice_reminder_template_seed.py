@@ -64,10 +64,15 @@ def test_first_run_inserts_the_canonical_row():
     assert row["subject"] == SUBJECT_DEFAULT
     assert row["body"] == BODY_DEFAULT
     assert row["merge_tags"] == MERGE_TAGS
-    for tok in ("{{INVOICE_NUMBER}}", "{{INVOICE_TOTAL}}",
+    for tok in ("{{INVOICE_NUMBER}}", "{{INVOICE_BALANCE}}",
                  "{{INVOICE_DUE_DATE}}", "{{PAY_LINK}}",
                  "{{COMPANY_NAME}}", "{{CUSTOMER_NAME}}"):
         assert tok in row["body"]
+    # TD-invoice-reminder-email-seed-balance · Feb-2026 — guard
+    # against a stale-swap regression on the sibling seed.
+    assert "{{INVOICE_TOTAL}}" not in row["body"]
+    assert "INVOICE_BALANCE" in row["merge_tags"]
+    assert "INVOICE_TOTAL" not in row["merge_tags"]
     assert "Pool & Landscaping of Vistancia" not in row["body"]
 
 
