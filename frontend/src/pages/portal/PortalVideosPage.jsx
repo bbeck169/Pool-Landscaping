@@ -9,8 +9,15 @@
  * the modal player inherits the portal-dark palette, ESC + arrow-key
  * nav, focus-trap, and title/counter chrome. The legacy inline modal
  * has been retired.
+ *
+ * TD-portal-videos-page-wire-grouping · Feb-2026 — mirrors the
+ * `bbecd6da1` Photos fix: adopts the shared grouping helper so
+ * the active page renders labeled date-divider headers between
+ * calendar-day groups (newest first).  Grouping uses the
+ * customer's BROWSER timezone, consistent with the shipped
+ * portal convention and the Photos page's identical pattern.
  */
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Video as VideoIcon, Play } from "lucide-react";
 import { portalColors as colors } from "@/theme";
 import { api } from "@/api";
@@ -20,6 +27,11 @@ import Lightbox from "@/components/portal/Lightbox";
 // export(s) in this file so content renders inside the Phase
 // 3d-portal white dashboard card on the deep-navy page bg.
 import PortalPageShell from "@/components/portal/PortalPageShell";
+// TD-portal-videos-page-wire-grouping · Feb-2026 — shared helpers.
+import {
+  groupVideosByDateAndVisit,
+  flattenGrouped,
+} from "./_photoGrouping";
 
 
 const PAGE = 24;
@@ -73,8 +85,36 @@ export default function PortalVideosPage() {
     load(next);
   };
 
+  // TD-portal-videos-page-wire-grouping · Feb-2026 — mirror of
+  // the Photos pattern.  ``items`` is the flat BE-sorted list
+  // (DESC ``uploaded_at`` per ``routers/portal_videos.py:30``).
+  // ``groups`` is the grouped-by-calendar-day tree the shared
+  // ``groupVideosByDateAndVisit`` adapter produces (delegates to
+  // the Photos helper after field-mapping).  ``orderedVideos``
+  // is the same flat stream the shared ``<Lightbox>`` consumes,
+  // iterated via the group → visit → photo order the helper
+  // produced — guaranteeing a tile's ``startIndex + j`` click
+  // resolves to the right lightbox index.  Rebucketing on every
+  // ``items`` change means trailing + leading same-day items
+  // across ``Load more`` pages fuse into one group — no
+  // duplicate dividers.
+  const groups = useMemo(
+    () => groupVideosByDateAndVisit(items || []),
+    [items],
+  );
+  const orderedVideos = useMemo(() => flattenGrouped(groups), [groups]);
+  const groupsWithFlatIndex = useMemo(() => {
+    const out = [];
+    let acc = 0;
+    for (const g of groups) {
+      out.push({ group: g, startIndex: acc });
+      for (const v of g.visits) acc += v.photos.length;
+    }
+    return out;
+  }, [groups]);
+
   // Mapped once here so the <Lightbox> definition below stays terse.
-  const lightboxItems = (items || []).map((v) => ({
+  const lightboxItems = orderedVideos.map((v) => ({
     url:   resolveUrl(v.url),
     kind:  "video",
     title: v.entity_title || v.job_title || v.caption || "Video",
@@ -131,65 +171,93 @@ export default function PortalVideosPage() {
         </div>
       ) : (
         <>
-          <div
-            className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3"
-            data-testid="portal-videos-grid"
-          >
-            {items.map((v, i) => {
-              const poster = v.poster_url ? resolveUrl(v.poster_url) : "";
-              // TD-67 · Feb-2026 — BE emits ``kind, entity_id,
-              // entity_title, video_id, storage_path, url, mime,
-              // size_bytes, duration_seconds, caption, uploaded_at,
-              // source`` (see ``routers/portal_videos.py``). It
-              // does NOT emit ``file_id`` — pre-TD-67 the FE used
-              // it as the React key, producing undefined keys +
-              // duplicate testids. Compose a stable key from the
-              // identifiers the BE DOES emit.
-              const _key = `${v.source || "src"}|${v.video_id || v.entity_id || "x"}|${i}`;
-              return (
-                <button
-                  key={_key}
-                  onClick={() => setSelectedIdx(i)}
-                  className="rounded-xl overflow-hidden transition hover:brightness-95"
-                  style={{ background: colors.surfaceSecondary,
-                            border: `1px solid ${colors.border}` }}
-                  data-testid={`portal-video-${i}`}
+          {/*
+            TD-portal-videos-page-wire-grouping · Feb-2026 —
+            labeled date-divider headers between calendar-day
+            groups.  Mirrors the Photos page pattern byte-for-
+            byte: `<section aria-labelledby>` → `<h2 id>` →
+            `<div role="separator">`.  Legacy
+            ``portal-video-${i}`` testids are preserved on the
+            buttons via flat `startIndex + j` index threading.
+          */}
+          <div data-testid="portal-videos-grouped">
+            {groupsWithFlatIndex.map(({ group, startIndex }) => (
+              <section
+                key={group.day}
+                className="mb-6"
+                data-testid={`portal-videos-date-group-${group.day}`}
+                aria-labelledby={`portal-videos-date-header-${group.day}`}
+              >
+                <h2
+                  id={`portal-videos-date-header-${group.day}`}
+                  className="text-sm font-black uppercase tracking-wide mb-2"
+                  style={{ color: colors.onSurface }}
+                  data-testid={`portal-videos-date-header-${group.day}`}
                 >
-                  <div
-                    className="relative w-full h-40 flex items-center justify-center"
-                    style={{
-                      background: poster ? "#000" : "#111827",
-                      backgroundImage: poster ? `url(${poster})` : "none",
-                      backgroundSize: "cover",
-                      backgroundPosition: "center",
-                    }}
-                  >
-                    <div
-                      className="w-12 h-12 rounded-full flex items-center justify-center"
-                      style={{ background: "rgba(0,0,0,0.6)", color: "#fff" }}
-                    ><Play size={22} /></div>
-                    {v.duration_seconds ? (
-                      <div
-                        className="absolute bottom-1 right-1 text-xs px-1.5 py-0.5 rounded"
-                        style={{ background: "rgba(0,0,0,0.7)", color: "#fff" }}
-                      >{fmtDuration(v.duration_seconds)}</div>
-                    ) : null}
-                  </div>
-                  <div className="p-2 text-left">
-                    <div className="text-xs font-semibold truncate"
-                          style={{ color: colors.onSurface }}
-                          title={v.entity_title || v.job_title || ""}>
-                      {v.entity_title || v.job_title || "Service report"}
-                    </div>
-                    <div className="text-xs" style={{ color: colors.muted }}>
-                      {v.uploaded_at
-                        ? new Date(v.uploaded_at).toLocaleDateString()
-                        : ""}
-                    </div>
-                  </div>
-                </button>
-              );
-            })}
+                  {group.header}
+                </h2>
+                <div
+                  role="separator"
+                  aria-hidden="true"
+                  className="mb-4"
+                  style={{ borderTop: `1px solid ${colors.border}` }}
+                  data-testid={`portal-videos-date-divider-${group.day}`}
+                />
+                <div
+                  className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3"
+                  data-testid={`portal-videos-grid-${group.day}`}
+                >
+                  {group.visits.flatMap((vv) => vv.photos).map((v, j) => {
+                    const i = startIndex + j;
+                    const poster = v.poster_url ? resolveUrl(v.poster_url) : "";
+                    const _key = `${v.source || "src"}|${v.video_id || v.entity_id || "x"}|${i}`;
+                    return (
+                      <button
+                        key={_key}
+                        onClick={() => setSelectedIdx(i)}
+                        className="rounded-xl overflow-hidden transition hover:brightness-95"
+                        style={{ background: colors.surfaceSecondary,
+                                  border: `1px solid ${colors.border}` }}
+                        data-testid={`portal-video-${i}`}
+                      >
+                        <div
+                          className="relative w-full h-40 flex items-center justify-center"
+                          style={{
+                            background: poster ? "#000" : "#111827",
+                            backgroundImage: poster ? `url(${poster})` : "none",
+                            backgroundSize: "cover",
+                            backgroundPosition: "center",
+                          }}
+                        >
+                          <div
+                            className="w-12 h-12 rounded-full flex items-center justify-center"
+                            style={{ background: "rgba(0,0,0,0.6)", color: "#fff" }}
+                          ><Play size={22} /></div>
+                          {v.duration_seconds ? (
+                            <div
+                              className="absolute bottom-1 right-1 text-xs px-1.5 py-0.5 rounded"
+                              style={{ background: "rgba(0,0,0,0.7)", color: "#fff" }}
+                            >{fmtDuration(v.duration_seconds)}</div>
+                          ) : null}
+                        </div>
+                        <div className="p-2 text-left">
+                          <div className="text-xs font-semibold truncate"
+                                style={{ color: colors.onSurface }}
+                                title={v.entity_title || v.job_title || ""}>
+                            {v.entity_title || v.job_title || "Service report"}
+                          </div>
+                          <div className="text-xs" style={{ color: colors.muted }}>
+                            {v.uploaded_at
+                              ? new Date(v.uploaded_at).toLocaleDateString()
+                              : ""}
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
+            ))}
           </div>
 
           {items.length < total ? (

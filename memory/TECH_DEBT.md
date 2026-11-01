@@ -1476,12 +1476,18 @@ Dedicated `PaymentRow` component for enhanced payment-row rendering on `Customer
 - **Priority:** closed.
 
 
-## TD-portal-videos-page-wire-grouping (candidate, P3 FE)
+## TD-portal-videos-page-wire-grouping · Portal Videos page adopts shared grouping — SHIPPED (Feb-2026)
 
-- **Reporter:** TD-portal-photos-page-wire-grouping close-out audit.
-- **Finding:** `frontend/src/pages/portal/PortalVideosPage.jsx` is the active `/portal/videos` route (`App.js:1622`). It renders a flat ungrouped grid, mirroring the exact bug the Photos ticket just closed. The legacy `PortalVideos.jsx:165-166` has an inline `toLocaleDateString(…)` call indicating the TD-76c-style grouping was present but is route-shadowed under the same first-match pattern.
-- **Fix scope:** (1) extract the matching legacy grouping helper (likely `groupVideosByDateAndVisit`) into the shared `frontend/src/pages/portal/_photoGrouping.js` or a sibling `_videoGrouping.js`. (2) wire the active `PortalVideosPage.jsx` grid onto it. (3) new vitest at `test/portal-videos-page.test.jsx` mirroring the 7 new grouping cases this ticket's test file ships. ~1 commit, ~150 LOC FE + ~250 LOC tests. Pure FE, no BE.
-- **Priority:** P3 (candidate, FE).
+- **Ship:** `<pending — this commit>` `td-portal-videos-page-wire-grouping` (`frontend/src/pages/portal/_photoGrouping.js` gains thin `groupVideosByDateAndVisit` adapter — field-maps video rows (`entity_id`→`job_id`, `entity_title`→`job_title`, `uploaded_at`→`submitted_at`) and delegates to the shipped Photos helper, ZERO churn to `bbecd6da1`; `frontend/src/pages/portal/PortalVideosPage.jsx` adopts the adapter + `flattenGrouped` with flat-index threading, renders labeled date-divider headers mirroring the Photos page byte-for-byte; new `frontend/src/test/portal-videos-page.test.jsx` with 10 cases — 3 base + 7 grouping — mirroring the Photos file's shape).
+- **Mirror of:** `bbecd6da1` (TD-portal-photos-page-wire-grouping · Feb-2026). Byte-identical pattern applied to the videos surface.
+- **Pre-audit surprise, resolved pre-code:** the brief named a shipped `groupVideosByDateAndVisit` helper to extract. Reality: no such helper exists. The legacy `PortalVideos.jsx` has inline date-grouping logic inside an IIFE at `:142-168` but no named export, AND that grouping consumed `res.groups` — a payload shape the shipped BE never emits (`routers/portal_videos.py:72` returns `{videos: [flat list], total}` per the docstring at `:30`). The legacy page's grouping has rendered 0 videos per customer since the TD-67 BE pivot — doubly dead (route-shadowed AND payload-shape-mismatched). Operator picked path 1(a): new thin adapter in `_photoGrouping.js` instead of extracting from legacy. Noted in the sibling `TD-portal-photos-videos-legacy-cleanup` candidate addendum.
+- **Semantic contract:** adapter yields the same `[{day, header, visits: [{visitKey, jobTitle, firstStamp, photos: [...]}]}]` tree the Photos page consumes; the "photos" array holds video rows but neither the grouping helper nor the active page's `startIndex + j` threading cares about the leaf shape. Day bucket + header render + visit-sort tiebreak contracts are identical to Photos (TD-76c semantic preserved verbatim via delegation).
+- **Scope guardrails (what this commit did NOT touch):**
+  - Photos helper exports or body — `bbecd6da1` preserved bit-for-bit (locked by 21 regression cases).
+  - Legacy `PortalVideos.jsx` or `PortalPhotos.jsx` beyond the Photos ticket's prior re-export.
+  - BE: `routers/portal_videos.py` + `services/customer_media.py` sort order and tenant/customer scoping untouched.
+  - Mobile, admin, other portal pages, `<Lightbox>` component.
+- **Priority:** closed.
 
 
 ## TD-portal-photos-videos-legacy-cleanup (candidate, P3 FE)
@@ -1490,6 +1496,7 @@ Dedicated `PaymentRow` component for enhanced payment-row rendering on `Customer
 - **Finding:** `App.js:1621` + `:1629` register two `portal/photos` routes; React Router v6 picks the first match, so `:1629` → `PortalPhotos` is dead code. Same shadowing applies to `App.js:1622` (`PortalVideosPage`) vs `:1630` (`PortalVideos`). Keeping dead files invites future devs to edit the wrong source (the Feb-2026 TD-76c author added grouping to the dead file, not the active one — which is exactly the bug this cycle closed).
 - **Fix scope:** (1) delete `frontend/src/pages/portal/PortalPhotos.jsx` + `frontend/src/pages/portal/PortalVideos.jsx`. (2) delete the shadowed routes `App.js:1629-1630` + the two `React.lazy()` import rows for the deleted components (`App.js:135, 177`). (3) delete the sibling canonical vitest `test/portal-photos-td76-canonical.test.jsx` whose only import target is the legacy file — OR migrate its 11 cases onto the shared `_photoGrouping.js` module (the preferred path, keeps the regression-lock on the helper). (4) grep for any other imports of the legacy files (none expected per Feb-2026 audit, but belt-and-braces). ~1 commit, ~5 LOC net code delete + ~550 LOC file deletes + 1 test migration. Pure FE, no BE.
 - **Blocker:** should ship AFTER TD-portal-videos-page-wire-grouping so the videos-side helper has a shared-module home before the legacy videos file is deleted.
+- **Addendum (Feb-2026, via TD-portal-videos-page-wire-grouping ship):** `PortalVideos.jsx` is **doubly dead** — not only route-shadowed under `App.js:1622` but also **payload-shape-mismatched** against the shipped BE. The legacy file's IIFE at `:142-168` iterates `res.groups`, a shape the shipped `routers/portal_videos.py:72` has never emitted (BE returns `{videos: [flat list], total}` per the docstring at `:30`). Legacy videos grouping has rendered zero rows per customer since the TD-67 BE pivot. Safe to delete without any behavior change. The legacy Photos file is "only" route-shadowed (single-dead), whereas Videos is route-shadowed AND wire-dead (double-dead). This asymmetry simplifies the cleanup — no need to migrate any live render logic out of either file.
 - **Priority:** P3 (candidate, FE).
 
 

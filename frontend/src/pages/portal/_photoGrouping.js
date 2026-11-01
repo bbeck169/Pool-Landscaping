@@ -119,3 +119,37 @@ export function flattenGrouped(groups) {
   }
   return flat;
 }
+
+
+/**
+ * TD-portal-videos-page-wire-grouping · Feb-2026.
+ *
+ * Thin adapter — maps portal video rows to the Photos helper's
+ * expected field names and delegates.  Chosen over duplicating
+ * the Photos grouping logic (operator path 1(a)) because the
+ * two payloads are structurally identical for grouping
+ * purposes; only the field names differ.
+ *
+ * Field map:
+ *   * ``uploaded_at`` →  ``submitted_at``  (service date)
+ *   * ``entity_id``   →  ``job_id``        (visit key)
+ *   * ``entity_title`` → ``job_title``     (visit title)
+ *
+ * The Photos helper's exports and internal shape are UNCHANGED
+ * — ``bbecd6da1`` is preserved bit-for-bit.  Callers get the
+ * same ``[{day, header, visits: [{visitKey, jobTitle,
+ * firstStamp, photos: [...]}]}]`` tree the Photos page already
+ * consumes; the "photos" array here contains video rows but the
+ * caller doesn't need to know (iteration order + visit grouping
+ * are what matter for divider rendering + lightbox index-
+ * threading).
+ */
+export function groupVideosByDateAndVisit(videos) {
+  const adapted = (videos || []).map((v) => ({
+    ...v,
+    submitted_at: v.submitted_at || v.uploaded_at,
+    job_id: v.job_id || v.entity_id,
+    job_title: v.job_title || v.entity_title,
+  }));
+  return groupPhotosByDateAndVisit(adapted);
+}
