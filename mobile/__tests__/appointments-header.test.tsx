@@ -54,6 +54,8 @@ jest.mock("@/src/theme", () => ({
   font: { regular: "System", medium: "System", semibold: "System", bold: "System" },
   fontSize: { sm: 12, base: 14, lg: 16, xl: 18, "2xl": 24 },
   money: (v: number) => `$${v}`,
+  // Mirrors src/theme.ts:74 — AppTextInput reads it at module load.
+  inputColors: { bg: "#FFFFFF", text: "#000080", placeholder: "rgba(0,0,128,0.55)" },
 }));
 
 describe("Header Component — Layout Fix", () => {

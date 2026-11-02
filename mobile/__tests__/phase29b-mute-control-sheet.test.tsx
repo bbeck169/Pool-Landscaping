@@ -36,6 +36,8 @@ jest.mock("@/src/theme", () => ({
   radius: { sm: 4, md: 8, lg: 12, pill: 999 },
   font: { regular: "System", medium: "System", semibold: "System", bold: "System" },
   fontSize: { sm: 12, base: 14, lg: 16, xl: 18, "2xl": 24 },
+  // Mirrors src/theme.ts:74 — AppTextInput reads it at module load.
+  inputColors: { bg: "#FFFFFF", text: "#000080", placeholder: "rgba(0,0,128,0.55)" },
 }));
 
 jest.mock("@/src/components/ui", () => {

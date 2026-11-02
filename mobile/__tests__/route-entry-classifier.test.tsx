@@ -60,6 +60,8 @@ jest.mock("@/src/theme", () => ({
   fontSize: { xs: 10, sm: 12, base: 14, md: 14, lg: 16, xl: 20, xxl: 24 },
   money: (n: number) => `$${(n || 0).toFixed(2)}`,
   IMAGES: {},
+  // Mirrors src/theme.ts:74 — AppTextInput reads it at module load.
+  inputColors: { bg: "#FFFFFF", text: "#000080", placeholder: "rgba(0,0,128,0.55)" },
 }));
 
 jest.mock("@/src/auth", () => ({

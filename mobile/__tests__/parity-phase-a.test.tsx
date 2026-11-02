@@ -20,6 +20,8 @@ jest.mock("@/src/theme", () => ({
   font: { regular: "System", medium: "System", semibold: "System", bold: "System" },
   fontSize: { xs: 11, sm: 13, base: 15, md: 15, lg: 18, xl: 22, "2xl": 28 },
   money: (v: number) => `$${(v || 0).toFixed(2)}`,
+  // Mirrors src/theme.ts:74 — AppTextInput reads it at module load.
+  inputColors: { bg: "#FFFFFF", text: "#000080", placeholder: "rgba(0,0,128,0.55)" },
 }));
 
 jest.mock("@expo/vector-icons", () => {

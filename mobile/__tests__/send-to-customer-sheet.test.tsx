@@ -44,6 +44,8 @@ jest.mock("@/src/theme", () => ({
   radius: { sm: 4, md: 8, lg: 16, pill: 999 },
   font: { regular: "System", bold: "System", semibold: "System", medium: "System" },
   fontSize: { xs: 10, sm: 12, base: 14, lg: 16, xl: 20 },
+  // Mirrors src/theme.ts:74 — AppTextInput reads it at module load.
+  inputColors: { bg: "#FFFFFF", text: "#000080", placeholder: "rgba(0,0,128,0.55)" },
 }));
 
 jest.mock("@/src/utils/mapApiError", () => ({
