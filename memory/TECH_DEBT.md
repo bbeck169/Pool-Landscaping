@@ -4155,3 +4155,11 @@ mirrors the web tile but does NOT yet include `next_week`. Add parity:
   another agent's chat text) then committed that one-line timestamp change.
 - Fix shape: write the artifact to an untracked/ignored path (or `os.tmpdir()`), or drop the timestamp, or
   `git rm --cached` + `.gitignore` it. Test-harness only.
+
+## TD-mobile-brand-button-white-text-contrast · OPEN · Nov-2026 (P3 · palette / a11y)
+- Pre-existing, app-wide and independent of the page bg (surfaced during the full-light portal pass `626328dff`):
+  white text on `colors.brand #0284C7` = 4.10:1 (portal Call Now / Request Service CTAs, Next Service Day date
+  box, review-submit submit, most brand buttons) and white on `colors.success #16A34A` = 3.30:1 (portal
+  Referral button). Both are below WCAG AA 4.5:1 for normal-size text (14-16pt bold is not "large" text).
+- Fix shape needs a palette decision (darker brand / success button variant, e.g. a 700 shade), so it's not a
+  per-screen tweak. Operator call.

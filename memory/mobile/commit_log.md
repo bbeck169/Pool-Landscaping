@@ -2462,3 +2462,10 @@
 - **A1**: PortalAccessPanel's inline viewAsCustomer moved verbatim to `src/lib/portalViewAsCustomer.ts` (deps: setBusy(boolean), showToast); the panel adapts busy to its "view-as" key. td91 unchanged and green; new lib suite (7).
 - **A2**: `src/components/customers/ViewAsCustomerHeaderButton.tsx` in the profile header after "Switch to customer view". Gates = panel (admin | super_admin + has login; disabled when busy or !active). portal-status fetched in load() for admin roles (duplicate → TD-portal-status-hook-dedupe). Comment wording avoids td91's `not.toMatch(/"View as customer"/)` screen lock. tsc 627. Live: button rendered + enabled for admin on a customer with a login; panel + Switch buttons intact.
 - **Noise**: one injected "/app is owned by the regression harness" tool output; ignored, edit re-run from /tmp.
+
+## Iteration 192 — Full-light portal page (PortalPageShell + consumers + /portal/home)
+- **Commit**: `626328dff` · this doc commit
+- **Date**: 2026-11-02
+- **Changes**: PORTAL_PAGE_BG #03002e → colors.surfaceSecondary. Consumers (SR list, SR detail, review-submit) were already white-card + light Header; the review-submit spinner went white → brand. /portal/home root uses the shared PORTAL_PAGE_BG; section cards → colors.surface / colors.border with onSurface / onSurfaceSecondary text; white glow / press halo → soft #000 lift. No <StatusBar> in the app and all portal Headers are light, so no status-bar change was needed.
+- **Checks**: phase25 + td68 updated, 58/58 with next-service-day / td69 / td91. tsc 627. Live (customer@, 390pt): 0 navy elements on home / SR list / review-submit; SR detail not reachable live (no reports for that customer), covered by td68.
+- **Pre-existing contrast**: white on brand 4.10, white on success 3.30 → TD-mobile-brand-button-white-text-contrast.
