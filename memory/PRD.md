@@ -128,6 +128,14 @@ Mobile parity for the web Templates Library (backend `/api/templates/*` + web un
   `template_drafts:*` + `template_drafts_pending_sync:*` written, Finalize blocked → reconnect → queue flushed in
   4.0 s, "Saved HH:MM:SS", server title = "E2E offline edit" → finalize 200 → PDF 200. Smoke instance deleted. No
   external repo cloned.
+- **Re-verified 2026-11-02 at fa64e9899 (no code changes):** 45 commits since f19cc3945, none touch Templates Library
+  web/BE/mobile code or its shared deps (theme / api / auth / offlineTemplateDrafts / more / adminNav / package.json:
+  empty diff). Jest 45/45. API: defs admin 23 / mike 8 / landscaper 8; mike create → PATCH 200 → `?mine=true` 200 →
+  GET 200 → finalize 200 → PATCH 409 → `/pdf` 200 `application/pdf` `%PDF-` → duplicate draft → delete 200/200.
+  Expo-web as mike (430pt): Library (24 card nodes) → open draft → `set_offline` → title edit → "Offline — will sync",
+  `template_drafts:*` + `template_drafts_pending_sync:*` written, Finalize blocked → reconnect → queue flushed in
+  10.0 s, "Saved HH:MM:SS", server title = "E2E offline edit" → finalize 200 → PDF 200. Smoke instances deleted. No
+  external repo cloned.
 
 
 
