@@ -4129,3 +4129,12 @@ mirrors the web tile but does NOT yet include `next_week`. Add parity:
   (header "View as customer" gate, `92b0746de`) and once in `PortalAccessPanel.loadStatus` (bundled with
   portal-history). Confirmed live: 2 GETs per profile open. Fix shape: a `usePortalStatus(customerId)` hook or
   lift the status into the profile and pass it to the panel. Keep the panel's `hasLogin` / `active` defaults.
+
+## TD-mobile-artifacts-offline-mode-verification-drift · OPEN · Nov-2026 (P3 · mobile test harness)
+- `mobile/__tests__/offline-mode-screenshot.test.tsx:145` rewrites the TRACKED file
+  `mobile/artifacts/offline-mode-verification.txt` on every run; only the `Generated:` timestamp line changes.
+  Every mobile Jest run that includes it (it matched the Schedule/jobStatus suites run for `ef691eba3` at
+  2026-11-02T05:15:40Z) leaves the tree dirty. The TD-61 rogue auto-commit `ddee0bc9e` (05:38:46Z, message =
+  another agent's chat text) then committed that one-line timestamp change.
+- Fix shape: write the artifact to an untracked/ignored path (or `os.tmpdir()`), or drop the timestamp, or
+  `git rm --cached` + `.gitignore` it. Test-harness only.
