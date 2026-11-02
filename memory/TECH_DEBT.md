@@ -4188,7 +4188,7 @@ mirrors the web tile but does NOT yet include `next_week`. Add parity:
   `bulk-charge-ach-mobile` (3, invoices screen `:39`), `demo-login` (8, `app/login.tsx:48`).
 - Fix shape: add `useLocalSearchParams: () => ({})` to each expo-router mock (test-only). Re-check assertions after.
 
-## TD-mobile-k32-expo-task-manager-mock · OPEN · Nov-2026 (P3 · mobile test harness)
+## TD-mobile-k32-expo-task-manager-mock (a.k.a. TD-mobile-expo-task-manager-mock-drift) · SHIPPED `cc198a287` · Nov-2026 (P3 · mobile test harness)
 - Uncovered by `657eb1033`: `k32-tech-scoped-schedule` now fails to load on `Cannot find native module
   'ExpoTaskManager'` (its import graph reaches a gpsTracker / location module that imports `expo-task-manager`).
   Same root cause as `schedule-map-toggle`. Fix shape: `jest.mock("expo-task-manager", …)` (+ expo-location if needed)
@@ -4204,3 +4204,24 @@ mirrors the web tile but does NOT yet include `next_week`. Add parity:
   `customers-filter-include-deleted` now lives inside the "More filters" sheet, admin-only "Administrative" group
   (`app/(app)/customers.tsx:627-640`), so the tests must open the sheet first. "owner visible" also needs a
   re-check against the current `isAdmin` gate. Test-logic update, operator call.
+- **Shipped** `cc198a287` (B2): k32 gained the canonical inline `jest.mock("expo-task-manager", () => ({ defineTask: jest.fn() }))`
+  (same as GpsTracker / phase37c-job-geofence / phase-syncjobgeofences-startup; there's no __mocks__ or jest.setup mock).
+  The suite loads, 4/6 pass (the 2 remaining failures are logged below). A scan of the 31 unmocked suites whose import
+  graph touches calendar / gps / geofence modules found exactly 1 remaining ExpoTaskManager load failure, logged below.
+
+## TD-mobile-schedule-map-toggle-expo-task-manager-mock · OPEN · Nov-2026 (P3 · mobile test harness)
+- Remnant of the native-module drift: `__tests__/schedule-map-toggle.test.tsx` still fails to load on
+  `Cannot find native module 'ExpoTaskManager'`. Same 1-line inline mock as `cc198a287`. Kept out of B2 (scope was k32 +
+  the 3 named suites).
+
+## TD-mobile-k32-tech-scoping-stale-assertions · OPEN · Nov-2026 (P3 · mobile tests)
+- `k32-tech-scoped-schedule` (after `cc198a287`): 2 failures ("technician" / alternate "tech" role) expect
+  `technician_id=<id>` on the tech's `/jobs` fetch, but `app/(app)/schedule/calendar.tsx` now fetches
+  `/jobs?start&end` without it. Tech scoping moved (BE token scope / client filter). Needs a test-intent update, not a mock.
+
+## TD-mobile-unrelated-suite-failures-nov2026 · OPEN · Nov-2026 (P3 · mobile tests)
+- Checked during B2: no ExpoTaskManager involvement, each loads and fails on assertions:
+  - `schedule-daily-route-map` (3): pin testIDs `schedule-daily-route-map-pin-num-*` / `-pin-view-*` not rendered
+    (pin markup changed; stale selectors / colour lookup).
+  - `phase41-5c-mobile-ringcentral-settings` (1): save PUT path expects 1 Alert call, got 0 (toast vs Alert drift).
+  - `phase53e-mobile-ebit-tile` (1): "Unable to find node on an unmounted component" in the error/retry test.
