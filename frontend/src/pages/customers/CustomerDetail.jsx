@@ -990,6 +990,15 @@ export default function CustomerDetail() {
     [authUser?.role],
   );
   const [toast, setToast] = useState(null);
+  // Feb-2026 · TD-cd-header-view-as-customer — identity-header
+  // "View as customer" button state.  Duplicate of
+  // ``PortalAccessPanel``'s portal-status fetch + impersonate
+  // handler (reused verbatim with parent-scoped setters) so the
+  // header button is tab-independent and one tap away.  Dedupe
+  // deferred to ``TD-cd-impersonate-handler-dedupe`` (mirrors
+  // mobile's ``TD-portal-status-hook-dedupe``, ``1ee5cab11``).
+  const [cdPortalStatus, setCdPortalStatus] = useState(null);
+  const [cdImpersonateBusy, setCdImpersonateBusy] = useState(false);
   // Phase 27 · Feb-2026 — admin KPI tile grid state.  Lightweight
   // best-effort fetch from ``GET /customers/{id}/kpi-summary`` —
   // non-fatal when the call fails (grid still renders with zeros).
@@ -1140,6 +1149,93 @@ export default function CustomerDetail() {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
+
+  // ─── Feb-2026 · TD-cd-header-view-as-customer ───────────────────
+  // Parent-scoped portal-status fetch for the identity-header
+  // "View as customer" button at ``cd-identity-header-actions``.
+  // Best-effort; a transient failure falls back to the legacy
+  // ``customer.has_login`` flag so the gate degrades gracefully.
+  // Duplicate of ``PortalAccessPanel``'s identical GET; dedupe
+  // deferred to ``TD-cd-impersonate-handler-dedupe``.
+  useEffect(() => {
+    if (!id) return undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        const s = await api.get(`/customers/${id}/portal-status`);
+        if (!cancelled) setCdPortalStatus(s || null);
+      } catch {
+        if (!cancelled) setCdPortalStatus(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [id]);
+
+  // Parent-scoped impersonate handler — behavior-identical to the
+  // shipped in-panel handler at ``PortalAccessPanel`` (``cd-
+  // impersonate`` button body).  Reused verbatim with parent-scoped
+  // ``cdImpersonateBusy`` + ``setToast`` so the identity-header
+  // button fires the same ``POST /admin/impersonate/{id}`` →
+  // open-new-tab flow without disturbing the panel's internals.
+  // Dedupe deferred to ``TD-cd-impersonate-handler-dedupe``.
+  // The synchronous ``window.open("about:blank")`` BEFORE any
+  // ``await`` is a popup-blocker workaround and MUST stay above
+  // the ``api.post`` call — see the extended comment on the in-
+  // panel handler.
+  const cdImpersonate = async () => {
+    const win = typeof window !== "undefined"
+      ? window.open("about:blank", "_blank")
+      : null;
+    setCdImpersonateBusy(true);
+    try {
+      const r = await api.post(`/admin/impersonate/${id}`);
+      const token = r?.access_token;
+      if (!token) {
+        if (win) { try { win.close(); } catch { /* ignore */ } }
+        setToast({
+          tone: "error",
+          message: r?.detail || r?.message
+            || "Impersonation failed — the server did not return a token.",
+        });
+        return;
+      }
+      const portalUrl =
+        `/portal/home?impersonation_token=${encodeURIComponent(token)}`;
+      if (!win) {
+        setToast({
+          tone: "error",
+          message: "Enable popups to impersonate. URL copied to clipboard.",
+        });
+        try {
+          await navigator?.clipboard?.writeText(
+            window.location.origin + portalUrl,
+          );
+        } catch { /* clipboard may fail in test env */ }
+        return;
+      }
+      try {
+        win.location.replace(portalUrl);
+      } catch {
+        win.location.href = portalUrl;
+      }
+      setToast({
+        tone: "success",
+        message: `Opened portal as ${customer?.name || "customer"} in a new tab.`,
+      });
+    } catch (e) {
+      if (win) { try { win.close(); } catch { /* ignore */ } }
+      setToast({ tone: "error",
+                   message: e?.message || "Impersonation failed." });
+    } finally {
+      setCdImpersonateBusy(false);
+    }
+  };
+
+  const canCdImpersonate = authUser?.role === "super_admin"
+    || authUser?.role === "admin";
+  const cdHasLogin = (cdPortalStatus && cdPortalStatus.has_login)
+    ?? customer?.has_login;
+  const cdActive = (cdPortalStatus && cdPortalStatus.active) ?? true;
 
   // Phase P37 · Feb-2026 — Load-more handler. Fetches the next
   // ``_P37_JOBS_PAGE`` (50) jobs at ``offset = jobs.length`` and
@@ -1585,7 +1681,7 @@ export default function CustomerDetail() {
                 still-outstanding Quick Task opener-registration
                 debt — unrelated to this move. */}
             <div
-              className="mt-3"
+              className="mt-3 flex flex-row flex-wrap gap-2 items-center"
               data-testid="cd-identity-header-actions"
             >
               <CustomerActionDropdowns
@@ -1595,6 +1691,32 @@ export default function CustomerDetail() {
                 onSendServiceRecordsLink={() => setSrLinkOpen(true)}
                 navy
               />
+              {/* Feb-2026 · TD-cd-header-view-as-customer — sibling
+                  "View as customer" button next to Send ▼ / + Create ▼.
+                  Mirrors mobile A2 (`92b0746de`) — header-row button
+                  with same role gate (admin|super_admin), same active
+                  gate (!active → disabled), same endpoint (`POST
+                  /admin/impersonate/{id}`), same new-tab portal open.
+                  Visibility gated on ``cdHasLogin`` so admins don't
+                  see a dead button for customers without portal
+                  credentials.  Styling matches sibling navy
+                  triggers (transparent on navy chassis). */}
+              {canCdImpersonate && cdHasLogin ? (
+                <Button
+                  variant="ghost"
+                  onClick={cdImpersonate}
+                  disabled={cdImpersonateBusy || !cdActive}
+                  testid="cd-impersonate-header"
+                  style={{
+                    background: "transparent",
+                    color: colors.nav.fg,
+                    border: "1px solid rgba(255,255,255,0.20)",
+                  }}
+                  className="hover:!bg-white/10 focus:!ring-2 focus:!ring-white/40"
+                >
+                  View as customer
+                </Button>
+              ) : null}
             </div>
             {/* Feb-2026 · Customer name relocated INTO the identity
                 card (was rendered at page-chrome level via

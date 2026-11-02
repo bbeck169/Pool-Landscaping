@@ -8,6 +8,23 @@ For the linter-noise-suppression rationale (why we're NOT chasing the reviewer's
 
 ---
 
+## TD-cd-impersonate-handler-dedupe (candidate, P3 FE)
+
+- **Reporter:** `TD-cd-header-view-as-customer` close-out audit (ships the identity-header "View as customer" button).
+- **Finding:** the parent `CustomerDetail` component and its child `PortalAccessPanel` subcomponent now carry **two independent copies** of:
+  1. The `GET /customers/{id}/portal-status` fetch (parent `useEffect` on `id` at `CustomerDetail.jsx:1149`-ish + panel `useCallback(loadStatus)` at `:2984`-ish).
+  2. The `impersonate` handler body (parent `cdImpersonate` at `~:1180`-ish + panel `impersonate` at `~:3024`-ish). Both open `about:blank` synchronously, both `POST /admin/impersonate/{id}`, both navigate the pre-opened tab to `/portal/home?impersonation_token=…`, both toast on success/failure. Behavior-identical modulo scoped setters.
+- **Why not deduped now:** bundling the extraction into the header-button ticket violates atomic-single-concern + creates a 3-way migration (parent, panel, new helper) that's hard to review in one commit. The duplicate-fetch + inline-handler route keeps the ticket atomic and matches mobile A2's shape (`92b0746de`) which deferred to `TD-portal-status-hook-dedupe` (`1ee5cab11`) for the same reason.
+- **Fix scope:**
+  1. Extract `openPortalPreview(customerId, { onBusy, onToast, nameForToast })` into a new helper at `frontend/src/lib/portalViewAsCustomer.js` (mirror mobile's `src/lib/portalViewAsCustomer.ts` naming). Signature matches both call sites: parent uses `onBusy=setCdImpersonateBusy, onToast=setToast, nameForToast=customer.name`; panel uses `onBusy=setBusy("impersonate")/setBusy(""), onToast=onToastProp, nameForToast=customer.name`.
+  2. Extract `usePortalStatus(customerId)` hook into `frontend/src/hooks/usePortalStatus.js` returning `{ status, loading, refetch }`. Both parent + panel consume the hook. If both call sites mount simultaneously (header + panel tab active), a shared-cache layer (SWR-style or a tiny module-level `Map<customerId, Promise>`) avoids the double-fetch — scope decision at ship time.
+  3. Replace parent `cdImpersonate` + `useEffect(portal-status)` + panel `impersonate` + panel `loadStatus` call sites with the new helper + hook. Preserve all testids (`cd-impersonate`, `cd-impersonate-header`), all gates, all toast copy.
+  4. Keep the sync `window.open("about:blank")` BEFORE `await` pattern inside the extracted helper (popup-blocker contract — locked by `view-as-customer-popup-blocker-fix.test.jsx` + `td-cd-header-view-as-customer.test.jsx` on the `cdImpersonate` body). The helper must preserve the single-`window.open` call-site invariant.
+- **Cross-reference:** mobile's sibling tech-debt entry is `TD-portal-status-hook-dedupe` (shipped mobile commit `1ee5cab11`); the web dedupe should land in the same joint ticket cycle so both surfaces share the same helper/hook signatures and testing-agent plans can test the full web↔mobile contract in one pass.
+- **Priority:** P3 (candidate, FE). ~80-120 LOC moved + ~6-8 vitest cases (helper unit tests + hook unit tests + regression on both call sites). No BE touch. No mobile touch (mobile's dedupe is tracked separately).
+
+---
+
 ## Architecture notes
 
 **Parallel-track commits are expected.** When the orchestrator dispatches BE / web and mobile tickets in the same cycle, commits from `e1_expo_frontend_dev` (mobile track, `/app/mobile/`) will land interleaved in the `git log` with commits from `e1_dev` (BE / web track). Each track only sees the other's commits via `git log`, not via its own dispatch message. Verification path: orchestrator dispatch messages are the authoritative source of truth for mobile-scope unlocks (look for an explicit "D6 ✅ Mobile edit scope approved" or similar signal in the dispatch). Both commit SHAs' author / date metadata are consistent with same-pod execution. A defensive flag by either track when it sees an uncatalogued commit from its sibling is correct discipline — the orchestrator confirms via the dispatch chain.
