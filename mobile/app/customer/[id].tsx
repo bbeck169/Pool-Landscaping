@@ -36,6 +36,7 @@ import MuteControlSheet from "@/src/components/customers/MuteControlSheet";
 import CustomerDeleteModal from "@/src/components/customers/CustomerDeleteModal";
 import SubscriptionsSection from "@/src/components/subscriptions/SubscriptionsSection";
 import PortalAccessPanel from "@/src/components/customers/PortalAccessPanel";
+import ViewAsCustomerHeaderButton from "@/src/components/customers/ViewAsCustomerHeaderButton";
 import CustomerJobsSection from "@/src/components/customers/CustomerJobsSection";
 // Phase 25 · web parity 0a176aeeb (Phase 22) — immediate skeleton shell.
 import CustomerProfileSkeleton from "@/src/components/customers/CustomerProfileSkeleton";
@@ -93,6 +94,9 @@ export default function CustomerDetail() {
   const [impersonating, setImpersonating] = useState(false);
   const [emailComposeOpen, setEmailComposeOpen] = useState(false);
   const [confirmImp, setConfirmImp] = useState(false);
+  // A2 · header view-as-customer button gate data (has_login / active), same
+  // GET as PortalAccessPanel's own status fetch → TD-portal-status-hook-dedupe.
+  const [portalStatus, setPortalStatus] = useState<{ has_login?: boolean; active?: boolean } | null>(null);
   const [requesting, setRequesting] = useState(false);
   const [actionSheetOpen, setActionSheetOpen] = useState(false);
   const [serviceRecordsLinkOpen, setServiceRecordsLinkOpen] = useState(false);
@@ -173,6 +177,15 @@ export default function CustomerDetail() {
     api.get(`/customers/${id}/kpi-summary`)
       .then((r: any) => setKpi(r && typeof r === "object" ? r : null))
       .catch(() => setKpi(null));
+    // A2 · portal status for the header view-as-customer gate (admin
+    // roles only, like the panel). Non-fatal; re-run by the panel's
+    // onRefresh (= load) after invite / reset / revoke.
+    const viewerRole = String(user?.role || "");
+    if (viewerRole === "admin" || viewerRole === "super_admin") {
+      api.get(`/customers/${id}/portal-status`)
+        .then((r: any) => setPortalStatus(r && typeof r === "object" ? r : null))
+        .catch(() => setPortalStatus(null));
+    }
     try {
       // Phase 9-M — ``slim=1`` drops the embedded ``jobs`` array; Job
       // History is lazy-loaded by <CustomerJobsSection>.
@@ -199,7 +212,7 @@ export default function CustomerDetail() {
     } finally {
       setLoading(false);
     }
-  }, [id, loadCredits]);
+  }, [id, loadCredits, user?.role]);
 
   useFocusEffect(
     useCallback(() => {
@@ -536,6 +549,17 @@ export default function CustomerDetail() {
               <Text style={[styles.impersonateText, s2.actionBtnText]}>{impersonating ? "Switching…" : "Switch to customer view"}</Text>
             </Pressable>
           ) : null}
+          {/* A2 · view-as-customer button — portal in the in-app browser, admin
+              session untouched (shared src/lib/portalViewAsCustomer.ts).
+              Same gates as PortalAccessPanel's button. */}
+          <ViewAsCustomerHeaderButton
+            customerId={id as string}
+            role={user?.role}
+            hasLogin={portalStatus?.has_login ?? c.has_login ?? false}
+            active={portalStatus?.active ?? true}
+            style={[s2.actionBtn, s2.actionBtnSteel]}
+            textStyle={s2.actionBtnText}
+          />
           {/* Phase 40b · web ``cd-issue-credit-btn`` → scroll to the Credits
               section (its Adjust modal is reused untouched). Gated like the
               Credits section it targets (admin / super_admin). */}
