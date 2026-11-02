@@ -36,6 +36,7 @@ jest.mock("expo-router", () => {
   const ReactLib = require("react");
   return {
     useRouter: () => ({ push: jest.fn(), back: jest.fn(), replace: jest.fn() }),
+    useLocalSearchParams: () => ({}),
     useFocusEffect: (cb: any) => {
       ReactLib.useEffect(() => { cb(); }, []);
     },

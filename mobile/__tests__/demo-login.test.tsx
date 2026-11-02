@@ -24,6 +24,7 @@ jest.mock("@/src/api", () => ({
 }));
 jest.mock("expo-router", () => ({
   useRouter: () => ({ replace: mockReplace, push: mockPush, back: jest.fn() }),
+  useLocalSearchParams: () => ({}),
   useFocusEffect: jest.fn(),
 }));
 jest.mock("expo-image", () => {
