@@ -2448,3 +2448,10 @@
 - **Fix**: row flexWrap + columnGap (a value that doesn't fit drops under its label); label flexShrink 1; value flexShrink 1 / maxWidth 100% / numberOfLines 1 + adjustsFontSizeToFit + minimumFontScale 0.7. Applies to all 6 stat lines (Pool / Landscaping / Both × Active jobs / MTD revenue).
 - **Checks**: td84 7/7 (new S7). tsc 627 (unchanged). After-fix measurement at 375/360/320 with the same mock: 0 overflow.
 - **Files modified**: mobile/src/components/dashboard/ServiceCategoryTileRow.tsx, mobile/__tests__/td84-mobile-service-category.test.tsx
+
+## Iteration 190 — Ticket A: TD-61 merge-marker restore · Ticket B: My Account tiles restyle
+- **Commits**: `ef691eba3` (A) · `9353b7fb0` + `e9520a96d` (B) · this doc commit
+- **Date**: 2026-11-02
+- **A**: rogue `d0fa1d0ef` committed stash-pop conflict blocks (55 added lines, 0 removed, only calendar.tsx + jobStatus.ts). Both files restored byte-for-byte from 4ac77c3ab (= d0fa1d0ef^ 6eae834e6 for these paths). Feb-2026 gray finished cards kept, Oct-2026 green stash side discarded. Babel parse OK, tsc 627, 0 markers in the mobile tree. 30 suites touch these files: 25 pass; 5 fail for reasons unrelated to the restore (k32 inputColors drift, schedule-map-toggle missing ExpoTaskManager mock, 3 stale source-regex suites: s1 / phase-schedule-tech-filter / select-all).
+- **B**: app/portal/home.tsx, tiles only. KPI stat tiles + 14 Quick Action tiles: navy → colors.surface / colors.border / onSurface / onSurfaceSecondary. Page bg #03002e + section cards unchanged (TD-68 white-card-on-navy convention; home's navy constant is local, so the PortalPageShell siblings are unaffected). QA padding 16→12, icon chip 44→36, label 14→13pt + numberOfLines 1 + adjustsFontSizeToFit (min 0.85). Pressed adds a surfaceSecondary bg. Live web measurement: 0 wrapped / 0 truncated at 375 / 360 / 320 (widest 107/112px at 320). phase25 15/15, td68 / td69 / td91 / next-service-day green.
+- **Files modified**: mobile/app/(app)/schedule/calendar.tsx, mobile/src/lib/jobStatus.ts, mobile/app/portal/home.tsx, mobile/__tests__/phase25-portal-home-restyle.test.tsx
