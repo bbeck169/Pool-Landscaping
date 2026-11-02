@@ -4144,7 +4144,7 @@ mirrors the web tile but does NOT yet include `next_week`. Add parity:
   (the `it.skip`s are the pre-existing K78 / Phase Hygiene B quarantine of the stale Active/Inactive
   value tests, unrelated to this drift).
 
-## TD-mobile-theme-mock-inputColors-drift-sweep · OPEN · Nov-2026 (P3 · mobile test harness)
+## TD-mobile-theme-mock-inputColors-drift-sweep · SHIPPED `657eb1033` · Nov-2026 (P3 · mobile test harness)
 - **Same drift, 15 more suites**: their `jest.mock("@/src/theme", …)` factory has no `inputColors`, and
   their import graph reaches `src/components/ui/AppTextInput.tsx:31` (`inputColors.bg` at module load).
   Found by running all 51 suites that mock the theme without `inputColors` (16 failed with this error
@@ -4178,3 +4178,18 @@ mirrors the web tile but does NOT yet include `next_week`. Add parity:
   Referral button). Both are below WCAG AA 4.5:1 for normal-size text (14-16pt bold is not "large" text).
 - Fix shape needs a palette decision (darker brand / success button variant, e.g. a 700 shade), so it's not a
   per-screen tweak. Operator call.
+- **Shipped** `657eb1033`: all 15 theme mocks gained the `inputColors` line (mirrors `src/theme.ts:74`).
+  0 suites fail on `inputColors.bg` now; 11/15 load and pass (62 tests). The other 4 were masked by
+  unrelated drift, logged below.
+
+## TD-mobile-expo-router-mock-useLocalSearchParams-drift · OPEN · Nov-2026 (P3 · mobile test harness)
+- Uncovered by `657eb1033`. These suites load, but their `jest.mock("expo-router")` has no `useLocalSearchParams`,
+  which the screens now call at render: `customers-list-soft-deleted-chip` (8 failures, `app/(app)/customers.tsx:28`),
+  `bulk-charge-ach-mobile` (3, invoices screen `:39`), `demo-login` (8, `app/login.tsx:48`).
+- Fix shape: add `useLocalSearchParams: () => ({})` to each expo-router mock (test-only). Re-check assertions after.
+
+## TD-mobile-k32-expo-task-manager-mock · OPEN · Nov-2026 (P3 · mobile test harness)
+- Uncovered by `657eb1033`: `k32-tech-scoped-schedule` now fails to load on `Cannot find native module
+  'ExpoTaskManager'` (its import graph reaches a gpsTracker / location module that imports `expo-task-manager`).
+  Same root cause as `schedule-map-toggle`. Fix shape: `jest.mock("expo-task-manager", …)` (+ expo-location if needed)
+  in the suite, or a shared jest setup mock.
