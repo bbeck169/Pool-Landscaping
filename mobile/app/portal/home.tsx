@@ -44,6 +44,18 @@ const PORTAL_TEXT = "#FFFFFF";
 const PORTAL_TEXT_MUTED = "rgba(255,255,255,0.7)";
 // Phase 24 glow → static soft white halo on every KPI tile (no hover on
 // touch). iOS reads shadow*, Android draws via elevation.
+// My Account tiles restyle (Nov-2026, operator ask, mobile-only): the KPI
+// stat tiles + Quick Action tiles leave the navy chassis for the light
+// in-palette card. Same "white card on the navy portal page" pattern as the
+// TD-68 portal screens (PortalPageShell). Page bg + section cards
+// (Next Service Day / Last Visit / Concierge / Referral / Business card)
+// keep the navy chassis. Aliases of existing theme tokens, not new tokens.
+const TILE_BG = colors.surface;                       // #FFFFFF
+const TILE_BORDER = colors.border;                    // #E4E4E7
+const TILE_TEXT = colors.onSurface;                   // #09090B · 19.9:1 on white
+const TILE_TEXT_MUTED = colors.onSurfaceSecondary;    // #52525B · 7.7:1 on white
+// Quick Action labels stay on one line; shrink no further than 85% (14 → 11.9pt).
+export const QA_LABEL_MIN_FONT_SCALE = 0.85;
 const KPI_GLOW = {
   shadowColor: "#FFFFFF", shadowOpacity: 0.6, shadowRadius: 20,
   shadowOffset: { width: 0, height: 0 }, elevation: 8,
@@ -508,9 +520,17 @@ function QuickActionTile({ sec, badge, onPress }: { sec: any; badge: number; onP
         <View style={s.cardBadge}><Text style={s.cardBadgeText}>{badge}</Text></View>
       ) : null}
       <View style={s.cardIcon}>
-        <Ionicons name={sec.icon} size={22} color={colors.brand} />
+        <Ionicons name={sec.icon} size={20} color={colors.brand} />
       </View>
-      <Text style={s.cardLabel}>{sec.label}</Text>
+      <Text
+        style={s.cardLabel}
+        numberOfLines={1}
+        adjustsFontSizeToFit
+        minimumFontScale={QA_LABEL_MIN_FONT_SCALE}
+        testID={`portal-qa-label-${sec.key}`}
+      >
+        {sec.label}
+      </Text>
     </Pressable>
   );
 }
@@ -573,14 +593,14 @@ const s = StyleSheet.create({
   statsRow: { flexDirection: "row", gap: spacing.md, marginBottom: spacing.lg },
   statCircle: {
     flex: 1, alignItems: "center", justifyContent: "center",
-    backgroundColor: PORTAL_DARK_BG, borderRadius: PORTAL_TILE_RADIUS,
-    paddingVertical: 14, borderWidth: 1, borderColor: PORTAL_DARK_BORDER,
+    backgroundColor: TILE_BG, borderRadius: PORTAL_TILE_RADIUS,
+    paddingVertical: 14, borderWidth: 1, borderColor: TILE_BORDER,
     ...KPI_GLOW,
   },
   // Phase 25 — text on a dynamic (red / green) tile bg.
   statTextOnDynamic: { color: "#FFFFFF" },
-  statValue: { fontFamily: font.bold, fontSize: fontSize.xl, color: PORTAL_TEXT },
-  statLabel: { fontFamily: font.medium, fontSize: 11, color: PORTAL_TEXT_MUTED, marginTop: 2 },
+  statValue: { fontFamily: font.bold, fontSize: fontSize.xl, color: TILE_TEXT },
+  statLabel: { fontFamily: font.medium, fontSize: 11, color: TILE_TEXT_MUTED, marginTop: 2 },
   heroInner: { flex: 1, padding: spacing.lg, justifyContent: "flex-end" },
   heroLabel: { fontFamily: font.medium, fontSize: fontSize.base, color: "rgba(255,255,255,0.85)" },
   heroValue: { fontFamily: font.bold, fontSize: 34, color: "#fff", marginTop: 2 },
@@ -603,11 +623,11 @@ const s = StyleSheet.create({
   gridTitle: { fontFamily: font.bold, fontSize: fontSize.xl, color: PORTAL_TEXT, marginBottom: spacing.md },
   grid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.md, marginBottom: spacing.lg },
   card: {
-    width: "47.5%", flexGrow: 1, backgroundColor: PORTAL_DARK_BG,
-    borderRadius: PORTAL_TILE_RADIUS, padding: spacing.lg, borderWidth: 1, borderColor: PORTAL_DARK_BORDER,
+    width: "47.5%", flexGrow: 1, backgroundColor: TILE_BG,
+    borderRadius: PORTAL_TILE_RADIUS, padding: spacing.md, borderWidth: 1, borderColor: TILE_BORDER,
   },
-  cardIcon: { width: 44, height: 44, borderRadius: radius.md, backgroundColor: colors.brandTertiary, alignItems: "center", justifyContent: "center", marginBottom: spacing.sm },
-  cardLabel: { fontFamily: font.semibold, fontSize: fontSize.base, color: PORTAL_TEXT },
+  cardIcon: { width: 36, height: 36, borderRadius: radius.sm, backgroundColor: colors.brandTertiary, alignItems: "center", justifyContent: "center", marginBottom: spacing.sm },
+  cardLabel: { fontFamily: font.semibold, fontSize: fontSize.base, color: TILE_TEXT },
   cardBadge: { position: "absolute", top: spacing.md, right: spacing.md, minWidth: 22, height: 22, paddingHorizontal: 6, borderRadius: 11, backgroundColor: colors.error, alignItems: "center", justifyContent: "center" },
   cardBadgeText: { color: "#fff", fontFamily: font.bold, fontSize: fontSize.sm },
   // Phase 25 · web Phase 24 hover glow → mobile press glow (onPressIn).
@@ -615,6 +635,7 @@ const s = StyleSheet.create({
   // light chassis too. Android draws the halo via elevation (API 28+
   // honours shadowColor).
   cardPressed: {
+    backgroundColor: colors.surfaceSecondary,
     shadowColor: "#FFFFFF", shadowOpacity: 0.6, shadowRadius: 20,
     shadowOffset: { width: 0, height: 0 }, elevation: 8,
   },
