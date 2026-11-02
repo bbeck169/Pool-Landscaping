@@ -593,25 +593,55 @@ async def revenue_forecast(
     from utils import not_deleted_filter as _nd
     cur = db.jobs.find({**booked_q, **_nd()}, {
         "_id": 0, "id": 1, "price": 1, "total": 1, "quote_total": 1,
+        "line_items": 1,
     })
     booked_amount = 0.0
     booked_count = 0
     async for j in cur:
-        # Resolve effective price via the ``price → total → quote_total``
-        # cascade (legacy field-name fallback for records written by
-        # pre-Feb-2026 code paths).  Jobs with no non-null numeric in
-        # the cascade OR a resolved value <= 0 are SKIPPED entirely
-        # (not counted toward ``booked_count`` either) — zero-price
-        # jobs don't contribute to the forward forecast.
-        effective_price: Optional[float] = None
-        for key in ("price", "total", "quote_total"):
-            v = j.get(key)
-            if v is not None:
+        # TD-revenue-forecast-f7-defensive-hardening · Nov-2026 —
+        # F7 priority branch.  Mirrors ``auto_invoice._build_line_
+        # items`` at ``services/auto_invoice.py:60-104`` where
+        # ``job.line_items[]`` wins over ``job.price`` when non-
+        # empty.  Formula duplicated verbatim (NOT imported — the
+        # auto-invoice helper is async + builds full invoice-
+        # shaped rows with new ids, writeback flags, etc.; forecast
+        # only needs the dollar sum).  Keep the two formulas in
+        # lock-step: ``line_total_cents = round(qty * unit_price *
+        # 100)``, sum across lines, convert back to dollars.
+        job_lines = j.get("line_items") or []
+        f7_price: Optional[float] = None
+        if job_lines:
+            total_cents = 0
+            for src in job_lines:
                 try:
-                    effective_price = float(v)
-                    break
+                    qty = float(src.get("quantity") or 0)
+                    unit_dollars = float(src.get("unit_price") or 0)
                 except (TypeError, ValueError):
                     continue
+                total_cents += int(round(qty * unit_dollars * 100))
+            f7_price = total_cents / 100.0
+        # Resolve effective price via the F7-first cascade:
+        # ``line_items.sum → price → total → quote_total``.  Legacy
+        # field-name fallback for records written by pre-Feb-2026
+        # code paths is preserved verbatim.  Jobs with no non-null
+        # numeric in the cascade OR a resolved value <= 0 are
+        # SKIPPED entirely (not counted toward ``booked_count``
+        # either) — zero-price jobs don't contribute to the
+        # forward forecast.  The ``> 0`` gate at the bottom still
+        # drops F7 jobs whose line_items sum to zero (e.g. a
+        # single-row placeholder with ``unit_price=0``).
+        effective_price: Optional[float] = None
+        if f7_price is not None and f7_price > 0:
+            effective_price = f7_price
+        else:
+            for key in ("price", "total", "quote_total"):
+                v = j.get(key)
+                if v is not None:
+                    try:
+                        effective_price = float(v)
+                        break
+                    except (TypeError, ValueError):
+                        continue
         if effective_price is None or effective_price <= 0:
             continue
         booked_count += 1

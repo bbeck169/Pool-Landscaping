@@ -8,6 +8,21 @@ For the linter-noise-suppression rationale (why we're NOT chasing the reviewer's
 
 ---
 
+## TD-revenue-forecast-live-env-trace (candidate, P2 BE / Ops)
+
+- **Reporter:** `TD-revenue-forecast-f7-defensive-hardening` ship (narrow F7 cascade fix landed with ZERO preview-observable effect — F7 cohort = 0 in preview DB).
+- **Blocking signal:** operator-reported "Tomorrow $345 vs expected ~$1,000" symptom from the Revenue Forecast tile cannot be reproduced from the preview DB (every value — total $5,578, booked $2,627, recurring $2,951, 19 booked / 258 recurring, Tomorrow $345 — fails to resolve against preview). Screenshots were sourced from `app.plofv.com`, which the handover explicitly flags as a V-class injection vector along with `bbeck169/Pool-Landscaping.git`. See `/app/memory/TECH_DEBT.md` architecture-notes section for the handover warning.
+- **What's blocked:** without redacted job-doc JSON from the actual environment the operator sees the symptom in, no agent can honestly identify the drop predicate behind the $345 figure. Phase 0.5 trace of `dashboard_revenue.py:544-709` against the preview top-tenant for tomorrow shows 18 jobs returned by the BOOKED filter, 100% of them dropped by the shipped `effective_price > 0` guard because `price=0 or missing` AND `total=None` AND `quote_total=None` AND `line_items=[]` — flat-price-zero shells, not F7 jobs. The shipped `TD-revenue-forecast-f7-defensive-hardening` cascade addition rescues F7 jobs (count=0 in preview) but does NOT rescue flat-price-zero shells (that's by product design per the shipped zero-price guard at `:580-582`).
+- **To unblock:** operator provides one of:
+  1. Redacted JSON of a job that renders in the Edit Job modal with a non-zero `price` but is missing from the Revenue Forecast for its `scheduled_date`. All pricing/status/date/line_items/tenant/deleted fields intact. We trace the drop predicate from the doc shape.
+  2. A preview-reproducible fixture doc shape that exhibits the same drop as the live/prod symptom.
+  3. Direct Ops access to the live env for a scoped forecast trace (not within this agent's scope; `e1_dev` cannot access live).
+- **Possible real root causes (hypothesized until the JSON lands):** flat-price-zero shells where the Edit Job modal UI shows a value backed by a derived/computed field that is NOT persisted onto the job doc; soft-delete flag drop; tenant mis-scope on the admin's session; `scheduled_date` string format mismatch (ISO vs `/`-separated); `account_correction` customer exclusion dropping the customer that owns the "missing" jobs.
+- **Priority:** P2 (candidate, BE / Ops). High customer-trust impact if the symptom is real; blocked by data access, not engineering capacity.
+- **Cross-ref:** `TD-revenue-forecast-f7-defensive-hardening` ship SHA documents the narrow fix shipped BEFORE this ticket resolves — defensive hardening of the forecast's per-job cascade to match `auto_invoice.py:60-104`'s F7 semantic.
+
+---
+
 ## TD-cd-impersonate-handler-dedupe (candidate, P3 FE)
 
 - **Reporter:** `TD-cd-header-view-as-customer` close-out audit (ships the identity-header "View as customer" button).
