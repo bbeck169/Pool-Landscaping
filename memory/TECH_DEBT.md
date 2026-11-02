@@ -8,6 +8,21 @@ For the linter-noise-suppression rationale (why we're NOT chasing the reviewer's
 
 ---
 
+## TD-portal-balance-due-live-env-trace (candidate, P2 BE / Ops)
+
+- **Reporter:** `TD-invoice-outstanding-balance-phantom-field-fix` ship (narrow phantom-field fix + "Prior Balance" rename landed; portal-tile `$0` symptom could not be reproduced in preview).
+- **Blocking signal:** operator-reported portal dashboard tile symptom from the Invoice-OB ticket's screenshot — customer "James Conrad" showing `BALANCE DUE $0.00 / PAST DUE $0.00 / CREDIT $0.00` while they allegedly have an unpaid $140 invoice (`INV-2026-000119`). Screenshot sourced from `app.plofv.com`, which the handover explicitly flags as a V-class injection vector (`bbeck169/Pool-Landscaping.git`, `app.plofv.com`). Preview DB has 9 invoices total across all tenants, 0 unpaid, 0 James Conrad records → symptom cannot be reproduced.
+- **Code reading verdict:** the portal aggregator at `backend/routers/customer_portal.py:134-165` loops ALL `doc_type=invoice` docs for the customer (tenant-scoped, soft-delete-guarded, NO status gate), sums `max(total - amount_paid, 0)` across rows where `remaining > 0`. For a non-deleted $140 unpaid invoice the aggregator would correctly return `balance_due = 140.0`. **The phantom-field bug fixed by `TD-invoice-outstanding-balance-phantom-field-fix` is on a DIFFERENT code path** (`invoice_viewer.py:286`) and does NOT propagate here — the portal path never reads a denormalized `outstanding_balance` field.
+- **Possible real root causes (hypothesized until the JSON lands):** the invoice doc has `deleted_at` set (soft-deleted → excluded correctly by `:126-129`); the invoice's `customer_id` doesn't match the portal viewer's resolved `customer_id` (profile linkage drift); the canonical override at `:162-165` returns a stale cached value from a shared compute function; the invoice's `total` or `amount_paid` fields are set in a non-numeric form that `_num()` coerces to `0` (string with currency symbol, cents-only, etc.).
+- **To unblock:** operator provides one of:
+  1. Redacted JSON of the invoice `INV-2026-000119` + the James Conrad customer doc. We trace the drop predicate from the doc shape (same posture as `TD-revenue-forecast-live-env-trace`).
+  2. A preview-reproducible fixture doc shape that exhibits the same drop as the live symptom.
+  3. Direct Ops access to the live env for a scoped portal-aggregator trace (not within this agent's scope).
+- **Priority:** P2 (candidate, BE / Ops). High customer-trust impact if the symptom is real; blocked by data access, not engineering capacity.
+- **Cross-ref:** sibling to `TD-revenue-forecast-live-env-trace` — both park unverifiable `app.plofv.com` symptoms behind the "needs redacted JSON" gate so future agents don't fabricate findings. Also note: the shipped `TD-invoice-outstanding-balance-phantom-field-fix` closes the deterministic phantom-field defect on the invoice-render surface, which SHIPPED the fix the operator was actually chasing — this candidate exists only for the orthogonal portal-tile claim that could not be reproduced from preview.
+
+---
+
 ## TD-revenue-forecast-live-env-trace (candidate, P2 BE / Ops)
 
 - **Reporter:** `TD-revenue-forecast-f7-defensive-hardening` ship (narrow F7 cascade fix landed with ZERO preview-observable effect — F7 cohort = 0 in preview DB).

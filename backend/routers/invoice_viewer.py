@@ -188,6 +188,75 @@ async def _compute_credit(customer_id: str, tenant_id: str) -> float:
     return 0.0
 
 
+# ─── TD-invoice-outstanding-balance-phantom-field-fix · Nov-2026 ──
+# Pre-ticket the viewer at ``_build_viewer_payload`` read a phantom
+# ``inv.get("outstanding_balance")`` field — no backend writer ever
+# set that field on the ``quotes`` collection (grep across
+# ``backend/`` confirmed zero writers at ship time; 0 of 9 preview
+# invoices carried the field).  The reader at ``:286`` always
+# evaluated ``float(None or 0) → 0``, so every invoice rendered a
+# ``$0.00`` header + payment-stub "Outstanding Balance" row
+# regardless of the customer's real cross-invoice balance.
+#
+# Fix: compute the field on the fly from the customer's OTHER
+# open invoices — the semantic implied by the payment-stub math
+# contract ``OtherOpenBalance + ThisInvoice − AmountPaid =
+# TotalDueOnAccount``.  Current invoice is EXCLUDED from the sum
+# via ``id: {$ne: current_invoice_id}`` so the math closes.
+#
+# Mirrors ``customer_portal.py:134-145`` shape (same ``quotes`` +
+# ``doc_type=invoice`` + soft-delete-guard tenant-scoped query);
+# does NOT reuse ``services/marketing/segments._customer_ids_
+# balance_map`` because that helper returns ``{cid: balance}``
+# for ALL customers in a tenant and would waste work when the
+# viewer only needs one customer.
+#
+# The displayed LABEL in the PDF + FE is now "Prior Balance"
+# (clearer than the ambiguous "Outstanding Balance" which
+# operators consistently misread as "balance owed on this
+# invoice").  JSON key stays ``outstanding_balance`` to preserve
+# the response contract — other consumers that read the key
+# (if any) see the correct value rather than a phantom 0.
+async def _compute_prior_open_balance(
+    customer_id: str,
+    tenant_id: str,
+    current_invoice_id: str,
+) -> float:
+    """Sum of ``max(total - amount_paid, 0)`` across this
+    customer's OTHER open (non-deleted) invoices, excluding the
+    one currently being rendered.  Returns ``0.0`` when the
+    customer has no other open invoices (math-correct for the
+    operator's reported James Conrad scenario — single invoice
+    open → prior balance is $0).  Tenant-scoped + soft-delete-
+    guarded identically to ``_load_invoice``."""
+    if not customer_id:
+        return 0.0
+    try:
+        rows = await db.quotes.find(
+            {
+                "tenant_id": tenant_id,
+                "customer_id": customer_id,
+                "doc_type": "invoice",
+                "id": {"$ne": current_invoice_id},
+                "$or": [
+                    {"deleted_at": None},
+                    {"deleted_at": {"$exists": False}},
+                ],
+            },
+            {"_id": 0, "total": 1, "amount_paid": 1},
+        ).to_list(5000)
+    except Exception:
+        return 0.0
+    s = 0.0
+    for r in rows:
+        t = float(r.get("total") or 0)
+        ap = float(r.get("amount_paid") or 0)
+        rem = t - ap
+        if rem > 0:
+            s += rem
+    return round(s, 2)
+
+
 async def _load_invoice(iid: str, tenant_id: str) -> Optional[Dict[str, Any]]:
     # Feb-2026 · P2 Item 3 — portal read-path guard. This helper feeds
     # both ``GET /invoices/{iid}/full`` (portal viewer aggregator) and
@@ -283,7 +352,9 @@ async def _build_viewer_payload(iid: str, tenant: dict, user: dict) -> Dict[str,
             "invoice_number": invoice_number,
             "invoice_date": invoice_date,
             "credit_available": round(credit_available, 2),
-            "outstanding_balance": round(float(inv.get("outstanding_balance") or 0), 2),
+            "outstanding_balance": await _compute_prior_open_balance(
+                bill_to.get("id"), tenant["id"], inv.get("id"),
+            ),
         },
         "line_items": line_items,
         "notes": notes,
@@ -408,7 +479,7 @@ async def get_invoice_pdf(iid: str,
             [Paragraph("Invoice #", label_r), Paragraph(str(hdr["invoice_number"]), value_r)],
             [Paragraph("Invoice Date", label_r), Paragraph(hdr["invoice_date"] or "", value_r)],
             [Paragraph("Credit Available", label_r), Paragraph(f"{hdr['credit_available']:.2f}", value_r)],
-            [Paragraph("Outstanding Balance", label_r), Paragraph(f"{hdr['outstanding_balance']:.2f}", value_r)],
+            [Paragraph("Prior Balance", label_r), Paragraph(f"{hdr['outstanding_balance']:.2f}", value_r)],
         ], colWidths=[1.3 * inch, 1.3 * inch]),
     ]
     header_t = Table([[company_block, right_block]],
@@ -527,7 +598,7 @@ async def get_invoice_pdf(iid: str,
         ["Customer", bt.get("name") or ""],
         ["Invoice #", str(hdr["invoice_number"])],
         ["Invoice Date", hdr["invoice_date"] or ""],
-        ["Outstanding Balance", f"{hdr['outstanding_balance']:.2f}"],
+        ["Prior Balance", f"{hdr['outstanding_balance']:.2f}"],
         ["This Invoice", f"{tot['this_invoice']:.2f}"],
         ["Total Due on Account", f"{tot['total_due']:.2f}"],
         ["Amount Paid", f"{tot['amount_paid']:.2f}"],

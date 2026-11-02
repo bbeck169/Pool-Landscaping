@@ -318,7 +318,7 @@ export default function InvoiceView({ invoiceId, printable = false, magicToken =
                 </td>
               </tr>
               <tr>
-                <td className="iv-kv-label">Outstanding Balance</td>
+                <td className="iv-kv-label">Prior Balance</td>
                 <td className="iv-kv-value" data-testid="invoice-outstanding-balance">
                   {formatCurrency(header.outstanding_balance)}
                 </td>
@@ -444,7 +444,7 @@ export default function InvoiceView({ invoiceId, printable = false, magicToken =
                 <tr><td>Customer</td><td>{bill_to.name}</td></tr>
                 <tr><td>Invoice #</td><td>{header.invoice_number}</td></tr>
                 <tr><td>Invoice Date</td><td>{header.invoice_date}</td></tr>
-                <tr><td>Outstanding Balance</td><td>{formatCurrency(header.outstanding_balance)}</td></tr>
+                <tr><td>Prior Balance</td><td>{formatCurrency(header.outstanding_balance)}</td></tr>
                 <tr><td>This Invoice</td><td>{formatCurrency(totals.this_invoice)}</td></tr>
                 <tr><td>Total Due on Account</td><td>{formatCurrency(totals.total_due)}</td></tr>
                 <tr><td>Amount Paid</td><td>{formatCurrency(totals.amount_paid)}</td></tr>
