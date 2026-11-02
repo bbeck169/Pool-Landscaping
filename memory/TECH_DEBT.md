@@ -4209,10 +4209,20 @@ mirrors the web tile but does NOT yet include `next_week`. Add parity:
   The suite loads, 4/6 pass (the 2 remaining failures are logged below). A scan of the 31 unmocked suites whose import
   graph touches calendar / gps / geofence modules found exactly 1 remaining ExpoTaskManager load failure, logged below.
 
-## TD-mobile-schedule-map-toggle-expo-task-manager-mock · OPEN · Nov-2026 (P3 · mobile test harness)
+## TD-mobile-schedule-map-toggle-expo-task-manager-mock · SHIPPED `0cce7ee2b` · Nov-2026 (P3 · mobile test harness)
 - Remnant of the native-module drift: `__tests__/schedule-map-toggle.test.tsx` still fails to load on
   `Cannot find native module 'ExpoTaskManager'`. Same 1-line inline mock as `cc198a287`. Kept out of B2 (scope was k32 +
   the 3 named suites).
+- **Shipped `0cce7ee2b`:** inline `jest.mock("expo-task-manager", () => ({ defineTask: jest.fn() }))` at
+  `schedule-map-toggle.test.tsx:29`, before the expo-router mock (same placement as k32). Suite now loads; 0/8 pass.
+  The post-load failures are a different drift, logged below as its own item.
+
+## TD-mobile-schedule-map-toggle-safe-area-mock · OPEN · Nov-2026 (P3 · mobile test harness)
+- After `0cce7ee2b`, all 8 tests fail "Unable to find node on an unmounted component". The error is thrown in
+  `<OptimizeRouteModal>`: `useSafeAreaInsets()` (+ `initialWindowMetrics`, added in `32904c02e`) with no
+  SafeAreaProvider and no `react-native-safe-area-context` mock in the suite.
+- Proof: a throwaway untracked copy with only a safe-area mock added (no-op provider, zero insets,
+  `initialWindowMetrics`) ran 8/8 green, then was deleted. Fix = that inline mock, test-only.
 
 ## TD-mobile-k32-tech-scoping-stale-assertions · OPEN · Nov-2026 (P3 · mobile tests)
 - `k32-tech-scoped-schedule` (after `cc198a287`): 2 failures ("technician" / alternate "tech" role) expect
