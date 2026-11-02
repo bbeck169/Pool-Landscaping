@@ -23,6 +23,11 @@ jest.mock("@/src/utils/storage", () => ({
 }));
 
 /* ── Minimal mocks for calendar dependencies ──────────────────────── */
+// Native module: the import graph reaches src/background/jobGeofence.ts:19
+// (via GpsConsentModal), which imports expo-task-manager. Same inline shape as
+// k32-tech-scoped-schedule / GpsTracker / phase37c-job-geofence.
+jest.mock("expo-task-manager", () => ({ defineTask: jest.fn() }));
+
 jest.mock("expo-router", () => ({
   useRouter: () => ({ push: jest.fn(), replace: jest.fn(), back: jest.fn() }),
   useFocusEffect: (cb: any) => {
