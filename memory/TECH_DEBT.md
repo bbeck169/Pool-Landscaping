@@ -4182,7 +4182,7 @@ mirrors the web tile but does NOT yet include `next_week`. Add parity:
   0 suites fail on `inputColors.bg` now; 11/15 load and pass (62 tests). The other 4 were masked by
   unrelated drift, logged below.
 
-## TD-mobile-expo-router-mock-useLocalSearchParams-drift · OPEN · Nov-2026 (P3 · mobile test harness)
+## TD-mobile-expo-router-mock-useLocalSearchParams-drift · SHIPPED `12a9e93bb` · Nov-2026 (P3 · mobile test harness)
 - Uncovered by `657eb1033`. These suites load, but their `jest.mock("expo-router")` has no `useLocalSearchParams`,
   which the screens now call at render: `customers-list-soft-deleted-chip` (8 failures, `app/(app)/customers.tsx:28`),
   `bulk-charge-ach-mobile` (3, invoices screen `:39`), `demo-login` (8, `app/login.tsx:48`).
@@ -4193,3 +4193,14 @@ mirrors the web tile but does NOT yet include `next_week`. Add parity:
   'ExpoTaskManager'` (its import graph reaches a gpsTracker / location module that imports `expo-task-manager`).
   Same root cause as `schedule-map-toggle`. Fix shape: `jest.mock("expo-task-manager", …)` (+ expo-location if needed)
   in the suite, or a shared jest setup mock.
+- **Shipped** `12a9e93bb` (inputColors sweep follow-on B1): `useLocalSearchParams: () => ({})` (canonical sibling
+  shape, 22 suites) added to the 3 expo-router mocks. bulk-charge-ach-mobile 3/3, demo-login 8/8;
+  customers-list-soft-deleted-chip loads, 4/8 (see TD below). Scan of all 54 suites that mock expo-router without
+  useLocalSearchParams: 0 more hit this error, so no remnants TD needed.
+
+## TD-mobile-customers-soft-deleted-chip-stale-assertions · OPEN · Nov-2026 (P3 · mobile tests)
+- `__tests__/customers-list-soft-deleted-chip.test.tsx`: 4 failures after `12a9e93bb` (chip visible for
+  admin / super_admin / owner; toggling refetches with include_deleted=true). Not mock drift: the toggle
+  `customers-filter-include-deleted` now lives inside the "More filters" sheet, admin-only "Administrative" group
+  (`app/(app)/customers.tsx:627-640`), so the tests must open the sheet first. "owner visible" also needs a
+  re-check against the current `isAdmin` gate. Test-logic update, operator call.
