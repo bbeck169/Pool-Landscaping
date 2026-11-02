@@ -156,7 +156,7 @@ export default function PortalServiceReportDetail() {
           <RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} />
         }
       >
-        {/* TD-68 — web PortalPageShell: white card on navy page */}
+        {/* TD-68 — web PortalPageShell: white card on the (light) portal page */}
         <PortalPageShell>
         {/* Header Card */}
         <View style={s.headerCard}>

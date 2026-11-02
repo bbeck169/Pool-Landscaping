@@ -91,7 +91,7 @@ export default function ReviewSubmitScreen() {
   if (loading) {
     return (
       <View style={s.root} testID="review-submit-loading">
-        <ActivityIndicator size="large" color="#FFFFFF" style={{ marginTop: 100 }} />
+        <ActivityIndicator size="large" color={colors.brand} style={{ marginTop: 100 }} />
       </View>
     );
   }
@@ -271,7 +271,7 @@ export default function ReviewSubmitScreen() {
 }
 
 const s = StyleSheet.create({
-  // TD-68 — web PortalPageShell: white card on the navy portal page.
+  // TD-68 — web PortalPageShell: white card on the (light) portal page.
   root: { flex: 1, backgroundColor: PORTAL_PAGE_BG },
   content: { ...portalShellCard, margin: spacing.lg, padding: spacing.xl, paddingBottom: spacing["3xl"] },
   stateCard: { ...portalShellCard, margin: spacing.lg, paddingBottom: spacing.xl },

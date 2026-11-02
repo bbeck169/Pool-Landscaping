@@ -5,6 +5,7 @@ import {
 } from "react-native";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
+import { PORTAL_PAGE_BG } from "@/src/components/portal/PortalPageShell";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useRouter } from "expo-router";
 
@@ -34,22 +35,25 @@ const CREDIT_BG = "#064E3B";
 // green, Business card = navy variant (web PORTAL_HERO_ACCENT).
 const NAVY_ACCENT_BG = "#1E3A8A";
 const NAVY_ACCENT_FG = "#DBEAFE";
-// Phase 25 (re-issue) · web parity e2a0d8a2e (Phase 23) — dark navy
-// portal-home chassis, hex values verbatim from web. Page + tiles share
-// #03002e; tiles separate via the #1E293B hairline + rounded-xl (12).
-const PORTAL_DARK_BG = "#03002e";
-const PORTAL_DARK_BORDER = "#1E293B";
+// Nov-2026 · full-light portal page (operator pick b, mobile-only;
+// supersedes the Phase 25 navy chassis from web e2a0d8a2e). Page root =
+// shared PORTAL_PAGE_BG (colors.surfaceSecondary #F4F4F5); section cards
+// (Next Service Day / Last Visit / Concierge / Referral / Business card)
+// = white in-palette cards with the #E4E4E7 hairline + rounded-xl (12).
+// Aliases of existing theme tokens, not new tokens.
+const PORTAL_CARD_BG = colors.surface;                 // #FFFFFF
+const PORTAL_CARD_BORDER = colors.border;              // #E4E4E7
 const PORTAL_TILE_RADIUS = 12;
-const PORTAL_TEXT = "#FFFFFF";
-const PORTAL_TEXT_MUTED = "rgba(255,255,255,0.7)";
-// Phase 24 glow → static soft white halo on every KPI tile (no hover on
-// touch). iOS reads shadow*, Android draws via elevation.
+const PORTAL_TEXT = colors.onSurface;                  // #09090B · 18.1:1 on page, 19.9:1 on card
+const PORTAL_TEXT_MUTED = colors.onSurfaceSecondary;   // #52525B · 7.0:1 on page, 7.7:1 on card
+// Phase 24 glow → on the light page a white halo is invisible, so KPI
+// tiles carry a soft dark lift instead (same #000 shadow family as
+// PortalPageShell's card). iOS reads shadow*, Android draws via elevation.
 // My Account tiles restyle (Nov-2026, operator ask, mobile-only): the KPI
 // stat tiles + Quick Action tiles leave the navy chassis for the light
 // in-palette card. Same "white card on the navy portal page" pattern as the
-// TD-68 portal screens (PortalPageShell). Page bg + section cards
-// (Next Service Day / Last Visit / Concierge / Referral / Business card)
-// keep the navy chassis. Aliases of existing theme tokens, not new tokens.
+// TD-68 portal screens (PortalPageShell). (Page bg + section cards went
+// light too in the Nov-2026 full-light pass above.)
 const TILE_BG = colors.surface;                       // #FFFFFF
 const TILE_BORDER = colors.border;                    // #E4E4E7
 const TILE_TEXT = colors.onSurface;                   // #09090B · 19.9:1 on white
@@ -57,8 +61,8 @@ const TILE_TEXT_MUTED = colors.onSurfaceSecondary;    // #52525B · 7.7:1 on whi
 // Quick Action labels stay on one line; shrink no further than 85% (13 → ~11pt).
 export const QA_LABEL_MIN_FONT_SCALE = 0.85;
 const KPI_GLOW = {
-  shadowColor: "#FFFFFF", shadowOpacity: 0.6, shadowRadius: 20,
-  shadowOffset: { width: 0, height: 0 }, elevation: 8,
+  shadowColor: "#000", shadowOpacity: 0.08, shadowRadius: 12,
+  shadowOffset: { width: 0, height: 4 }, elevation: 3,
 } as const;
 
 const TOUR_KEY = "portal_tour_v2_done";
@@ -556,7 +560,7 @@ const s = StyleSheet.create({
     justifyContent: "center",
     flexShrink: 0,
   },
-  root: { flex: 1, backgroundColor: PORTAL_DARK_BG },
+  root: { flex: 1, backgroundColor: PORTAL_PAGE_BG },
 
   // CTA Row
   ctaRow: { gap: 12, marginBottom: spacing.lg },
@@ -611,8 +615,8 @@ const s = StyleSheet.create({
   // Next Service
   nextCard: {
     flexDirection: "row", alignItems: "center", gap: spacing.md,
-    backgroundColor: PORTAL_DARK_BG, borderRadius: PORTAL_TILE_RADIUS, padding: spacing.md,
-    borderWidth: 1, borderColor: PORTAL_DARK_BORDER, marginBottom: spacing.lg,
+    backgroundColor: PORTAL_CARD_BG, borderRadius: PORTAL_TILE_RADIUS, padding: spacing.md,
+    borderWidth: 1, borderColor: PORTAL_CARD_BORDER, marginBottom: spacing.lg,
   },
   nextIcon: { width: 44, height: 44, borderRadius: radius.md, backgroundColor: colors.brandTertiary, alignItems: "center", justifyContent: "center" },
   nextLabel: { fontFamily: font.medium, fontSize: fontSize.sm, color: PORTAL_TEXT_MUTED },
@@ -639,28 +643,28 @@ const s = StyleSheet.create({
   // honours shadowColor).
   cardPressed: {
     backgroundColor: colors.surfaceSecondary,
-    shadowColor: "#FFFFFF", shadowOpacity: 0.6, shadowRadius: 20,
-    shadowOffset: { width: 0, height: 0 }, elevation: 8,
+    shadowColor: "#000", shadowOpacity: 0.12, shadowRadius: 16,
+    shadowOffset: { width: 0, height: 6 }, elevation: 6,
   },
 
   // Last Visit
   lastVisitCard: {
     flexDirection: "row", alignItems: "center", gap: spacing.md,
-    backgroundColor: PORTAL_DARK_BG, borderRadius: PORTAL_TILE_RADIUS, padding: spacing.md,
-    borderWidth: 1, borderColor: PORTAL_DARK_BORDER, marginBottom: spacing.lg,
+    backgroundColor: PORTAL_CARD_BG, borderRadius: PORTAL_TILE_RADIUS, padding: spacing.md,
+    borderWidth: 1, borderColor: PORTAL_CARD_BORDER, marginBottom: spacing.lg,
   },
 
   // Next Service Day
   nextServiceDayCard: {
-    backgroundColor: PORTAL_DARK_BG, borderRadius: PORTAL_TILE_RADIUS,
-    borderWidth: 1, borderColor: PORTAL_DARK_BORDER, marginBottom: spacing.lg,
+    backgroundColor: PORTAL_CARD_BG, borderRadius: PORTAL_TILE_RADIUS,
+    borderWidth: 1, borderColor: PORTAL_CARD_BORDER, marginBottom: spacing.lg,
     overflow: "hidden",
   },
   nextServiceDayHeader: {
     flexDirection: "row", alignItems: "center", gap: spacing.sm,
     paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
-    borderBottomWidth: 1, borderBottomColor: PORTAL_DARK_BORDER,
-    backgroundColor: PORTAL_DARK_BG,
+    borderBottomWidth: 1, borderBottomColor: PORTAL_CARD_BORDER,
+    backgroundColor: PORTAL_CARD_BG,
   },
   nextServiceDayIcon: {
     width: 36, height: 36, borderRadius: 18,
@@ -714,18 +718,18 @@ const s = StyleSheet.create({
   lastVisitDate: { fontFamily: font.regular, fontSize: fontSize.sm, color: PORTAL_TEXT_MUTED, marginTop: 1 },
 
   // Ask a Concierge
-  // Phase 25 — shared dark stat-tile chassis (#03002e + #1E293B + 12).
+  // Section-card chassis (white + #E4E4E7 hairline + 12) on the light page.
   conciergeWrap: {
-    backgroundColor: PORTAL_DARK_BG, borderRadius: PORTAL_TILE_RADIUS, borderWidth: 1,
-    borderColor: PORTAL_DARK_BORDER, padding: 18, marginBottom: spacing.lg,
+    backgroundColor: PORTAL_CARD_BG, borderRadius: PORTAL_TILE_RADIUS, borderWidth: 1,
+    borderColor: PORTAL_CARD_BORDER, padding: 18, marginBottom: spacing.lg,
   },
   conciergeHeader: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 4 },
   conciergeTitle: { fontFamily: font.bold, fontSize: fontSize.lg, color: PORTAL_TEXT, textTransform: "uppercase", letterSpacing: 1 },
   conciergeSubtitle: { fontFamily: font.regular, fontSize: fontSize.base, color: PORTAL_TEXT_MUTED, marginBottom: spacing.md, lineHeight: 20 },
   conciergeCard: {
     flexDirection: "row", alignItems: "center", gap: spacing.md,
-    backgroundColor: PORTAL_DARK_BG, borderWidth: 1,
-    borderColor: PORTAL_DARK_BORDER, borderRadius: PORTAL_TILE_RADIUS,
+    backgroundColor: PORTAL_CARD_BG, borderWidth: 1,
+    borderColor: PORTAL_CARD_BORDER, borderRadius: PORTAL_TILE_RADIUS,
     padding: spacing.md, marginTop: spacing.sm,
   },
   conciergeAvatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: colors.brandTertiary, alignItems: "center", justifyContent: "center", overflow: "hidden" },
@@ -745,8 +749,8 @@ const s = StyleSheet.create({
 
   // Refer a Friend
   referralWrap: {
-    backgroundColor: PORTAL_DARK_BG, borderRadius: PORTAL_TILE_RADIUS, borderWidth: 1,
-    borderColor: PORTAL_DARK_BORDER, padding: 20, marginBottom: spacing.lg,
+    backgroundColor: PORTAL_CARD_BG, borderRadius: PORTAL_TILE_RADIUS, borderWidth: 1,
+    borderColor: PORTAL_CARD_BORDER, padding: 20, marginBottom: spacing.lg,
     alignItems: "center",
   },
   referralTitle: { fontFamily: font.bold, fontSize: fontSize.xl, color: PORTAL_TEXT, marginTop: spacing.sm, textAlign: "center" },
@@ -760,8 +764,8 @@ const s = StyleSheet.create({
   // Business Card
   bizCard: {
     flexDirection: "row", alignItems: "center", gap: spacing.md,
-    backgroundColor: PORTAL_DARK_BG, borderRadius: PORTAL_TILE_RADIUS, padding: spacing.md,
-    borderWidth: 1, borderColor: PORTAL_DARK_BORDER, marginBottom: spacing.md,
+    backgroundColor: PORTAL_CARD_BG, borderRadius: PORTAL_TILE_RADIUS, padding: spacing.md,
+    borderWidth: 1, borderColor: PORTAL_CARD_BORDER, marginBottom: spacing.md,
   },
   bizCardIcon: { width: 44, height: 44, borderRadius: radius.md, backgroundColor: NAVY_ACCENT_BG, alignItems: "center", justifyContent: "center" },
   bizCardLabel: { fontFamily: font.semibold, fontSize: fontSize.lg, color: PORTAL_TEXT },

@@ -166,7 +166,7 @@ export default function PortalServiceReports() {
 }
 
 const s = StyleSheet.create({
-  // TD-68 — web PortalPageShell: white card on the navy portal page.
+  // TD-68 — web PortalPageShell: white card on the (light) portal page.
   root: { flex: 1, backgroundColor: PORTAL_PAGE_BG },
   shellList: { ...portalShellCard, margin: spacing.lg, paddingBottom: spacing["2xl"] },
   shellBox: { margin: spacing.lg },

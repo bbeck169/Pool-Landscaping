@@ -1,14 +1,21 @@
 /**
  * TD-68 (web c782fd23a) — portal theme bundle, mobile port of web
  * `components/portal/PortalPageShell.jsx`: content sits in a white
- * rounded card on the deep-navy portal page bg (the `/portal/home`
- * chassis, `PORTAL_DARK_BG` #03002e). Used by Service Reports list,
- * Service Report detail, and the portal review-submit flow.
+ * rounded card on the portal page bg. Used by Service Reports list,
+ * Service Report detail, the portal review-submit flow, and the
+ * /portal/home page root.
+ *
+ * Nov-2026 · full-light portal page (operator pick b, mobile-only): the
+ * page bg moves from navy #03002e to colors.surfaceSecondary #F4F4F5, the
+ * same light page as every other portal screen (invoices, appointments…).
+ * No dark mode. Card unchanged (white + border + soft shadow).
  */
 import React from "react";
 import { View, StyleSheet, type ViewStyle, type StyleProp } from "react-native";
 
-export const PORTAL_PAGE_BG = "#03002e";
+import { colors } from "@/src/theme";
+
+export const PORTAL_PAGE_BG = colors.surfaceSecondary; // #F4F4F5
 
 export const portalShellCard: ViewStyle = {
   backgroundColor: "#FFFFFF",

@@ -36,8 +36,15 @@ const WHITE_CARD = { backgroundColor: "#FFFFFF", borderRadius: 24, borderColor: 
 
 beforeEach(() => (api.get as jest.Mock).mockReset());
 
-it("navy page constant matches portal home (#03002e)", () => {
-  expect(PORTAL_PAGE_BG).toBe("#03002e");
+// Nov-2026 full-light portal page: shared page bg = colors.surfaceSecondary.
+it("page constant is the light portal page (#F4F4F5) and portal home uses it", () => {
+  expect(PORTAL_PAGE_BG).toBe("#F4F4F5");
+  const fs = require("fs"); const path = require("path");
+  const home = fs.readFileSync(path.resolve(__dirname, "../app/portal/home.tsx"), "utf8");
+  expect(home).toContain("root: { flex: 1, backgroundColor: PORTAL_PAGE_BG },");
+  expect(home).not.toMatch(/#03002e/i);
+  const rs = fs.readFileSync(path.resolve(__dirname, "../app/portal/review-submit.tsx"), "utf8");
+  expect(rs).toContain('<ActivityIndicator size="large" color={colors.brand}');
 });
 
 it("SR list: list content is the white shell card on navy; no search input (TD-75)", async () => {
@@ -47,7 +54,7 @@ it("SR list: list content is the white shell card on navy; no search input (TD-7
   const q = render(<PortalServiceReports />);
   const list = await waitFor(() => q.getByTestId("portal-service-reports-grouped"));
   expect(flat(list.props.contentContainerStyle)).toMatchObject(WHITE_CARD);
-  expect(flat(q.toJSON() && (q.toJSON() as any).props.style).backgroundColor).toBe("#03002e");
+  expect(flat(q.toJSON() && (q.toJSON() as any).props.style).backgroundColor).toBe("#F4F4F5");
   expect(q.UNSAFE_queryAllByProps({ placeholder: "Search notes, name, address…" })).toHaveLength(0);
 });
 
@@ -74,14 +81,14 @@ it("SR detail: content inside the shell card on navy", async () => {
   const q = render(<PortalServiceReportDetail />);
   const card = await waitFor(() => q.getByTestId("portal-page-shell-card"));
   expect(flat(card.props.style)).toMatchObject(WHITE_CARD);
-  expect(flat((q.toJSON() as any).props.style).backgroundColor).toBe("#03002e");
+  expect(flat((q.toJSON() as any).props.style).backgroundColor).toBe("#F4F4F5");
 });
 
 it("Review submit (portal Reviews parallel): form sits in the white card on navy", async () => {
   (api.get as jest.Mock).mockResolvedValue({ company_name: "Aqua", tech_name: "Mike" });
   const q = render(<ReviewSubmit />);
   const root = await waitFor(() => q.getByTestId("review-submit-form"));
-  expect(flat(root.props.style).backgroundColor).toBe("#03002e");
+  expect(flat(root.props.style).backgroundColor).toBe("#F4F4F5");
   const scroll = root.findByType(ScrollView);
   expect(flat(scroll.props.contentContainerStyle)).toMatchObject(WHITE_CARD);
 });

@@ -24,8 +24,11 @@ import { render, fireEvent, waitFor } from "@testing-library/react-native";
 import { colors } from "@/src/theme";
 
 // Locked web hex values (Phase 23 / 24) — verbatim.
-const PORTAL_DARK = "#03002e";
-const PORTAL_BORDER = "#1E293B";
+// Nov-2026 full-light portal page: page = colors.surfaceSecondary, section
+// cards = colors.surface + colors.border (navy chassis retired).
+const PORTAL_PAGE = colors.surfaceSecondary; // #F4F4F5
+const PORTAL_CARD = colors.surface;          // #FFFFFF
+const PORTAL_BORDER = colors.border;         // #E4E4E7
 const TILE_BG = colors.surface;      // #FFFFFF
 const TILE_BORDER = colors.border;   // #E4E4E7
 
@@ -78,17 +81,17 @@ async function mount(dash: any = {}, creditCents = 0) {
 }
 
 describe("Phase 25 · portal home dark chassis (web Phase 23)", () => {
-  it("3a. page background is dark navy #03002e", async () => {
+  it("3a. page background is the light portal page (colors.surfaceSecondary)", async () => {
     const r = await mount();
-    expect(flat(r.getByTestId("portal-home-root")).backgroundColor).toBe(PORTAL_DARK);
+    expect(flat(r.getByTestId("portal-home-root")).backgroundColor).toBe(PORTAL_PAGE);
   });
 
-  it("3. Concierge / Referral / Business card keep the dark chassis; KPI tiles are light", async () => {
+  it("3. Concierge / Referral / Business card are white section cards; KPI tiles are light", async () => {
     const r = await mount();
     await waitFor(() => r.getByTestId("portal-ai-section"));
     for (const id of ["portal-ai-section", "portal-referral-section", "portal-card-business"]) {
       const st = flat(r.getByTestId(id));
-      expect([id, st.backgroundColor]).toEqual([id, PORTAL_DARK]);
+      expect([id, st.backgroundColor]).toEqual([id, PORTAL_CARD]);
       expect([id, st.borderColor]).toEqual([id, PORTAL_BORDER]);
       expect([id, st.borderWidth]).toEqual([id, 1]);
       expect([id, st.borderRadius]).toEqual([id, 12]);
@@ -135,7 +138,8 @@ describe("Phase 25 · portal home dark chassis (web Phase 23)", () => {
     };
     expect(ratio(colors.onSurface, TILE_BG)).toBeGreaterThanOrEqual(4.5);
     expect(ratio(colors.onSurfaceSecondary, TILE_BG)).toBeGreaterThanOrEqual(4.5);
-    expect(ratio(colors.onSurface, colors.surfaceSecondary)).toBeGreaterThanOrEqual(4.5); // pressed
+    expect(ratio(colors.onSurface, colors.surfaceSecondary)).toBeGreaterThanOrEqual(4.5); // pressed + page
+    expect(ratio(colors.onSurfaceSecondary, colors.surfaceSecondary)).toBeGreaterThanOrEqual(4.5); // muted on page
     expect(ratio(colors.brand, colors.brandTertiary)).toBeGreaterThanOrEqual(3);
   });
 
@@ -188,17 +192,17 @@ describe("Phase 25 · dynamic stat-tile colors + contrast", () => {
 });
 
 describe("Phase 25 · glow (web Phase 24 hover → mobile)", () => {
-  it.each([[0, 0], [45, 5500]])("7a. every KPI tile carries the static soft white glow (past_due=%p, credit=%p)", async (pd, cr) => {
+  it.each([[0, 0], [45, 5500]])("7a. every KPI tile carries the static soft dark lift (past_due=%p, credit=%p)", async (pd, cr) => {
     const r = await mount({ past_due: pd }, cr);
     if (cr) await waitFor(() => expect(flat(r.getByTestId("portal-stat-credit-tile")).backgroundColor).toBe("#064E3B"));
     for (const id of ["portal-stat-balance-tile", "portal-stat-past-due-tile", "portal-stat-credit-tile"]) {
       const st = flat(r.getByTestId(id));
       expect([id, st.shadowColor, st.shadowOpacity, st.shadowRadius, st.elevation])
-        .toEqual([id, "#FFFFFF", 0.6, 20, 8]);
+        .toEqual([id, "#000", 0.08, 12, 3]);
     }
   });
 
-  it("7. pressIn applies the white halo, pressOut clears it", async () => {
+  it("7. pressIn applies the dark lift + pressed bg, pressOut clears it", async () => {
     const r = await mount();
     const tiles = r.getAllByTestId(/^portal-card-(?!business)/);
     expect(tiles.length).toBeGreaterThan(0);
@@ -206,9 +210,10 @@ describe("Phase 25 · glow (web Phase 24 hover → mobile)", () => {
     expect(flat(t).shadowColor).toBeUndefined();
     fireEvent(t, "pressIn");
     const pressed = flat(r.getByTestId(t.props.testID));
-    expect(pressed.shadowColor).toBe("#FFFFFF");
-    expect(pressed.shadowOpacity).toBe(0.6);
-    expect(pressed.shadowRadius).toBe(20);
+    expect(pressed.shadowColor).toBe("#000");
+    expect(pressed.shadowOpacity).toBe(0.12);
+    expect(pressed.shadowRadius).toBe(16);
+    expect(pressed.backgroundColor).toBe(colors.surfaceSecondary);
     fireEvent(r.getByTestId(t.props.testID), "pressOut");
     expect(flat(r.getByTestId(t.props.testID)).shadowColor).toBeUndefined();
   });
