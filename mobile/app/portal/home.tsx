@@ -54,7 +54,7 @@ const TILE_BG = colors.surface;                       // #FFFFFF
 const TILE_BORDER = colors.border;                    // #E4E4E7
 const TILE_TEXT = colors.onSurface;                   // #09090B · 19.9:1 on white
 const TILE_TEXT_MUTED = colors.onSurfaceSecondary;    // #52525B · 7.7:1 on white
-// Quick Action labels stay on one line; shrink no further than 85% (14 → 11.9pt).
+// Quick Action labels stay on one line; shrink no further than 85% (13 → ~11pt).
 export const QA_LABEL_MIN_FONT_SCALE = 0.85;
 const KPI_GLOW = {
   shadowColor: "#FFFFFF", shadowOpacity: 0.6, shadowRadius: 20,
@@ -627,7 +627,10 @@ const s = StyleSheet.create({
     borderRadius: PORTAL_TILE_RADIUS, padding: spacing.md, borderWidth: 1, borderColor: TILE_BORDER,
   },
   cardIcon: { width: 36, height: 36, borderRadius: radius.sm, backgroundColor: colors.brandTertiary, alignItems: "center", justifyContent: "center", marginBottom: spacing.sm },
-  cardLabel: { fontFamily: font.semibold, fontSize: fontSize.base, color: TILE_TEXT },
+  // 13pt: the longest label ("Payment Method") measured 116px at 14pt vs a
+  // 112px label box at 320dp; 13pt ≈ 108px fits without relying on
+  // adjustsFontSizeToFit (ignored on web).
+  cardLabel: { fontFamily: font.semibold, fontSize: 13, color: TILE_TEXT },
   cardBadge: { position: "absolute", top: spacing.md, right: spacing.md, minWidth: 22, height: 22, paddingHorizontal: 6, borderRadius: 11, backgroundColor: colors.error, alignItems: "center", justifyContent: "center" },
   cardBadgeText: { color: "#fff", fontFamily: font.bold, fontSize: fontSize.sm },
   // Phase 25 · web Phase 24 hover glow → mobile press glow (onPressIn).

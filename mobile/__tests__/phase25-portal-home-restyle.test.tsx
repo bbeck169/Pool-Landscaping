@@ -118,6 +118,7 @@ describe("Phase 25 · portal home dark chassis (web Phase 23)", () => {
       expect(label.props.adjustsFontSizeToFit).toBe(true);
       expect(label.props.minimumFontScale).toBe(0.85);
       expect(flat(label).color).toBe(colors.onSurface);
+      expect(flat(label).fontSize).toBe(13);
     }
     expect(r.getByTestId("portal-qa-label-appts").props.children).toBe("Appointments");
   });
