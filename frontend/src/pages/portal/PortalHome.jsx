@@ -430,8 +430,14 @@ export default function PortalHome() {
                 label="Next Pool Service"
                 icon={CalendarClock}
                 value={fmtServiceDate(summary.next_pool_service.date)}
-                sub={summary.next_pool_service.service_type || ""}
-                tooltip={`${fmtServiceDate(summary.next_pool_service.date)} · ${summary.next_pool_service.service_type || ""}`}
+                sub={summary.next_pool_service.title
+                       || summary.next_pool_service.service_type
+                       || ""}
+                tooltip={`${fmtServiceDate(summary.next_pool_service.date)} · ${
+                  summary.next_pool_service.title
+                    || summary.next_pool_service.service_type
+                    || ""
+                }`}
                 onClick={() =>
                   summary.next_pool_service.job_id
                     ? navigate(`/portal/services/${summary.next_pool_service.job_id}`)
@@ -445,8 +451,14 @@ export default function PortalHome() {
                 label="Next Landscape Service"
                 icon={CalendarClock}
                 value={fmtServiceDate(summary.next_landscape_service.date)}
-                sub={summary.next_landscape_service.service_type || ""}
-                tooltip={`${fmtServiceDate(summary.next_landscape_service.date)} · ${summary.next_landscape_service.service_type || ""}`}
+                sub={summary.next_landscape_service.title
+                       || summary.next_landscape_service.service_type
+                       || ""}
+                tooltip={`${fmtServiceDate(summary.next_landscape_service.date)} · ${
+                  summary.next_landscape_service.title
+                    || summary.next_landscape_service.service_type
+                    || ""
+                }`}
                 onClick={() =>
                   summary.next_landscape_service.job_id
                     ? navigate(`/portal/services/${summary.next_landscape_service.job_id}`)
