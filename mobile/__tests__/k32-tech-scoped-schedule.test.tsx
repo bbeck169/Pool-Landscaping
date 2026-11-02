@@ -74,6 +74,11 @@ jest.mock("@/src/lib/offline/cache", () => ({
   initCache: jest.fn(() => Promise.resolve()),
 }));
 
+// Native module: the import graph reaches src/background/jobGeofence.ts:19
+// (via GpsConsentModal), which imports expo-task-manager. Same inline shape as
+// GpsTracker / phase37c-job-geofence / phase-syncjobgeofences-startup.
+jest.mock("expo-task-manager", () => ({ defineTask: jest.fn() }));
+
 jest.mock("expo-router", () => ({
   useRouter: () => ({ push: jest.fn(), replace: jest.fn(), back: jest.fn() }),
   useFocusEffect: (cb: any) => {
