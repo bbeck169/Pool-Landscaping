@@ -2469,3 +2469,10 @@
 - **Changes**: PORTAL_PAGE_BG #03002e → colors.surfaceSecondary. Consumers (SR list, SR detail, review-submit) were already white-card + light Header; the review-submit spinner went white → brand. /portal/home root uses the shared PORTAL_PAGE_BG; section cards → colors.surface / colors.border with onSurface / onSurfaceSecondary text; white glow / press halo → soft #000 lift. No <StatusBar> in the app and all portal Headers are light, so no status-bar change was needed.
 - **Checks**: phase25 + td68 updated, 58/58 with next-service-day / td69 / td91. tsc 627. Live (customer@, 390pt): 0 navy elements on home / SR list / review-submit; SR detail not reachable live (no reports for that customer), covered by td68.
 - **Pre-existing contrast**: white on brand 4.10, white on success 3.30 → TD-mobile-brand-button-white-text-contrast.
+
+## Iteration 193 — Templates Library Phase 3 (Mobile) re-dispatch: re-verification only
+- **Commit**: `3503a0572` (PRD doc only) · this doc commit
+- **Date**: 2026-11-02
+- **Finding**: Phase 3 already shipped in `77affb86c`. 45 commits since the last re-verify (f19cc3945); none touch templates web/BE/mobile code or shared deps. No code changes made.
+- **Checks**: Jest templates-* 45/45. API smoke (defs 23/8/8, full create→patch→finalize→409→pdf→duplicate→delete). Expo-web offline E2E as mike: pending-sync queued, Finalize blocked, flushed 10.0 s after reconnect, server title updated, finalize + PDF 200.
+- **Files modified**: memory/PRD.md, memory/mobile/commit_log.md
