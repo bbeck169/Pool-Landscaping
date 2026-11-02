@@ -4123,3 +4123,9 @@ mirrors the web tile but does NOT yet include `next_week`. Add parity:
   reset-token-expired, route-entry-classifier, send-to-customer-sheet.
 - **Fix shape**: add the same `inputColors` line to each mock (test-only). Post-load assertion failures,
   if any, need a separate look; they were masked by the load failure.
+
+## TD-portal-status-hook-dedupe · OPEN · Nov-2026 (P3 · mobile)
+- Customer profile now fetches `GET /customers/{id}/portal-status` twice: once in `app/customer/[id].tsx` `load()`
+  (header "View as customer" gate, `92b0746de`) and once in `PortalAccessPanel.loadStatus` (bundled with
+  portal-history). Confirmed live: 2 GETs per profile open. Fix shape: a `usePortalStatus(customerId)` hook or
+  lift the status into the profile and pass it to the panel. Keep the panel's `hasLogin` / `active` defaults.
