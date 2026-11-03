@@ -168,3 +168,65 @@ describe("Portal Home — Next Service Day Tile", () => {
     });
   });
 });
+
+// TD-portal-next-service-missing-tile-mobile-parity — /customer-portal/summary
+// fallback (projected from recurring templates) when /dashboard has none.
+function mockWithSummary(dashboard: any, summary: any) {
+  mockApiGet.mockImplementation((url: string) => {
+    if (url === "/customer-portal/summary") {
+      return summary instanceof Error ? Promise.reject(summary) : Promise.resolve(summary);
+    }
+    if (url === "/dashboard") return Promise.resolve(dashboard);
+    if (url.includes("credits/balance")) return Promise.resolve({ balance_cents: 0 });
+    return Promise.resolve({});
+  });
+}
+
+const PROJECTED_SUMMARY = {
+  next_pool_service: { job_id: null, date: "2026-11-16", service_type: "Pool Cleaning", title: null, projected: true },
+  next_landscape_service: { job_id: null, date: "2026-12-22", service_type: "Monthly Landscaping", title: null, projected: true },
+};
+
+describe("Portal Home — Next Service Day summary fallback", () => {
+  beforeEach(() => { jest.clearAllMocks(); });
+
+  it("dashboard empty + projected summary → projected tile (sooner entry) → tap opens request-service", async () => {
+    mockWithSummary(DASHBOARD_NO_NEXT, PROJECTED_SUMMARY);
+    const { getByTestId, getByText, queryByTestId } = render(<PortalHome />);
+    await waitFor(() => expect(getByTestId("portal-next-service-day-projected")).toBeTruthy());
+    expect(getByText("Scheduled · Pool Cleaning")).toBeTruthy();
+    expect(getByText("16")).toBeTruthy();
+    expect(queryByTestId("portal-next-service-day-empty")).toBeNull();
+    expect(queryByTestId("portal-next-service-day-detail")).toBeNull();
+    fireEvent.press(getByTestId("portal-next-service-day-projected"));
+    expect(mockPush).toHaveBeenCalledWith("/request-service");
+  });
+
+  it("summary entry with a job_id → tap opens /job/<id>", async () => {
+    mockWithSummary(DASHBOARD_NO_NEXT, {
+      next_pool_service: { job_id: "job-777", date: "2026-11-20", service_type: "Pool Cleaning", title: "Weekly Pool" },
+      next_landscape_service: null,
+    });
+    const { getByTestId, getByText } = render(<PortalHome />);
+    await waitFor(() => expect(getByTestId("portal-next-service-day-projected")).toBeTruthy());
+    expect(getByText("Weekly Pool")).toBeTruthy();
+    fireEvent.press(getByTestId("portal-next-service-day-projected"));
+    expect(mockPush).toHaveBeenCalledWith("/job/job-777");
+  });
+
+  it("summary request fails → empty state still renders", async () => {
+    mockWithSummary(DASHBOARD_NO_NEXT, new Error("network"));
+    const { getByTestId, queryByTestId } = render(<PortalHome />);
+    await waitFor(() => expect(getByTestId("portal-next-service-day-empty")).toBeTruthy());
+    expect(queryByTestId("portal-next-service-day-projected")).toBeNull();
+  });
+
+  it("materialized /dashboard job wins over the summary", async () => {
+    mockWithSummary(DASHBOARD_WITH_NEXT, PROJECTED_SUMMARY);
+    const { getByTestId, queryByTestId } = render(<PortalHome />);
+    await waitFor(() => expect(getByTestId("portal-next-service-day-detail")).toBeTruthy());
+    expect(queryByTestId("portal-next-service-day-projected")).toBeNull();
+    fireEvent.press(getByTestId("portal-next-service-day-detail"));
+    expect(mockPush).toHaveBeenCalledWith("/job/job-123");
+  });
+});

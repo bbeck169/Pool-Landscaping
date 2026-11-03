@@ -143,16 +143,22 @@ export default function PortalHome() {
   const [tenantPhone, setTenantPhone] = useState("(602) 887-4400");
   const [showTour, setShowTour] = useState(false);
   const [creditBalance, setCreditBalance] = useState(0);
+  const [summaryNext, setSummaryNext] = useState<any>(null);
 
   const load = useCallback(async () => {
     try {
-      const [dashboard, aiRes, cfg, creditsRes] = await Promise.all([
+      const [dashboard, aiRes, cfg, creditsRes, summary] = await Promise.all([
         api.get("/dashboard"),
         api.get("/customer-portal/ai-employees").catch(() => ({ employees: [] })),
         api.get("/config/public").catch(() => ({})),
         api.get("/customer-portal/credits/balance").catch(() => ({ balance_cents: 0 })),
+        // TD-portal-next-service-missing-tile-mobile-parity — the summary
+        // projects the next visit from recurring templates when no job is
+        // materialized yet. Only used when /dashboard has no next_service.
+        api.get("/customer-portal/summary").catch(() => null),
       ]);
       setData(dashboard);
+      setSummaryNext(pickSummaryNext(summary));
       setAiEmployees(aiRes?.employees || aiRes || []);
       if (cfg?.tenant_phone) setTenantPhone(cfg.tenant_phone);
       setCreditBalance(((creditsRes?.balance_cents || 0) / 100));
@@ -348,6 +354,27 @@ export default function PortalHome() {
                 </View>
                 <Ionicons name="chevron-forward" size={18} color={PORTAL_TEXT_MUTED} />
               </Pressable>
+            ) : summaryNext ? (
+              // Fallback (materialized /dashboard job always wins above).
+              // Projected entries have job_id null → request-service, like web.
+              <Pressable
+                style={s.nextServiceDayBody}
+                onPress={() => (summaryNext.job_id
+                  ? router.push(`/job/${summaryNext.job_id}`)
+                  : router.push("/request-service" as any))}
+                testID="portal-next-service-day-projected"
+              >
+                <SummaryDateBox date={summaryNext.date} />
+                <View style={{ flex: 1 }}>
+                  <Text style={s.nextServiceDayName} numberOfLines={1}>
+                    {summaryNext.title || summaryNext.service_type || "Service visit"}
+                  </Text>
+                  <Text style={[s.nextServiceDayMeta, { marginTop: 2 }]}>
+                    Scheduled · {summaryNext.service_type || "Service"}
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={18} color={PORTAL_TEXT_MUTED} />
+              </Pressable>
             ) : (
               <View style={s.nextServiceDayEmpty} testID="portal-next-service-day-empty">
                 <Ionicons name="calendar-clear-outline" size={28} color={PORTAL_TEXT_MUTED} />
@@ -536,6 +563,28 @@ function QuickActionTile({ sec, badge, onPress }: { sec: any; badge: number; onP
         {sec.label}
       </Text>
     </Pressable>
+  );
+}
+
+/** Sooner of the summary's pool / landscape entries (legacy next_service as fallback). */
+function pickSummaryNext(summary: any) {
+  if (!summary) return null;
+  const opts = [summary.next_pool_service, summary.next_landscape_service].filter((e) => e && e.date);
+  if (!opts.length) return summary.next_service || null;
+  return opts.sort((a, b) => String(a.date).localeCompare(String(b.date)))[0];
+}
+
+/** Date box for summary entries — "YYYY-MM-DD" parsed as a local date (no UTC day shift). */
+function SummaryDateBox({ date }: { date?: string }) {
+  const raw = String(date || "");
+  const d = new Date(/^\d{4}-\d{2}-\d{2}$/.test(raw) ? `${raw}T00:00:00` : raw);
+  const ok = !isNaN(d.getTime());
+  return (
+    <View style={s.nextServiceDayDateBox}>
+      <Text style={s.nextServiceDayDateNum}>{ok ? d.getDate() : "--"}</Text>
+      <Text style={s.nextServiceDayDateMonth}>{ok ? d.toLocaleDateString("en-US", { month: "short" }) : "---"}</Text>
+      <Text style={s.nextServiceDayDateDay}>{ok ? d.toLocaleDateString("en-US", { weekday: "short" }) : "---"}</Text>
+    </View>
   );
 }
 
