@@ -42,6 +42,18 @@ import ConvertToInvoiceButton from "@/src/components/quotes/ConvertToInvoiceButt
 
 const fmt = (n: number | undefined) => "$" + (n || 0).toFixed(2);
 
+const ESTIMATE_DECLINE_NUDGE_COPY =
+  "You can customize your estimate by clicking Decline on any line item before approving the final estimate.";
+
+/** Muted helper above the line items (web: estimate-line-items-instructional-copy). */
+function DeclineNudge() {
+  return (
+    <Text style={s.declineNudge} testID="estimate-line-items-instructional-copy">
+      {ESTIMATE_DECLINE_NUDGE_COPY}
+    </Text>
+  );
+}
+
 export default function EstimateViewScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
@@ -281,6 +293,11 @@ export default function EstimateViewScreen() {
   const { company, bill_to, property_address, header, line_items, totals, notes, title, decision, accepted_at, declined_at, as_customer, customer_view } = data;
   const canLineDecline = actionable && !locked && !!magicToken;
   const showGrouped = Boolean(as_customer && customer_view?.groups?.length);
+  // TD-estimate-public-instructional-copy-mobile-parity (web a5d4c58f9) —
+  // web gate `as_customer && actionable && !locked`. The itemized branch also
+  // needs canLineDecline (magic token) so the nudge never shows without the
+  // per-line Decline buttons it refers to. Mobile has no printable/flipbook mode.
+  const showDeclineNudge = Boolean(as_customer) && actionable && !locked;
   const brandPrimary = branding?.brand_primary_hex || "#0B4A6F";
 
   return (
@@ -399,6 +416,7 @@ export default function EstimateViewScreen() {
         {showGrouped ? (
           <View style={s.card} testID="estimate-grouped-lines">
             <Text style={s.sectionLabel}>SERVICES</Text>
+            {showDeclineNudge ? <DeclineNudge /> : null}
             {(customer_view!.groups || []).length === 0 ? (
               <Text style={s.muted}>No services on this estimate.</Text>
             ) : (
@@ -463,6 +481,7 @@ export default function EstimateViewScreen() {
         ) : (
         <View style={s.card} testID="estimate-line-items">
           <Text style={s.sectionLabel}>LINE ITEMS</Text>
+          {showDeclineNudge && canLineDecline ? <DeclineNudge /> : null}
           {line_items.length === 0 ? (
             <Text style={s.muted}>No line items</Text>
           ) : (
@@ -716,6 +735,7 @@ const s = StyleSheet.create({
   companyName: { fontFamily: font.bold, fontSize: fontSize.base, color: colors.onSurface },
   billName: { fontFamily: font.semibold, fontSize: fontSize.base, color: colors.onSurface },
   muted: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, marginTop: 2 },
+  declineNudge: { fontFamily: font.regular, fontSize: 12, color: "#64748b", textAlign: "left", marginBottom: 12 },
   // Line items — Phase A (stacked cards)
   lineCard: { backgroundColor: "#F8FAFC", borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, padding: spacing.md, marginBottom: spacing.sm },
   lineCardDeclined: { opacity: 0.55 },
