@@ -2476,3 +2476,10 @@
 - **Finding**: Phase 3 already shipped in `77affb86c`. 45 commits since the last re-verify (f19cc3945); none touch templates web/BE/mobile code or shared deps. No code changes made.
 - **Checks**: Jest templates-* 45/45. API smoke (defs 23/8/8, full create→patch→finalize→409→pdf→duplicate→delete). Expo-web offline E2E as mike: pending-sync queued, Finalize blocked, flushed 10.0 s after reconnect, server title updated, finalize + PDF 200.
 - **Files modified**: memory/PRD.md, memory/mobile/commit_log.md
+
+## Iteration 194 — schedule-map-toggle ExpoTaskManager mock · Next Service Day summary fallback
+- **Commits**: `0cce7ee2b` (map-toggle mock) + `67bef7a93` (TECH_DEBT) · `d80dfc836` (TD-portal-next-service-missing-tile-mobile-parity; cron auto-commit, wrong message, content = my 2 files) · this doc commit
+- **Date**: 2026-11-03
+- **Changes**: schedule-map-toggle now loads (0/8; safe-area mock drift logged P3). Portal home Next Service Day falls back to `/customer-portal/summary` (projected entries) when `/dashboard.next_service` is null; job_id null → /request-service.
+- **Files modified**: mobile/__tests__/schedule-map-toggle.test.tsx, mobile/app/portal/home.tsx, mobile/__tests__/next-service-day.test.tsx
+- **Web files referenced**: frontend/src/pages/portal/PortalHome.jsx (418-466)

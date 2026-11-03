@@ -4250,3 +4250,16 @@ mirrors the web tile but does NOT yet include `next_week`. Add parity:
     (pin markup changed; stale selectors / colour lookup).
   - `phase41-5c-mobile-ringcentral-settings` (1): save PUT path expects 1 Alert call, got 0 (toast vs Alert drift).
   - `phase53e-mobile-ebit-tile` (1): "Unable to find node on an unmounted component" in the error/retry test.
+
+## TD-portal-next-service-missing-tile-mobile-parity · SHIPPED `d80dfc836` · Nov-2026 (mobile parity for 81bfb5e93)
+- Mobile Next Service Day tile (`app/portal/home.tsx`) read only `/dashboard.next_service` (materialized jobs), so
+  customers whose next visit is only projected from a recurring template saw the empty state. Option A shipped:
+  `load()` adds `/customer-portal/summary` (`.catch(() => null)`). Materialized `/dashboard` entry still wins (path +
+  testIDs unchanged); else the sooner of `next_pool_service` / `next_landscape_service` renders
+  `portal-next-service-day-projected` (local-parsed `date`, `title || service_type`, "Scheduled · {service_type}").
+  Tap: `job_id ? /job/<id> : /request-service`.
+- **SHA note (TD-61):** the cron auto-committed exactly these 2 files (+112 / -1) as `d80dfc836` with an unrelated
+  message ("Phase 0 Audit Report — TD-estimate-public-approve-quote-button") before my `git commit --only` ran.
+  Content verified == the tested worktree. History not rewritten.
+- Tests: next-service-day 8/8 (4 new), phase25 15/15. tsc 627 (baseline).
+- Out of scope / still open: mobile `/job/{id}` vs web `/portal/services/{id}` tap-target parity.
