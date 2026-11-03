@@ -299,6 +299,25 @@ export default function EstimateViewScreen() {
   // per-line Decline buttons it refers to. Mobile has no printable/flipbook mode.
   const showDeclineNudge = Boolean(as_customer) && actionable && !locked;
   const brandPrimary = branding?.brand_primary_hex || "#0B4A6F";
+  // Web 032c28f0a gate (`showCustomerToolbar && !locked && actionable`).
+  // Admin / non-customer keeps the inline toolbar (unchanged).
+  const stickyToolbar = Boolean(as_customer) && actionable && !locked;
+  const toolbarRow = (
+    <View style={[s.actionRow, stickyToolbar && { marginBottom: 0 }]}>
+      <TouchableOpacity style={s.approveBtn} onPress={onApprove} disabled={busy} testID="estimate-toolbar-customer-approve">
+        <Ionicons name="checkmark" size={18} color="#fff" />
+        <Text style={s.approveBtnText}>Approve</Text>
+      </TouchableOpacity>
+      <TouchableOpacity style={s.toolbarDeclineBtn} onPress={() => setDeclineOpen(true)} disabled={busy} testID="estimate-toolbar-customer-decline">
+        <Ionicons name="close" size={18} color="#fff" />
+        <Text style={s.toolbarDeclineBtnText}>Decline</Text>
+      </TouchableOpacity>
+      <TouchableOpacity style={s.changesBtn} onPress={() => setChangesOpen(true)} disabled={busy} testID="estimate-changes-btn">
+        <Ionicons name="chatbubble-ellipses" size={16} color={colors.brand} />
+        <Text style={s.changesBtnText}>Changes</Text>
+      </TouchableOpacity>
+    </View>
+  );
 
   return (
     <View style={[s.root, { paddingTop: insets.top }]}>
@@ -360,23 +379,10 @@ export default function EstimateViewScreen() {
           </View>
         </View>
 
-        {/* Top-level Approve/Decline toolbar — Phase A */}
-        {!locked && actionable && (
-          <View style={s.actionRow}>
-            <TouchableOpacity style={s.approveBtn} onPress={onApprove} disabled={busy} testID="estimate-toolbar-customer-approve">
-              <Ionicons name="checkmark" size={18} color="#fff" />
-              <Text style={s.approveBtnText}>Approve</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={s.toolbarDeclineBtn} onPress={() => setDeclineOpen(true)} disabled={busy} testID="estimate-toolbar-customer-decline">
-              <Ionicons name="close" size={18} color="#fff" />
-              <Text style={s.toolbarDeclineBtnText}>Decline</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={s.changesBtn} onPress={() => setChangesOpen(true)} disabled={busy} testID="estimate-changes-btn">
-              <Ionicons name="chatbubble-ellipses" size={16} color={colors.brand} />
-              <Text style={s.changesBtnText}>Changes</Text>
-            </TouchableOpacity>
-          </View>
-        )}
+        {/* Top-level Approve/Decline toolbar — Phase A. Customer surface:
+            pinned in the sticky footer below the ScrollView instead
+            (TD-estimate-toolbar-sticky-footer-mobile-parity). */}
+        {!locked && actionable && !stickyToolbar && toolbarRow}
 
         {/* Legacy action buttons for non-actionable, non-locked states */}
         {!locked && !actionable && (
@@ -619,6 +625,15 @@ export default function EstimateViewScreen() {
         </View>
       </ScrollView>
 
+      {/* Sticky footer — flex sibling below the ScrollView (RN has no
+          position: sticky), so it never overlaps content; bottom inset
+          clears the iOS home indicator. */}
+      {stickyToolbar ? (
+        <View style={[s.stickyFooter, { paddingBottom: Math.max(insets.bottom, spacing.md) }]} testID="estimate-toolbar-sticky-footer">
+          {toolbarRow}
+        </View>
+      ) : null}
+
       {/* Per-line decline modal — Phase A */}
       <Modal visible={lineDeclineOpen !== null} transparent animationType="fade" testID="estimate-line-item-decline-dialog">
         <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={s.modalOverlay}>
@@ -726,6 +741,13 @@ const s = StyleSheet.create({
   totalLabel: { fontFamily: font.medium, fontSize: fontSize.sm, color: colors.muted, marginTop: 2 },
   // Phase A — Approve (GREEN) / Decline (RED) toolbar
   actionRow: { flexDirection: "row", gap: spacing.sm, marginBottom: spacing.md },
+  stickyFooter: {
+    paddingHorizontal: spacing.lg, paddingTop: spacing.md,
+    backgroundColor: "rgba(255,255,255,0.96)",
+    borderTopWidth: 1, borderTopColor: "rgba(15,23,42,0.08)",
+    shadowColor: "#0F172A", shadowOpacity: 0.08, shadowRadius: 12, shadowOffset: { width: 0, height: -4 },
+    elevation: 8,
+  },
   approveBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, backgroundColor: colors.success, paddingVertical: 14, borderRadius: radius.md },
   approveBtnText: { fontFamily: font.bold, fontSize: fontSize.base, color: "#fff" },
   toolbarDeclineBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, backgroundColor: "#DC2626", paddingVertical: 14, borderRadius: radius.md },
