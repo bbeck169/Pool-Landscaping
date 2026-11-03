@@ -2483,3 +2483,10 @@
 - **Changes**: schedule-map-toggle now loads (0/8; safe-area mock drift logged P3). Portal home Next Service Day falls back to `/customer-portal/summary` (projected entries) when `/dashboard.next_service` is null; job_id null → /request-service.
 - **Files modified**: mobile/__tests__/schedule-map-toggle.test.tsx, mobile/app/portal/home.tsx, mobile/__tests__/next-service-day.test.tsx
 - **Web files referenced**: frontend/src/pages/portal/PortalHome.jsx (418-466)
+
+## Iteration 195 — Estimate view Decline instructional copy (web a5d4c58f9 parity)
+- **Commit**: `634d07387` (cron auto-commit, mislabeled; content = my 2 files) · this doc commit
+- **Date**: 2026-11-03
+- **Changes**: DeclineNudge helper line above line items in both grouped + itemized branches; gate as_customer && actionable && !locked (+ canLineDecline itemized).
+- **Files modified**: mobile/app/estimate-view/[id].tsx, mobile/__tests__/estimate-view-instructional-copy.test.tsx
+- **Web files referenced**: frontend/src/components/EstimateView.jsx (287, 403, 737-758), frontend/src/components/estimates/EstimateFlipbook.jsx (537-560)

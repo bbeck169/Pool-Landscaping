@@ -4263,3 +4263,16 @@ mirrors the web tile but does NOT yet include `next_week`. Add parity:
   Content verified == the tested worktree. History not rewritten.
 - Tests: next-service-day 8/8 (4 new), phase25 15/15. tsc 627 (baseline).
 - Out of scope / still open: mobile `/job/{id}` vs web `/portal/services/{id}` tap-target parity.
+
+## TD-estimate-public-instructional-copy-mobile-parity · SHIPPED `634d07387` · Nov-2026 (mobile parity for a5d4c58f9)
+- `app/estimate-view/[id].tsx`: locked copy "You can customize your estimate by clicking Decline on any line item
+  before approving the final estimate." as the first element of the line-items card (grouped SERVICES + itemized
+  LINE ITEMS), directly after the PREPARED FOR card's "Property:" line. testID `estimate-line-items-instructional-copy`
+  (= web). Muted 12pt #64748b, left-aligned.
+- Gate: `as_customer && actionable && !locked`; itemized branch also `canLineDecline` (magic token) so the copy never
+  shows without per-line Decline buttons. Mobile has no printable / flipbook renderer.
+- **SHA note (TD-61):** cron auto-committed exactly these 2 files (+165 / -0) as `634d07387` with an unrelated message
+  ("## Shipped — TD-estimate-toolbar-sticky-footer") while my commit was blocked on `.git/index.lock`. Content
+  verified == tested worktree. History not rewritten.
+- Tests: new `estimate-view-instructional-copy` 10/10; parity-phase-a, form-template-surfaces, task6-terms-mobile,
+  pb2-line-item-overrides green (34/34). tsc 627 (baseline).
