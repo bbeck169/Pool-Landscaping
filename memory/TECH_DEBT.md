@@ -4297,3 +4297,24 @@ mirrors the web tile but does NOT yet include `next_week`. Add parity:
   "16 NOV MON · Pool Cleaning · Scheduled · Pool Cleaning", empty/detail absent, tap → `/request-service`.
 - Coverage: `next-service-day.test.tsx` is session-agnostic (api mocked by URL); no impersonation-specific input
   reaches the tile → no gap, no test added.
+
+## TD-dashboard-outstanding-legacy-field-retire · OPEN · P3 BE · Feb-2026
+- **Reporter:** `TD-admin-dashboard-outstanding-invoices-tile` ship (`03121b822`).
+- `backend/routers/dashboard.py:73-82` still computes a lossier `outstanding` field for the admin branch:
+  `sum(q["total"] for q in db.quotes.find({tenant, doc_type:"invoice", payment_status:"unpaid"}))`.
+  Returned as `data.outstanding` at `:359`. Semantics are inferior to the canonical AR aggregate at
+  `routers/payments_summary.py:91,231-300` (`_LIVE_STATUSES = {"issued", "sent", "accepted", "past_due"}`,
+  `balance = total - amount_paid > 0`, `payment_status != "paid"` belt-and-braces).
+- **Why it still exists:** removed as a day-one blocker in `03121b822` — the `RevenueChart` "due $X" badge was
+  rewired to the canonical `outstanding_total` from `/api/payments/summary` with a legacy fallback only while the
+  lifted fetch is still loading. The legacy field is kept in the `/dashboard` response for shape stability (web +
+  mobile consumers of `data.outstanding`).
+- **Deliverable when touched:**
+  1. Audit all consumers of `data.outstanding` across web (`/app/frontend`) and mobile (`/app/mobile`). Only known
+     web consumer post-ship is `Dashboard.jsx`'s `RevenueChart` fallback (loading-only). Mobile pass-through is
+     unknown — grep `data\.outstanding` + mobile dashboard surfaces.
+  2. If zero live consumers remain, remove the `outstanding` + `outstanding_docs` lines at `dashboard.py:73-82` and
+     `:359`. Keep the customer branch's `outstanding` at `:42-45` + `:63` (that one is scoped to the single customer
+     and feeds the portal — different semantics, different retirement cycle).
+  3. Update any `/api/dashboard` shape-stability tests (`backend/tests/`) to drop the field assertion.
+- **Blocking signal:** none; a natural `/dashboard` touch will fold this in. Not worth a dedicated ticket.
