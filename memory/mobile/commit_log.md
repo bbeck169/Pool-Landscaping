@@ -2497,3 +2497,10 @@
 - **Changes**: customer Approve/Decline/Changes toolbar pinned below ScrollView with bottom safe-area inset; admin inline unchanged. Task 2 verification only (no code).
 - **Files modified**: mobile/app/estimate-view/[id].tsx, mobile/__tests__/estimate-view-sticky-toolbar.test.tsx
 - **Web files referenced**: frontend/src/components/EstimateView.jsx (423, 588-619)
+
+## Iteration 197 — Outstanding Invoices dashboard tile (web 03121b822 parity)
+- **Commit**: `24873b58e` · this doc commit
+- **Date**: 2026-11-03
+- **Changes**: new OutstandingInvoicesTile; lifted /payments/summary feeds tile + RevenueChart pill; manager standalone display-only row; invoices.tsx ?filter param. Filed P3s: manager-invoices-403-fallback, action-cards-status-param-dead.
+- **Files modified**: mobile/app/(app)/index.tsx, mobile/app/invoices.tsx, mobile/src/components/dashboard/OutstandingInvoicesTile.tsx, mobile/__tests__/outstanding-invoices-tile.test.tsx
+- **Web files referenced**: frontend/src/components/dashboard/OutstandingInvoicesTile.jsx, frontend/src/pages/admin/Dashboard.jsx (563-605)

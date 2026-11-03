@@ -4318,3 +4318,26 @@ mirrors the web tile but does NOT yet include `next_week`. Add parity:
      and feeds the portal — different semantics, different retirement cycle).
   3. Update any `/api/dashboard` shape-stability tests (`backend/tests/`) to drop the field assertion.
 - **Blocking signal:** none; a natural `/dashboard` touch will fold this in. Not worth a dedicated ticket.
+
+## TD-admin-dashboard-outstanding-invoices-tile-mobile-parity · SHIPPED `24873b58e` · Nov-2026 (mobile parity for 03121b822)
+- A1 + B1 + C1. NEW `src/components/dashboard/OutstandingInvoicesTile.tsx`. `app/(app)/index.tsx` lifts
+  `/payments/summary` (admin / super_admin / manager) → tile + RevenueChart "due" pill (legacy `data.outstanding` only
+  while pending / failed); PaymentsWidget's own fetch untouched. admin / super_admin: first row in Revenue Insights,
+  tap → `/invoices {filter: "outstanding"}`; manager: standalone row, display-only. `app/invoices.tsx` honours
+  `?filter=<chip key>`. Tests: `outstanding-invoices-tile` 15/15; dashboard re-runs at baseline.
+- Live (Expo web): admin tile + pill both "$5,252.40 · 41 invoices" (legacy `/dashboard.outstanding` = $45,681.57, so
+  the pill value changed by design, same as web); tap → `/invoices?filter=outstanding` with Outstanding chip active.
+  manager@: standalone tile, no Revenue Insights, no chevron, tap no-op.
+
+## TD-mobile-manager-invoices-403-fallback · OPEN · Nov-2026 (P3 · mobile + BE decision)
+- Mobile `/invoices` reads `/invoices/overview` (`routers/quotes.py:2438`, `require_admin` = admin / super_admin /
+  owner). Managers see the Outstanding Invoices tile (`/payments/summary` allows manager) but it's display-only
+  because the list would 403 (screen falls back to cache / "All clear"). Fix options: widen the overview gate to
+  `require_admin_or_manager`, OR give managers a fallback list (e.g. `/quotes?payment_status=unpaid`, which web uses).
+  Then make the manager tile tappable (`OutstandingInvoicesTile` `onPress`).
+
+## TD-dashboard-action-cards-status-param-dead · OPEN · Nov-2026 (P3 · mobile)
+- `src/components/dashboard/DashboardActionCards.tsx:25-26` pushes `/invoices` with `{status: "unpaid"}` /
+  `{status: "overdue"}`; `app/invoices.tsx` ignores `status` (reads only `customer_id` + new `filter`), so both
+  cards land on "All". Settle one param convention (`filter` now exists: unpaid → `outstanding`, overdue →
+  `past_due`) and update the cards + `phase39b` assertion (`:191`).
