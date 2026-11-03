@@ -35,8 +35,10 @@ export default function Invoices() {
   const router = useRouter();
   const { showToast } = useToast();
   const [data, setData] = useState<any>({ summary: null, invoices: [] });
-  const [filter, setFilter] = useState("all");
-  const params = useLocalSearchParams<{ customer_id?: string }>();
+  const params = useLocalSearchParams<{ customer_id?: string; filter?: string }>();
+  // TD-admin-dashboard-outstanding-invoices-tile-mobile-parity — `?filter=<key>`
+  // pre-selects a known chip (Dashboard Outstanding tile → "outstanding").
+  const [filter, setFilter] = useState(() => FILTERS.some((f) => f.key === params.filter) ? String(params.filter) : "all");
   const [custFilter, setCustFilter] = useState<string | null>(
     params.customer_id ? String(params.customer_id) : null,
   );

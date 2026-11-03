@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { View, Text, StyleSheet, ScrollView, RefreshControl, Pressable, Platform, Alert, useWindowDimensions } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useRouter, Redirect } from "expo-router";
@@ -34,6 +34,7 @@ import RoutingCostTile from "@/src/components/dashboard/RoutingCostTile";
 import WarrantiesExpiringTile from "@/src/components/dashboard/WarrantiesExpiringTile";
 import TeamCpoReadinessWidget from "@/src/components/dashboard/TeamCpoReadinessWidget";
 import RecommendationsQueueWidget from "@/src/components/dashboard/RecommendationsQueueWidget";
+import OutstandingInvoicesTile from "@/src/components/dashboard/OutstandingInvoicesTile";
 
 // Dashboard parity · web Dashboard.jsx KPI grid (order, labels, data-testids,
 // deep-links). `href(isAdmin)` — web's /admin/jobs is AdminOnly.
@@ -82,11 +83,24 @@ export default function Dashboard() {
   // `refetch` is stable (deps = [execute], execute deps = [key, enabled, staleTime]).
   const refetch = dashQ.refetch;
 
+  // TD-admin-dashboard-outstanding-invoices-tile-mobile-parity (web
+  // 03121b822) — canonical `/payments/summary` lifted to the screen so the
+  // Outstanding Invoices tile and the RevenueChart "due" pill read ONE
+  // payload. null = loading, undefined = failed (web's three states).
+  // BE gate is admin / super_admin / manager. PaymentsWidget keeps its own fetch.
+  const [paymentsSummary, setPaymentsSummary] = useState<any>(null);
+  const loadPaymentsSummary = useCallback(() => {
+    if (!isManagerPlus) return;
+    api.get("/payments/summary").then(setPaymentsSummary).catch(() => setPaymentsSummary(undefined));
+  }, [isManagerPlus]);
+  useEffect(() => { loadPaymentsSummary(); }, [loadPaymentsSummary]);
+
   const onRefresh = useCallback(() => {
     setRefreshing(true);
     refetch();
+    loadPaymentsSummary();
     setTimeout(() => setRefreshing(false), 500);
-  }, [refetch]);
+  }, [refetch, loadPaymentsSummary]);
 
   // Technicians don't have a Dashboard tab — send them to their Today's Schedule.
   if (user?.role === "technician") return <Redirect href="/(app)/today" />;
@@ -148,11 +162,20 @@ export default function Dashboard() {
       <ScrollView
         testID="dashboard-scroll"
         contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing["3xl"] }}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); refetch(); }} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); refetch(); loadPaymentsSummary(); }} />}
       >
         {/* Phase 39A · section order mirrors web Dashboard.jsx top → bottom.
             Phase 39B · Mass Messaging CTA (admin / super_admin; self-guards). */}
         {isRevenueAdmin ? <MassMessagingCard /> : null}
+
+        {/* Manager: Revenue Insights is hidden (admin-only endpoints), so the
+            Outstanding Invoices tile renders standalone in the same spot,
+            display-only (`/invoices/overview` is admin-only → 403). */}
+        {isManagerPlus && !isRevenueAdmin ? (
+          <View style={styles.outstandingRow} testID="outstanding-invoices-tile-row">
+            <OutstandingInvoicesTile summary={paymentsSummary} />
+          </View>
+        ) : null}
 
         {/* Revenue insights — shared range filter + two donuts (web
             ``revenue-tiles-section``). Backend is admin/super_admin only. */}
@@ -161,6 +184,13 @@ export default function Dashboard() {
             <View style={styles.revenueHead}>
               <Text style={styles.revenueTitle}>Revenue insights</Text>
               <RevenueDateRangeFilter onChange={setRevenueRange} />
+            </View>
+            {/* Web 03121b822 · all-time Outstanding Invoices, above the donuts. */}
+            <View style={styles.outstandingRow} testID="outstanding-invoices-tile-row">
+              <OutstandingInvoicesTile
+                summary={paymentsSummary}
+                onPress={() => router.push({ pathname: "/invoices", params: { filter: "outstanding" } } as any)}
+              />
             </View>
             {/* TD-84 b2 · web `uncategorized-banner` (count > 0) above the donuts. */}
             <UncategorizedBanner />
@@ -232,7 +262,15 @@ export default function Dashboard() {
 
         <ReferralRevenueTile />
 
-        <RevenueChart series={data.revenue_series || []} outstanding={data.outstanding ?? 0} />
+        {/* Canonical `/payments/summary` outstanding_total (same source as the
+            tile); legacy `/dashboard` value only while that fetch is pending
+            or unavailable to this role. */}
+        <RevenueChart
+          series={data.revenue_series || []}
+          outstanding={paymentsSummary && paymentsSummary.outstanding_total != null
+            ? paymentsSummary.outstanding_total
+            : data.outstanding ?? 0}
+        />
 
         <PaymentsWidget onOpen={() => router.push("/payments")} onOpenInvoice={(id: string) => router.push(`/quote/${id}`)} />
 
@@ -758,6 +796,7 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
   revenueSection: { marginBottom: spacing.sm },
+  outstandingRow: { marginBottom: spacing.md },
   revenueHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: spacing.sm, marginBottom: spacing.md },
   revenueTitle: { fontFamily: font.bold, fontSize: fontSize.lg, color: colors.onSurface },
   mobileExtras: { marginTop: spacing.xl },
