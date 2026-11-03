@@ -40,6 +40,7 @@ import RevenueForecastTile from "@/components/dashboard/RevenueForecastTile";
 import IncomeByServiceCategoryTile from "@/components/dashboard/IncomeByServiceCategoryTile";
 import ServiceCategoryTileRow from "@/components/dashboard/ServiceCategoryTileRow";
 import EbitTile from "@/components/dashboard/EbitTile";
+import OutstandingInvoicesTile from "@/components/dashboard/OutstandingInvoicesTile";
 // Phase GLOBAL-SEARCH-UNIFY · Feb-2026 — the previous
 // Feb-2026 · Restore visible universal search bar — the Dashboard
 // hint button was retired now that the primary search surface
@@ -478,6 +479,20 @@ export default function AdminDashboard() {
   const [revenueRange, setRevenueRange] = useState(null);
   // Feb-2026 · Income-category enforcement — banner data.
   const [uncategorized, setUncategorized] = useState(null);
+  // TD-admin-dashboard-outstanding-invoices-tile · Feb-2026 — the
+  // ``/payments/summary`` fetch is lifted to the page level so the
+  // new Outstanding Invoices tile at the top of Revenue Insights
+  // AND the ``RevenueChart`` outstanding badge both read the
+  // canonical ``outstanding_total`` from a single response.
+  // Three states: ``null`` while loading, ``undefined`` after a
+  // failure, populated object on success.
+  const [paymentsSummary, setPaymentsSummary] = useState(null);
+  useEffect(() => {
+    api
+      .get("/payments/summary")
+      .then(setPaymentsSummary)
+      .catch(() => setPaymentsSummary(undefined));
+  }, []);
   useEffect(() => {
     api.get("/reports/uncategorized-count")
       .then(setUncategorized)
@@ -572,6 +587,20 @@ export default function AdminDashboard() {
             <span className="text-xs font-bold underline">Review →</span>
           </button>
         ) : null}
+        {/* TD-admin-dashboard-outstanding-invoices-tile · Feb-2026 —
+            All-time Outstanding Invoices tile.  Mounted ABOVE the
+            donut grid so Outstanding reads first in the Revenue
+            Insights block.  Standalone row (no sibling) at this
+            breakpoint; grid is single-column on mobile.  Clicking
+            deep-links into the Invoices list filtered to unpaid.
+            Shares its ``summary`` payload with ``RevenueChart``
+            (badge below) so the two surfaces can never diverge. */}
+        <div className="mb-4" data-testid="outstanding-invoices-tile-row">
+          <OutstandingInvoicesTile
+            summary={paymentsSummary}
+            onClick={() => navigate("/quotes?payment_status=unpaid")}
+          />
+        </div>
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <RevenueByCategoryTile range={revenueRange} />
           <IncomeByServiceCategoryTile range={revenueRange} />
@@ -899,7 +928,31 @@ export default function AdminDashboard() {
       {/* Revenue chart + payments */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
         {data ? (
-          <RevenueChart series={data.revenue_series || []} outstanding={data.outstanding} />
+          <RevenueChart
+            series={data.revenue_series || []}
+            /* TD-admin-dashboard-outstanding-invoices-tile ·
+               Feb-2026 — read the canonical ``outstanding_total``
+               from ``/payments/summary`` (lifted into
+               ``paymentsSummary`` state above) instead of the
+               legacy ``data.outstanding`` from ``/dashboard``.
+               The two aggregates can diverge whenever an invoice
+               has ``payment_status in {"issued", "partially_paid"}``
+               — the canonical AR filter in
+               ``routers/payments_summary.py`` catches those; the
+               legacy ``/dashboard`` admin branch does not.  The
+               legacy BE field is intentionally left in the
+               ``/dashboard`` response for shape stability; a
+               separate ``TD-dashboard-outstanding-legacy-field-
+               retire`` ticket owns its removal.  Falls back to
+               the legacy value only while the lifted fetch is
+               still loading so the badge is never empty on a
+               cold render. */
+            outstanding={
+              paymentsSummary && paymentsSummary.outstanding_total != null
+                ? paymentsSummary.outstanding_total
+                : data.outstanding
+            }
+          />
         ) : (
           <Skeleton style={{ height: 320 }} />
         )}
