@@ -2490,3 +2490,10 @@
 - **Changes**: DeclineNudge helper line above line items in both grouped + itemized branches; gate as_customer && actionable && !locked (+ canLineDecline itemized).
 - **Files modified**: mobile/app/estimate-view/[id].tsx, mobile/__tests__/estimate-view-instructional-copy.test.tsx
 - **Web files referenced**: frontend/src/components/EstimateView.jsx (287, 403, 737-758), frontend/src/components/estimates/EstimateFlipbook.jsx (537-560)
+
+## Iteration 196 — Estimate sticky customer toolbar (web 032c28f0a parity) · Next Service impersonation verify
+- **Commit**: `b1ccff1e9` (sticky footer) · this doc commit
+- **Date**: 2026-11-03
+- **Changes**: customer Approve/Decline/Changes toolbar pinned below ScrollView with bottom safe-area inset; admin inline unchanged. Task 2 verification only (no code).
+- **Files modified**: mobile/app/estimate-view/[id].tsx, mobile/__tests__/estimate-view-sticky-toolbar.test.tsx
+- **Web files referenced**: frontend/src/components/EstimateView.jsx (423, 588-619)

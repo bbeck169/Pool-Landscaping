@@ -4276,3 +4276,24 @@ mirrors the web tile but does NOT yet include `next_week`. Add parity:
   verified == tested worktree. History not rewritten.
 - Tests: new `estimate-view-instructional-copy` 10/10; parity-phase-a, form-template-surfaces, task6-terms-mobile,
   pb2-line-item-overrides green (34/34). tsc 627 (baseline).
+
+## TD-estimate-toolbar-sticky-footer-mobile-parity · SHIPPED `b1ccff1e9` · Nov-2026 (mobile parity for 032c28f0a)
+- `app/estimate-view/[id].tsx`: Approve / Decline / Changes row moved into `estimate-toolbar-sticky-footer`, a flex
+  sibling below the ScrollView (RN has no `position: sticky`). paddingBottom = max(insets.bottom, 16). Gate
+  `as_customer && actionable && !locked` (web `showCustomerToolbar && !locked && actionable`). Admin keeps the inline
+  toolbar (unchanged; parity-phase-a uses `as_customer: false`). One shared JSX subtree → testIDs + handlers unchanged.
+- Tests: `estimate-view-sticky-toolbar` 9/9 + 5 estimate-view re-runs (43/43). Lint clean.
+- Not visually verified on Expo web: the preview DB has no sent/viewed estimates (only converted/draft) and I did not
+  create/send one (would notify a customer).
+
+## TD-portal-next-service-missing-tile · mobile "as customer" E2E verification · Nov-2026 (no code)
+- Two mobile paths: (1) "View as customer" (`src/lib/portalViewAsCustomer.ts`) opens the WEB portal in an in-app
+  browser, so mobile home.tsx is not involved; (2) "Switch to customer view" (`app/customer/[id].tsx:388-397` →
+  `useAuth().startImpersonation`, `src/auth.tsx:249-257`) stores the impersonation access token as the Bearer token
+  (no cookie) and routes to `/portal/home`. `home.tsx` reads only `user` / `logout` from useAuth and has no
+  impersonation branching, so its `/dashboard` + `/customer-portal/summary` calls are identical to a real customer's.
+- Live (Expo web, admin → customer ea3e34c4 "Preview Customer0164", 25 past jobs, monthly pool + landscape templates
+  last_generated_through Oct): "Viewing as … · Exit to Admin" banner, `portal-next-service-day-projected`
+  "16 NOV MON · Pool Cleaning · Scheduled · Pool Cleaning", empty/detail absent, tap → `/request-service`.
+- Coverage: `next-service-day.test.tsx` is session-agnostic (api mocked by URL); no impersonation-specific input
+  reaches the tile → no gap, no test added.
