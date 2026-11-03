@@ -4341,3 +4341,34 @@ mirrors the web tile but does NOT yet include `next_week`. Add parity:
   `{status: "overdue"}`; `app/invoices.tsx` ignores `status` (reads only `customer_id` + new `filter`), so both
   cards land on "All". Settle one param convention (`filter` now exists: unpaid → `outstanding`, overdue →
   `past_due`) and update the cards + `phase39b` assertion (`:191`).
+
+## TD-dashboard-property-count-tiles-test-stale · OPEN · P3 FE test · Feb-2026
+- **Reporter:** `TD-admin-dashboard-outstanding-invoices-tile` ship (`03121b822`) — surfaced during the post-ship sweep; verified pre-existing on a clean tree via `git stash push -- frontend/src/pages/admin/Dashboard.jsx && yarn vitest run src/test/dashboard-property-count-tiles.test.jsx` (same 1/9 fail).
+- **File / case:** `frontend/src/test/dashboard-property-count-tiles.test.jsx::Dashboard · Property-count tiles (P2 #6) → renders the 'properties' sublabel on all three category tiles (Ticket V honest-UX)`.
+- **Observed symptom:** `AssertionError: expected '777customersPool Customers' to match /properties/`. Rendered sublabel is `"customers"`; test still expects `/properties/`.
+- **Root cause (triage):** Ticket U / Ticket V (Feb-2026) rewired the Pool / Landscaping / Both Service Customers tiles to the active-customer property-pivot source and renamed the sublabel from `"properties"` → `"customers"` at `Dashboard.jsx:721, 732, 743` to match the "Customers" business label. The test's three `expect(…textContent).toMatch(/properties/)` assertions at `dashboard-property-count-tiles.test.jsx:256-258` were not updated at the time.
+- **Fix shape (test-only, one file, ~3 lines):** change `/properties/` → `/customers/` in the three assertions in `dashboard-property-count-tiles.test.jsx:256-258`. No source change. Re-run `yarn vitest run src/test/dashboard-property-count-tiles.test.jsx` — should flip 1 fail → 0 fail across 9 cases.
+- **Blocking signal:** none; test-hygiene only, zero runtime impact. Fold into the next natural touch of `Dashboard.jsx` or any P2 #6 KPI-grid work.
+
+## TD-customer-portal-slice3-ach-placeholder-short-circuit · OPEN · P3 BE test · Feb-2026
+- **Reporter:** `TD-portal-next-service-missing-tile` ship (`81bfb5e93`) — surfaced in the related-suite sweep; verified pre-existing on a clean tree via `git stash push -- backend/routers/customer_portal.py backend/tests/test_customer_portal_summary_next_service_split.py && pytest backend/tests/test_customer_portal_slice3.py::test_ach_link_session_placeholder_key_short_circuits` (same failure).
+- **File / case:** `backend/tests/test_customer_portal_slice3.py::test_ach_link_session_placeholder_key_short_circuits`.
+- **Observed symptom:** `AssertionError: placeholder must be rejected` — the test asserts that an ACH link-session request made against a placeholder Stripe key short-circuits (rejects without calling Stripe); current code accepts the request.
+- **Root cause (hypothesis, needs re-read):** either (a) the ACH link-session route's placeholder-key guard was removed / weakened in a Stripe-adjacent sweep (Phase 47d restoration, Lumino experiment retirement, or TD-stripe-webhook-mark-invoice-paid), OR (b) the test's expected key sentinel (`"sk_test_placeholder…"` or similar) no longer matches the current `env.STRIPE_SECRET_KEY` test fixture. Equal probability until the route is re-read.
+- **Fix shape:** pre-audit required. (1) `grep -rn "placeholder\|_is_placeholder\|STRIPE_SECRET_KEY" backend/routers/ backend/services/stripe*` to find the current short-circuit guard. (2) Read the ACH link-session route to confirm whether the guard still fires. (3) If guard was legitimately removed → delete the test case + file a security review note. (4) If guard still fires but test's key sentinel drifted → update the test fixture. (5) If the guard was accidentally removed → restore it, add a regression lock. Single file either way (test file OR one BE route).
+- **Blocking signal:** none; test-only drift, no portal flow impacted (placeholder keys never ship to prod).
+
+## TD-customer-portal-slice3-service-request-minimal-payload · OPEN · P3 BE test · Feb-2026
+- **Reporter:** `TD-portal-next-service-missing-tile` ship (`81bfb5e93`) — surfaced in the related-suite sweep; same pre-existing verification as the previous entry (stash + rerun → same failure on clean tree).
+- **File / case:** `backend/tests/test_customer_portal_slice3.py::test_service_request_minimal_payload_ok`.
+- **Observed symptom:** the service-request POST route accepts a minimal payload (title + description only) but returns a different normalized shape than the test expects. The test expects `"Not specified"` as the normalized `service_type` default when the field is omitted; current code returns `"general_request"`.
+- **Root cause (hypothesis, needs re-read):** a sibling ticket renamed the `service_type` default from `"Not specified"` → `"general_request"` as part of a service-request taxonomy consolidation (likely paired with the "general_request" bucket on the Leads surface or the admin service-requests list filter chips) without updating the Slice-3 test. Alternative: new required-field schema reject upstream and the request never reaches the normalization step. Needs the POST handler re-read to confirm.
+- **Fix shape:** pre-audit required. (1) `grep -rn "general_request\|service_type.*Not specified\|'Not specified'" backend/routers/ backend/services/` to locate the normalization. (2) Confirm whether `"general_request"` is the canonical default now. (3) If yes → update the test's expected string to `"general_request"` (single line change). (4) If no → the handler regressed and needs restoration. Most likely path is (3).
+- **Blocking signal:** none; test-only drift, portal `/customer-portal/service-requests` POST still works for real customers (minimal-payload path returns a 2xx, just with a different default string).
+
+## TD-triage-pre-existing-test-failures-nov2026 · SHIPPED · docs-only
+Context triage pass filing the three P3 entries above (`TD-dashboard-property-count-tiles-test-stale`,
+`TD-customer-portal-slice3-ach-placeholder-short-circuit`,
+`TD-customer-portal-slice3-service-request-minimal-payload`) so they survive context compaction.
+No code or test files modified in this ship. All three were verified pre-existing via scoped
+`git stash` + rerun on a clean tree in prior sessions.
