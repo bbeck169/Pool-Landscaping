@@ -263,6 +263,116 @@ async def get_portal_summary(
     next_pool_service = _as_service(_next_pool_job)
     next_landscape_service = _as_service(_next_landscape_job)
 
+    # TD-portal-next-service-missing-tile · Feb-2026 — projection
+    # fallback.  The materialized-``jobs`` query above only matches
+    # rows the nightly cron / instant-generation (14-day horizon)
+    # has already laid down.  Templates whose ``start_date`` is more
+    # than 14 days out are completely invisible to the cron (gate at
+    # ``recurring_jobs.run_recurring_job_generator`` line ~2411) —
+    # so an admin who creates "Monthly Landscape Maintenance" with a
+    # start_date 30 days away ships a correct template that renders
+    # on the admin UI (90-day projection at recurring_jobs.py:720-25)
+    # but is INVISIBLE on the portal until ~17 days before the first
+    # occurrence materializes.  Mirror the admin-UI projection
+    # convention here so the portal and admin stay consistent: for
+    # whichever side (pool/landscape) is still ``None`` after the
+    # materialized split, project the next upcoming date from the
+    # customer's active recurring templates.
+    #
+    # Rules
+    # -----
+    # * Materialized ALWAYS wins — projection only fills the gap.
+    # * Tenant + customer scope IDENTICAL to the materialized query
+    #   above — never widen scope.
+    # * Honour ``last_generated_through`` so templates in the
+    #   "has_jobs_but_none_future" state (cron advanced, all mat'd
+    #   jobs completed) don't re-emit a stale date.
+    # * Projected entries carry ``projected: True`` and ``job_id: None``
+    #   so the FE click handler falls back to ``/portal/request-service``
+    #   (``PortalHome.jsx:442-466`` already handles the missing
+    #   ``job_id`` case gracefully — no FE change).
+    if next_pool_service is None or next_landscape_service is None:
+        from datetime import date as _date_cls, timedelta as _timedelta
+        from routers.recurring_jobs import (
+            _next_occurrences as _rj_next_occurrences,
+            _parse_date as _rj_parse_date,
+        )
+
+        _today_d = _date_cls.fromisoformat(today)
+        _proj_horizon = _today_d + _timedelta(days=90)
+        # Keep the Mongo query minimal — small per-customer cardinality
+        # lets us post-filter in Python without a perf concern, and
+        # avoids awkward grammar for the ``stopped_at`` IS-UNSET check.
+        _tpls_raw = await db.recurring_job_templates.find(
+            {
+                "tenant_id": tenant["id"],
+                "customer_id": cid,
+                "$or": [
+                    {"is_active": True},
+                    {"active": True, "is_active": {"$exists": False}},
+                ],
+            },
+            {"_id": 0},
+        ).to_list(length=200)
+        _tpls = [
+            t for t in _tpls_raw
+            if not t.get("stopped_at") and not t.get("deleted_at")
+        ]
+
+        def _project_tpl(tpl: dict):
+            # Anchor = max(today, last_generated_through + 1 day).
+            last_gen = _rj_parse_date(tpl.get("last_generated_through"))
+            anchor = _today_d
+            if last_gen and last_gen >= anchor:
+                anchor = last_gen + _timedelta(days=1)
+            try:
+                occs = _rj_next_occurrences(
+                    tpl, anchor, _proj_horizon, max_count=1,
+                )
+            except Exception:
+                return None
+            if not occs:
+                return None
+            d = occs[0]
+            if d < _today_d:
+                return None
+            return {
+                "job_id": None,
+                "date": d.isoformat(),
+                "scheduled_start": d.isoformat(),
+                "service_type": (
+                    tpl.get("service_type")
+                    or tpl.get("job_type")
+                    or tpl.get("title")
+                    or "Service visit"
+                ),
+                "title": tpl.get("title"),
+                "projected": True,
+            }
+
+        if next_pool_service is None:
+            _candidates = []
+            for tpl in _tpls:
+                if not _is_pool_job(tpl):
+                    continue
+                proj = _project_tpl(tpl)
+                if proj:
+                    _candidates.append(proj)
+            if _candidates:
+                _candidates.sort(key=lambda x: x["scheduled_start"])
+                next_pool_service = _candidates[0]
+        if next_landscape_service is None:
+            _candidates = []
+            for tpl in _tpls:
+                if _is_pool_job(tpl):
+                    continue
+                proj = _project_tpl(tpl)
+                if proj:
+                    _candidates.append(proj)
+            if _candidates:
+                _candidates.sort(key=lambda x: x["scheduled_start"])
+                next_landscape_service = _candidates[0]
+
     # Deprecated: callers should prefer ``next_pool_service`` /
     # ``next_landscape_service``. Legacy mirror kept for one
     # release cycle. Picks the sooner of the two.

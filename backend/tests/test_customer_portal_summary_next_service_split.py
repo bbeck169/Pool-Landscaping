@@ -164,3 +164,136 @@ def test_multiple_pool_jobs_earliest_wins(ctx):
     s = _get_summary(ctx["tok"])
     assert s.get("next_pool_service")
     assert s["next_pool_service"]["job_id"] == early_pool
+
+
+# ──────────────────────────────────────────────────────────────────
+# TD-portal-next-service-missing-tile · Feb-2026 — projection fallback
+# ──────────────────────────────────────────────────────────────────
+def _mk_tpl(ctx: Dict[str, str], *, industry: str,
+             start_days_out: int,
+             service_type: str = "Routine visit",
+             title: str = None,
+             last_generated_through: str = None,
+             end_date: str = None) -> str:
+    tpl_id = str(uuid.uuid4())
+    start = (datetime.now(timezone.utc).date()
+             + timedelta(days=start_days_out))
+    doc = {
+        "id": tpl_id,
+        "tenant_id": ctx["tenant_id"],
+        "customer_id": ctx["customer_id"],
+        "service_type": service_type,
+        "title": title or f"{industry.title()} monthly",
+        "industry": "pool" if industry == "pool" else "landscaping",
+        "frequency": "monthly",
+        "day_of_month": start.day,
+        "start_date": start.isoformat(),
+        "end_date": end_date,
+        "last_generated_through": last_generated_through,
+        "is_active": True,
+        "active": True,
+        "recurrence_never_ends": True,
+    }
+    _db.recurring_job_templates.insert_one(doc)
+    return tpl_id
+
+
+@pytest.fixture
+def ctx_tpl(ctx):
+    """Reuse ``ctx`` and clean recurring_job_templates on teardown."""
+    yield ctx
+    _db.recurring_job_templates.delete_many({
+        "customer_id": ctx["customer_id"],
+        "tenant_id": ctx["tenant_id"],
+    })
+
+
+def test_projection_fills_pool_when_no_materialized_job(ctx_tpl):
+    """Template start_date 30 days out (beyond 14-day cron horizon)
+    with no materialized job → portal projects the next date."""
+    tpl_id = _mk_tpl(ctx_tpl, industry="pool", start_days_out=30,
+                      title="Monthly Pool Service")
+    s = _get_summary(ctx_tpl["tok"])
+    assert s.get("next_pool_service"), (
+        "expected projection to fill pool side when start_date is "
+        "beyond the 14-day cron horizon"
+    )
+    assert s["next_pool_service"].get("projected") is True
+    assert s["next_pool_service"]["job_id"] is None
+    assert s["next_pool_service"]["title"] == "Monthly Pool Service"
+    assert s.get("next_landscape_service") is None
+    # Legacy mirror picks the projection too.
+    assert s.get("next_service")
+    assert s["next_service"].get("projected") is True
+
+
+def test_materialized_wins_over_projection(ctx_tpl):
+    """Materialized job (today+1) and template (start 30 days out) →
+    the materialized row wins; no ``projected`` key on the response."""
+    pool_jid = _mk_job(ctx_tpl, industry="pool", days_from_now=1)
+    _mk_tpl(ctx_tpl, industry="pool", start_days_out=30)
+    s = _get_summary(ctx_tpl["tok"])
+    assert s.get("next_pool_service")
+    assert s["next_pool_service"]["job_id"] == pool_jid
+    assert s["next_pool_service"].get("projected") is not True
+
+
+def test_projection_skipped_when_end_date_in_past(ctx_tpl):
+    """Template with start_date far out but end_date already passed →
+    projection must respect end_date and NOT emit a date."""
+    yesterday = (datetime.now(timezone.utc).date()
+                  - timedelta(days=1)).isoformat()
+    _mk_tpl(ctx_tpl, industry="landscaping", start_days_out=30,
+             end_date=yesterday)
+    s = _get_summary(ctx_tpl["tok"])
+    assert s.get("next_landscape_service") is None
+    assert s.get("next_pool_service") is None
+
+
+def test_projection_fills_both_sides_independently(ctx_tpl):
+    """Separate pool + landscape templates — both tiles projected."""
+    _mk_tpl(ctx_tpl, industry="pool", start_days_out=30,
+             title="Monthly Pool")
+    _mk_tpl(ctx_tpl, industry="landscaping", start_days_out=45,
+             title="Monthly Landscape")
+    s = _get_summary(ctx_tpl["tok"])
+    assert s.get("next_pool_service")
+    assert s["next_pool_service"].get("projected") is True
+    assert s.get("next_landscape_service")
+    assert s["next_landscape_service"].get("projected") is True
+
+
+def test_projection_skipped_when_template_stopped(ctx_tpl):
+    """Template with ``stopped_at`` set → projection must skip it."""
+    tpl_id = _mk_tpl(ctx_tpl, industry="pool", start_days_out=30)
+    _db.recurring_job_templates.update_one(
+        {"id": tpl_id},
+        {"$set": {"stopped_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    s = _get_summary(ctx_tpl["tok"])
+    assert s.get("next_pool_service") is None
+    assert s.get("next_landscape_service") is None
+
+
+def test_projection_honours_last_generated_through(ctx_tpl):
+    """Template whose ``last_generated_through`` is already past today
+    (cron advanced, mat'd jobs completed) must project the NEXT
+    occurrence AFTER that cursor, not re-emit the stale date."""
+    today = datetime.now(timezone.utc).date()
+    # Monthly template rooted at day 1; last_generated_through = today.
+    tpl_id = _mk_tpl(
+        ctx_tpl, industry="pool",
+        start_days_out=-60,  # start_date in the past
+        last_generated_through=today.isoformat(),
+    )
+    # Force the day_of_month to today's day so there IS a date today —
+    # and the next natural occurrence is next month.
+    _db.recurring_job_templates.update_one(
+        {"id": tpl_id},
+        {"$set": {"day_of_month": today.day}},
+    )
+    s = _get_summary(ctx_tpl["tok"])
+    assert s.get("next_pool_service")
+    assert s["next_pool_service"].get("projected") is True
+    # Projected date must be strictly AFTER last_generated_through.
+    assert s["next_pool_service"]["date"] > today.isoformat()
