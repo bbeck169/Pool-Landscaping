@@ -421,3 +421,46 @@ describe("<EstimateView> → flipbook branch", () => {
     expect(typeof mod.EstimateFlipbook).toBe("function");
   });
 });
+
+
+// ─── TD-estimate-public-instructional-copy · Feb-2026 ──────────────
+// Verifies the "You can customize…" nudge renders on every group
+// page when the quote is actionable, and is suppressed once the
+// customer can no longer act on it.
+describe("<EstimateFlipbook /> — line-items instructional copy", () => {
+  const EXPECTED =
+    "You can customize your estimate by clicking Decline on any "
+    + "line item before approving the final estimate.";
+
+  it("renders the nudge on each group page when actionable", () => {
+    render(
+      <EstimateFlipbook
+        data={_minPayload()}
+        onAccept={vi.fn()} onDeclineClick={vi.fn()} onDownloadPdf={vi.fn()}
+        onSignNow={vi.fn()} actionable={true} busy={false}
+      />,
+    );
+    const nodes = screen.getAllByTestId(
+      "flipbook-line-items-instructional-copy",
+    );
+    // 2 service groups → 2 nudges, one per group page.
+    expect(nodes.length).toBe(2);
+    for (const n of nodes) {
+      const normalised = n.textContent.replace(/\s+/g, " ").trim();
+      expect(normalised).toBe(EXPECTED);
+    }
+  });
+
+  it("suppresses the nudge entirely when not actionable", () => {
+    render(
+      <EstimateFlipbook
+        data={_minPayload()}
+        onAccept={vi.fn()} onDeclineClick={vi.fn()} onDownloadPdf={vi.fn()}
+        onSignNow={vi.fn()} actionable={false} busy={false}
+      />,
+    );
+    expect(
+      screen.queryByTestId("flipbook-line-items-instructional-copy"),
+    ).toBeNull();
+  });
+});

@@ -737,6 +737,25 @@ export default function EstimateView({
         ) : null}
         lines={(
           <div className="ev-lines-wrap">
+            {/* TD-estimate-public-instructional-copy · Feb-2026 —
+                nudge the customer that per-line Decline buttons
+                exist, before they hit the toolbar Approve.  Gated
+                identically to the per-line Decline buttons
+                (:1099) + the toolbar Approve+Decline (:590) so it
+                never appears on admin, printable or locked views. */}
+            {as_customer && actionable && !locked ? (
+              <div
+                data-testid="estimate-line-items-instructional-copy"
+                style={{
+                  fontSize: 12,
+                  color: "#64748b",
+                  marginBottom: 12,
+                }}
+              >
+                You can customize your estimate by clicking Decline
+                on any line item before approving the final estimate.
+              </div>
+            ) : null}
             {showGrouped ? (
               <>
               <table className="iv-lines hidden sm:table"

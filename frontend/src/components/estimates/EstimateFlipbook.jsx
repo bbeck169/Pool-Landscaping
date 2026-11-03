@@ -537,6 +537,27 @@ export function EstimateFlipbook({
                       {g.description}
                     </div>
                   ) : <div style={{ marginBottom: 20 }} />}
+                  {/* TD-estimate-public-instructional-copy · Feb-2026
+                      — same nudge as the classic view, rendered on
+                      every group page so it sits directly above the
+                      line list.  Flipbook is only rendered when
+                      ``!isAdmin && !printable`` (EstimateView.jsx:436),
+                      so ``actionable`` alone is the correct gate. */}
+                  {actionable ? (
+                    <div
+                      data-testid="flipbook-line-items-instructional-copy"
+                      style={{
+                        fontSize: 12,
+                        color: "#64748b",
+                        fontFamily: "Inter, system-ui, sans-serif",
+                        marginBottom: 12,
+                      }}
+                    >
+                      You can customize your estimate by clicking
+                      Decline on any line item before approving the
+                      final estimate.
+                    </div>
+                  ) : null}
                   <ul style={{ flex: 1, listStyle: "none", padding: 0, margin: 0, overflowY: "auto" }}>
                     {g.lines.map((li) => (
                       <li
