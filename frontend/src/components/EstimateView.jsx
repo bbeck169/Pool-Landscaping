@@ -588,6 +588,31 @@ export default function EstimateView({
               </>
             ) : null}
             {showCustomerToolbar && !locked && actionable ? (
+              // TD-estimate-toolbar-sticky-footer · Feb-2026 —
+              // defensively pin the customer Approve/Decline toolbar
+              // to the viewport bottom so it is always visible
+              // regardless of estimate length or scroll position.
+              // Addresses Scenario E in TD-estimate-public-approve-
+              // quote-button (operator scrolled past the toolbar
+              // leaving only per-line Decline cells visible).
+              // Classic-view only; Flipbook has its own sign-page
+              // footer and the mobile header-pass-through (:487)
+              // is unaffected.
+              <div
+                data-testid="estimate-customer-toolbar-sticky"
+                style={{
+                  position: "sticky",
+                  bottom: 0,
+                  zIndex: 20,
+                  marginTop: 16,
+                  padding: "10px 12px",
+                  background: "rgba(255,255,255,0.96)",
+                  backdropFilter: "saturate(1.4) blur(6px)",
+                  WebkitBackdropFilter: "saturate(1.4) blur(6px)",
+                  borderTop: "1px solid rgba(15,23,42,0.08)",
+                  boxShadow: "0 -4px 12px -4px rgba(15,23,42,0.08)",
+                }}
+              >
               <div className="ev-tool-group ev-customer-cta">
                 <button
                   className="iv-btn"
@@ -652,6 +677,7 @@ export default function EstimateView({
                     </button>
                   </div>
                 ) : null}
+              </div>
               </div>
             ) : null}
             {/* Feb-2026 · Phase A — legacy testid preservation. Any
