@@ -4534,3 +4534,29 @@ The `_classify_bucket()` helper at :269-275 returns a "hydratable" bucket classi
 **Blocker:** Operator survey of pricebook consumers across tenants.  Do NOT touch the field, the read path, or the response envelope until this survey is complete — removal could silently break a backfill flow.
 
 **Priority rationale:** P3 — purely cosmetic debt (naming + sunset tombstones).  Zero bug impact.  No deadline.
+
+---
+
+### TD-homeworks-tombstone-mobile-cleanup · P3 · for `e1_expo_frontend_dev`
+
+**Status:** OPEN — trivial mobile parity follow-up.
+
+**Context:**
+During `TD-homeworks-connection-remove-audit` (Feb-2026) the web-side audit confirmed that all live Homeworks UI surfaces on web were removed in K55.a (Feb-2026) and only tombstone comments remain in `App.js`, `nav/adminNav.js`, `pages/settings/IntegrationsPages.jsx`, `pages/PrivacyPolicy.jsx`, and `server.py`.  Per operator decision these tombstones are retained on web as historical design record.
+
+The equivalent mobile tombstone is a single 2-line JSX comment in:
+  * `mobile/src/nav/adminNav.ts:166-167`
+
+```ts
+// Feb-2026 · K55.a — Homeworks importer nav entry removed as
+// part of the SuperCool + HomeWorks integration sunset.
+```
+
+**Decision for mobile agent:**
+Trivial cleanup — delete the 2 comment lines for parity with the web approach (web keeps tombstones; mobile can optionally match OR delete — operator's call).  The web tombstones carry richer context (phase phases, DB-preservation notes); the mobile tombstone is a bare "entry removed" note of low archival value.
+
+**Recommendation:** delete the 2 lines; the K55 sunset is well-documented in `/app/memory/PHASE_K55_a_FRONTEND_REMOVAL.md` for any mobile-side archaeology.
+
+**Priority rationale:** P3 — zero-impact cosmetic cleanup, no deadline.  Can be bundled with any adjacent mobile touch on `adminNav.ts`.
+
+**Scope:** 1 file, 2 lines.  No code change.  Single atomic commit.  Reference this TD ticket in the commit message.
