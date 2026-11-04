@@ -160,10 +160,12 @@ class CustomerIn(BaseModel):
     # without the fields read back as empty string.
     source: Optional[str] = ""
     created_via: Optional[str] = ""
-    # Phase 55-a · Aug-2026 — Homeworks importer FK. Nullable; set by
-    # the Copilot CRM importer so a single ``rollback`` on the batch
-    # can ``delete_many({import_batch_id: X})``. Legacy customers read
-    # back as ``None``.
+    # Generic importer FK. Nullable; set by any batch-import path
+    # (PDF import pipeline in ``services/imports/pdf_commit.py``;
+    # originally introduced by the Phase 55-a Homeworks importer
+    # before K55.b retired it).  Enables per-batch rollback via
+    # ``delete_many({import_batch_id: X})``.  Legacy customers
+    # read back as ``None``.
     import_batch_id: Optional[str] = None
     is_active: Optional[bool] = True
     # Feb-2026 · P42 — auto-populated by the lifecycle helper when the
@@ -278,8 +280,11 @@ class JobIn(BaseModel):
     # "required when customer has ≥2 properties" rule and auto-assigns
     # when exactly 1 property exists.
     property_id: Optional[str] = None
-    # Phase 55-a · Aug-2026 — Homeworks importer FK. Nullable; enables
-    # per-batch rollback via ``delete_many({import_batch_id: X})``.
+    # Generic importer FK. Nullable; set by any batch-import path
+    # (PDF import pipeline — see ``services/imports/pdf_commit.py``).
+    # Enables per-batch rollback via
+    # ``delete_many({import_batch_id: X})``.  Originally introduced
+    # by the Phase 55-a Homeworks importer before K55.b retired it.
     import_batch_id: Optional[str] = None
     # Feb 2026 · Work-class dimension. Orthogonal to ``job_type``
     # (which is pool/landscape department discipline). Values:
@@ -557,9 +562,11 @@ class QuoteIn(BaseModel):
     # the customer owns multiple, callers should send an explicit id;
     # leaving it null is allowed (consolidated-across-properties case).
     property_id: Optional[str] = None
-    # Phase 55-a · Aug-2026 — Homeworks importer FK. Nullable; covers
-    # BOTH quotes and invoices (same collection family). Enables
-    # per-batch rollback.
+    # Generic importer FK. Nullable; covers BOTH quotes and invoices
+    # (same collection family).  Set by any batch-import path
+    # (PDF import pipeline — see ``services/imports/pdf_commit.py``).
+    # Enables per-batch rollback.  Originally introduced by the Phase
+    # 55-a Homeworks importer before K55.b retired it.
     import_batch_id: Optional[str] = None
     # Phase K79 · Feb-2026 — Grouped customer-facing estimate view.
     # NEW quotes default to grouped-display ON; existing quotes are
