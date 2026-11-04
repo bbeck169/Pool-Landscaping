@@ -5,7 +5,7 @@
  * backend recomputes), status-gated warnings (sent / paid / void),
  * money-change warning about Stripe payment-link regeneration.
  */
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useRef, useState } from "react";
 import { X, Plus, Trash2, AlertTriangle } from "lucide-react";
 import { colors, money } from "@/theme";
 import { Button, TextInput } from "@/components/ui-kit";
@@ -21,6 +21,8 @@ import CategoryPicker from "@/components/income/CategoryPicker";
 // the picked master service.
 import MasterServiceCombobox from "@/components/services/MasterServiceCombobox";
 import EditLockConfirmDialog from "@/components/documents/EditLockConfirmDialog";
+import CategoryEditConfirmDialog from "@/components/invoices/CategoryEditConfirmDialog";
+import StatusReversionWarningDialog from "@/components/invoices/StatusReversionWarningDialog";
 
 const MONEY_FIELDS = new Set([
   "line_items", "discount_amount", "discount_type", "tax_rate", "currency",
@@ -143,6 +145,23 @@ export default function InvoiceEditModal({ invoice, signInfo, onClose, onSaved }
   // before firing the PATCH. (The legacy inline "acknowledgement
   // checkbox" flow was retired in the same phase.)
   const [confirmOpen, setConfirmOpen] = useState(false);
+  // TD-paid-invoice-admin-edit-unblock · Feb-2026 — two additional
+  // pre-save confirms stacked AFTER <EditLockConfirmDialog>:
+  //   * <CategoryEditConfirmDialog> fires when the diff touches
+  //     any line-item category key on a paid invoice (retroactive
+  //     revenue-by-category drift warning — no typed proof, single
+  //     Confirm button).
+  //   * <StatusReversionWarningDialog> fires when a paid invoice's
+  //     recomputed total exceeds ``amount_paid`` (the BE's
+  //     ``remaining_balance = max(total - amount_paid, 0)`` formula
+  //     flips status from ``paid`` back to ``partial`` on save).
+  // Each pre-save ack is tracked on a ref so ``submit()`` can
+  // re-enter the pipeline after each dialog without re-prompting.
+  const [categoryConfirmOpen, setCategoryConfirmOpen] = useState(false);
+  const [reversionOpen, setReversionOpen] = useState(false);
+  const _acked = useRef({
+    editLock: false, statusReversion: false, categoryChange: false,
+  });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   // Feb-2026 · invoice-category hard-block removal (parent SHA
@@ -226,6 +245,76 @@ export default function InvoiceEditModal({ invoice, signInfo, onClose, onSaved }
   // now reflects Stripe. Kept behind the same money-change guard.
   const showPayLinkWarning =
     moneyChangedList.length > 0 && Boolean(invoice?.payment_url);
+
+  // TD-paid-invoice-admin-edit-unblock · Feb-2026 — pre-save predicates
+  // for the two new paid-invoice confirms.
+  //
+  // ``categoryDiffOnPaid``: true iff a paid invoice's pending diff
+  // touches any of the four canonical line-item category keys.
+  // Mirrors the BE ``_METADATA_ONLY_LINE_FIELDS`` category subset
+  // from ``routers/invoice_edit.py``.  Business-unit / BU-id live
+  // at the top level and aren't exposed by this modal (K48
+  // drill-down owns them), so they aren't checked here.
+  //
+  // ``totalExceedsPaid``: true iff ``status === "paid"``, a money
+  // field actually changed, and the recomputed total exceeds the
+  // recorded ``amount_paid``.  Drives the status-reversion warning.
+  const categoryDiffOnPaid = useMemo(() => {
+    if (!paid) return false;
+    const _KEYS = [
+      "category", "income_category_id",
+      "service_category", "service_category_id",
+    ];
+    const o = invoice?.line_items || [];
+    const n = form.line_items || [];
+    const maxLen = Math.max(o.length, n.length);
+    for (let i = 0; i < maxLen; i++) {
+      const oldLi = o[i] || {};
+      const newLi = n[i] || {};
+      for (const k of _KEYS) {
+        if ((oldLi[k] ?? "") !== (newLi[k] ?? "")) return true;
+      }
+    }
+    return false;
+  }, [paid, invoice, form.line_items]);
+  const totalExceedsPaid = useMemo(() => {
+    if (!paid) return false;
+    // Reversion warning only when a money-affecting field actually
+    // moves (line-item qty / unit_price / tax_rate, top-level
+    // tax_rate / discount_amount / discount_type) AND the
+    // recomputed total exceeds amount_paid.  The pre-ticket
+    // ``moneyChangedList`` based on ``itemsEqual`` treats ANY
+    // line-item touch (including a description-only metadata
+    // edit) as a money change, which would over-trigger this
+    // dialog on the β bypass path.  Scope the check to actual
+    // money-moving fields.
+    const o = invoice?.line_items || [];
+    const n = form.line_items || [];
+    let lineMoneyMoved = o.length !== n.length;
+    if (!lineMoneyMoved) {
+      for (let i = 0; i < n.length; i += 1) {
+        const oldLi = o[i] || {}; const newLi = n[i] || {};
+        if (Number(oldLi.quantity || 0) !== Number(newLi.quantity || 0)
+            || Number(oldLi.unit_price || 0) !== Number(newLi.unit_price || 0)
+            || Number(oldLi.tax_rate || 0) !== Number(newLi.tax_rate || 0)) {
+          lineMoneyMoved = true;
+          break;
+        }
+      }
+    }
+    const topMoneyMoved = (
+      Number(invoice?.discount_amount || 0)
+        !== Number(form.discount_amount || 0)
+      || (invoice?.discount_type || "fixed")
+        !== (form.discount_type || "fixed")
+      || Number(invoice?.tax_rate || 0)
+        !== Number(form.tax_rate || 0)
+    );
+    if (!lineMoneyMoved && !topMoneyMoved) return false;
+    const paidAmt = Number(invoice?.amount_paid || 0);
+    const newTotal = Number(totals?.total || 0);
+    return newTotal > paidAmt;
+  }, [paid, invoice, totals, form]);
 
   // ── Line item editor helpers ─────────────────────────────────
   const patchItem = (idx, patch) => setForm((f) => ({
@@ -314,11 +403,27 @@ export default function InvoiceEditModal({ invoice, signInfo, onClose, onSaved }
 
   const submit = () => {
     if (!canSave) return;
-    // Feb-2026 β — paid metadata-only edits skip the confirm
-    // dialog. Any mix with a financial field still routes through
-    // the shipped ack-dialog flow.
-    if (isLocked && !isPaidMetadataOnlyDiff) {
+    // TD-paid-invoice-admin-edit-unblock · Feb-2026 — chained
+    // pre-save pipeline.  Each confirm, once accepted, flips its
+    // ack flag on ``_acked.current`` and re-enters this function
+    // so the next gate can evaluate.  Gates in fixed order:
+    //   1. EditLockConfirmDialog   — shipped Phase-1 ack.
+    //   2. StatusReversionWarning  — paid invoice's new total
+    //                                 exceeds amount_paid.
+    //   3. CategoryEditConfirm     — paid invoice's diff touches a
+    //                                 line-item category key.
+    //   4. doSubmit().
+    if (isLocked && !isPaidMetadataOnlyDiff
+        && !_acked.current.editLock) {
       setConfirmOpen(true);
+      return;
+    }
+    if (totalExceedsPaid && !_acked.current.statusReversion) {
+      setReversionOpen(true);
+      return;
+    }
+    if (categoryDiffOnPaid && !_acked.current.categoryChange) {
+      setCategoryConfirmOpen(true);
       return;
     }
     doSubmit();
@@ -823,14 +928,47 @@ export default function InvoiceEditModal({ invoice, signInfo, onClose, onSaved }
       <EditLockConfirmDialog
         open={confirmOpen}
         onCancel={() => { if (!busy) setConfirmOpen(false); }}
-        onConfirm={async () => {
+        onConfirm={() => {
+          // TD-paid-invoice-admin-edit-unblock · Feb-2026 — ack
+          // the Phase-1 gate and re-enter the pipeline so the two
+          // new pre-save confirms (status-reversion + category)
+          // can evaluate.  doSubmit() still runs inside ``submit``
+          // once every gate has either passed or been acked.
           setConfirmOpen(false);
-          await doSubmit();
+          _acked.current = { ..._acked.current, editLock: true };
+          submit();
         }}
         isStripePaid={isStripePaid}
         isSigned={isSigned}
         busy={busy}
         status={status}
+      />
+      {/* TD-paid-invoice-admin-edit-unblock · Feb-2026 — status
+          reversion warning when a paid invoice's new total would
+          push remaining_balance above $0 on save. */}
+      <StatusReversionWarningDialog
+        open={reversionOpen}
+        onCancel={() => { if (!busy) setReversionOpen(false); }}
+        onConfirm={() => {
+          setReversionOpen(false);
+          _acked.current = { ..._acked.current, statusReversion: true };
+          submit();
+        }}
+        amountPaid={Number(invoice?.amount_paid || 0)}
+        newTotal={Number(totals?.total || 0)}
+        busy={busy}
+      />
+      {/* TD-paid-invoice-admin-edit-unblock · Feb-2026 — category
+          change confirm (retroactive revenue-by-category drift). */}
+      <CategoryEditConfirmDialog
+        open={categoryConfirmOpen}
+        onCancel={() => { if (!busy) setCategoryConfirmOpen(false); }}
+        onConfirm={() => {
+          setCategoryConfirmOpen(false);
+          _acked.current = { ..._acked.current, categoryChange: true };
+          submit();
+        }}
+        busy={busy}
       />
     </div>
   );

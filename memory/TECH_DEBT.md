@@ -4560,3 +4560,21 @@ Trivial cleanup — delete the 2 comment lines for parity with the web approach 
 **Priority rationale:** P3 — zero-impact cosmetic cleanup, no deadline.  Can be bundled with any adjacent mobile touch on `adminNav.ts`.
 
 **Scope:** 1 file, 2 lines.  No code change.  Single atomic commit.  Reference this TD ticket in the commit message.
+
+---
+
+### TD-paid-invoice-admin-edit-unblock-mobile-parity · N/A
+
+**Decision:** No mobile parity ship required.
+
+**Rationale:** The web ticket `TD-paid-invoice-admin-edit-unblock` (Feb-2026) relaxed the FE `readOnly={paid}` gate on `line-item quantity` + `unit_price` for admin + super_admin in `InvoiceEditModal.jsx`, and added two pre-save confirms (`CategoryEditConfirmDialog`, `StatusReversionWarningDialog`) stacked after the shared `<EditLockConfirmDialog>`.
+
+Mobile has no equivalent full-line-item edit modal surface:
+
+- `mobile/src/lib/k48.ts` — thin K48 drill-down PATCH helper carrying `business_unit` + `business_unit_id` only.  Attaches `confirm_edit_paid_invoice_number` when `f.needsPaidConfirm` is set — a narrow BU-tagging-only path.  Does NOT expose line-item qty / unit_price editing.
+- `mobile/src/components/dashboard/IncomeDrillDownSheet.tsx` — same narrow drill-down surface; BU re-tag + income-category re-tag only.  No qty / unit_price inputs.
+- No `InvoiceEditModal` equivalent exists on mobile — line-item edits are desktop-only by design.
+
+The web ticket's scope (line-item qty + unit_price unlock, category-change retroactive warning, status-reversion warning) does not map to any mobile surface.  No mobile follow-up required.
+
+**Status:** CLOSED — N/A.
