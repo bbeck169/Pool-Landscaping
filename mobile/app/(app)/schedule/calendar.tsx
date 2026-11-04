@@ -57,9 +57,10 @@ import WeekStrip from "@/src/components/schedule/WeekStrip";
 import { showConfirm } from "@/src/components/ConfirmModal";
 import { bulkDeleteJobs } from "@/src/lib/jobsBulkDelete";
 import { isCompactScheduleHeader } from "@/src/lib/scheduleHeader";
-import { serviceCategoryParam, canWriteThroughJobs } from "@/src/lib/scheduleServiceCategory";
-import { useScheduleServiceCategory } from "@/src/hooks/useScheduleServiceCategory";
-import ServiceCategoryChips from "@/src/components/schedule/ServiceCategoryChips";
+// TD-mobile-schedule-service-category-filter-remove (web 5b97b57b3) — M3a's
+// Pool / Landscaping / Both / All chip-group + its lib / hook were removed.
+// BE `/jobs?service_category=` still ACCEPTS the param (routers/jobs.py) for
+// external API consumers; mobile simply stops sending it.
 import MarkOpenButton from "@/src/components/schedule/MarkOpenButton";
 import ScheduleMonthView from "@/src/components/schedule/ScheduleMonthView";
 import { reassignableTechs, bulkReassignPayload, type ReassignPick } from "@/src/lib/bulkReassign";
@@ -309,8 +310,6 @@ function ScheduleCalendarInner() {
   // Schedule declutter · Filters drawer + "⋯" actions sheet (state stays here).
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [actionsSheetOpen, setActionsSheetOpen] = useState(false);
-  // M3a · Service Category filter (web Ticket Y) — all roles, persisted.
-  const [serviceCategory, setServiceCategory] = useScheduleServiceCategory();
 
   // K43 — Resolved technician_id: when user.technician_id is null
   // (pre-backfill tenant), we resolve it via GET /api/technicians/me.
@@ -477,8 +476,8 @@ function ScheduleCalendarInner() {
   const loadAbortRef = useRef<AbortController | null>(null);
 
   // M3c · Month view (web Ticket W) — same server scope as load()'s jobsUrl
-  // (crew / tech / category) + the same client filters as filteredJobs/visibleJobs.
-  const monthScopeQuery = `${!isTech && crewFilter ? `&crew_id=${crewFilter}` : ""}${isTech && resolvedTechId ? `&technician_id=${resolvedTechId}` : ""}${serviceCategoryParam(serviceCategory)}`;
+  // (crew / tech) + the same client filters as filteredJobs/visibleJobs.
+  const monthScopeQuery = `${!isTech && crewFilter ? `&crew_id=${crewFilter}` : ""}${isTech && resolvedTechId ? `&technician_id=${resolvedTechId}` : ""}`;
   const monthClientFilter = useCallback(
     (arr: any[]) => filterMonthJobs(arr, { isTech, techFilter, resolvedTechId, showCancelled, techCrewIds, altTechId }),
     [isTech, techFilter, resolvedTechId, showCancelled, techCrewIds, altTechId],
@@ -526,12 +525,13 @@ function ScheduleCalendarInner() {
       // K43 — use resolvedTechId which falls back to /api/technicians/me
       // when user.technician_id is null (pre-backfill tenants).
       const techScope = isTech && resolvedTechId ? `&technician_id=${resolvedTechId}` : "";
-      // M3a · Ticket Y parity — service_category composes AS AND with crew/tech scope.
-      const jobsUrl = `/jobs?start=${start}&end=${end}${!isTech && crewFiltered ? `&crew_id=${crewFilter}` : ""}${techScope}${serviceCategoryParam(serviceCategory)}`;
-      // Skip the offline write-through for ANY filtered subset (crew OR non-All
-      // category): cacheWeekJobs is a per-user bulk replace, so a subset would
-      // wipe the unfiltered jobs techs need offline.
-      const writeThroughOk = canWriteThroughJobs({ crewFiltered, serviceCategory });
+      // TD-mobile-schedule-service-category-filter-remove — no service
+      // category param any more (BE still accepts it); all categories render.
+      const jobsUrl = `/jobs?start=${start}&end=${end}${!isTech && crewFiltered ? `&crew_id=${crewFilter}` : ""}${techScope}`;
+      // Skip the offline write-through for a crew-filtered subset:
+      // cacheWeekJobs is a per-user bulk replace, so a subset would wipe the
+      // unfiltered jobs techs need offline.
+      const writeThroughOk = !crewFiltered;
       // K15 · outer timeout race — if cachedGet (network+SQLite)
       // hasn't resolved in 25 s, give up and show the error card.
       const timeoutPromise = new Promise<never>((_, reject) =>
@@ -560,15 +560,7 @@ function ScheduleCalendarInner() {
       // Only write loading=false if THIS controller is still current.
       if (loadAbortRef.current === ac) { setLoading(false); setLoadingTimedOut(false); }
     }
-  }, [focus, user?.id, crewFilter, isTech, resolvedTechId, serviceCategory]);
-
-  // M3a · category change must FORCE a refetch (web: load({force:true}) on change) —
-  // a plain load() returns early while the focus day is inside the cached range.
-  const categoryEffectMounted = useRef(false);
-  useEffect(() => {
-    if (!categoryEffectMounted.current) { categoryEffectMounted.current = true; return; }
-    load(true);
-  }, [serviceCategory]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [focus, user?.id, crewFilter, isTech, resolvedTechId]);
 
   useFocusEffect(useCallback(() => {
     logNav("schedule/calendar.focus", {
@@ -970,8 +962,12 @@ function ScheduleCalendarInner() {
         })}
       </View>
 
-      {/* M3a · Service Category chip-group (web Ticket Y) — drives Grid + Calendar. */}
-      <ServiceCategoryChips value={serviceCategory} onChange={setServiceCategory} />
+      {/* TD-mobile-schedule-service-category-filter-remove (web 5b97b57b3) —
+          M3a's Pool / Landscaping / Both / All chip-group that lived here was
+          removed per operator directive; all jobs render regardless of
+          service category. BE `/jobs?service_category=` still accepts the
+          param for external API consumers; only the mobile chip + wiring
+          was removed. */}
 
       {/* K15 · Error card with retry — replaces the old tiny inline bar */}
       {/* K43 — Empty-profile message when tech has no linked technician row. */}

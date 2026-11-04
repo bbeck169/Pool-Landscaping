@@ -111,16 +111,16 @@ it("W8 · '+N more' only when > 3 visits; tap opens the sheet listing ALL visits
   expect(q.queryByTestId("month-sheet-row-d1")).toBeNull();
 });
 
-it("W9 · category filter composes: calendar passes the same crew/tech/category scope; scope change refetches", async () => {
-  expect(SRC).toContain("const monthScopeQuery = `${!isTech && crewFilter ? `&crew_id=${crewFilter}` : \"\"}${isTech && resolvedTechId ? `&technician_id=${resolvedTechId}` : \"\"}${serviceCategoryParam(serviceCategory)}`;");
-  expect(monthJobsUrl(NOV, "&crew_id=c1&service_category=pool")).toBe("/jobs?start=2026-10-26&end=2026-12-06&limit=5000&crew_id=c1&service_category=pool");
+it("W9 · month scope = load()'s crew / tech scope (no service_category — TD-mobile-schedule-service-category-filter-remove); scope change refetches", async () => {
+  expect(SRC).toContain("const monthScopeQuery = `${!isTech && crewFilter ? `&crew_id=${crewFilter}` : \"\"}${isTech && resolvedTechId ? `&technician_id=${resolvedTechId}` : \"\"}`;");
+  expect(monthJobsUrl(NOV, "&crew_id=c1")).toBe("/jobs?start=2026-10-26&end=2026-12-06&limit=5000&crew_id=c1");
   mockCachedGet.mockResolvedValue([]);
   const p = { initialDate: NOV, clientFilter: (a: any[]) => a, userId: "u1", onOpenJob: jest.fn() };
   const q = render(<ScheduleMonthView {...p} scopeQuery="" />);
   await waitFor(() => expect(mockCachedGet).toHaveBeenCalledTimes(1));
-  q.rerender(<ScheduleMonthView {...p} scopeQuery="&service_category=landscaping" />);
+  q.rerender(<ScheduleMonthView {...p} scopeQuery="&crew_id=c2" />);
   await waitFor(() => expect(mockCachedGet).toHaveBeenCalledTimes(2));
-  expect(mockCachedGet.mock.calls[1][0]).toBe("/jobs?start=2026-10-26&end=2026-12-06&limit=5000&service_category=landscaping");
+  expect(mockCachedGet.mock.calls[1][0]).toBe("/jobs?start=2026-10-26&end=2026-12-06&limit=5000&crew_id=c2");
 });
 
 it("W10 · card tap + sheet-row tap fire the existing job-detail handler; day number → onOpenDay", async () => {
