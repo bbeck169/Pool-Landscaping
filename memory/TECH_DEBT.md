@@ -4578,3 +4578,22 @@ Mobile has no equivalent full-line-item edit modal surface:
 The web ticket's scope (line-item qty + unit_price unlock, category-change retroactive warning, status-reversion warning) does not map to any mobile surface.  No mobile follow-up required.
 
 **Status:** CLOSED — N/A.
+
+---
+
+### TD-paid-invoice-admin-edit-unblock — Feb-2026 operator reversal on CategoryEditConfirmDialog
+
+**Context:** On the day `5ab10f247` shipped, the operator reversed decision on the category-change pre-save confirm.  Verbatim ask: "need to make sure I can edit categoryies descriptions titles on all paid invoices with no block".
+
+**Change:** reverted `CategoryEditConfirmDialog` entirely — dialog file deleted, FE state + predicate + JSX mount + pipeline gate all removed.  Category edits on paid invoices now fire with **zero friction** for admins.
+
+**Preserved:**
+- `<EditLockConfirmDialog>` — still fires on qty / unit_price / tax / discount edits (financial fields ack path is UNCHANGED per prior locked decision).
+- `<StatusReversionWarningDialog>` — still fires when a money-moving edit flips paid → partial (unrelated to the category gate).
+- `invoice-edit-banner-paid` soft red warning banner — still rendered on paid.
+- Audit-log coverage via `db.invoice_edit_history` — captures full before/after diff on every category change with role + user + status-at-edit.
+
+**Operator-accepted silent drift:**
+Removing the dialog means admins can change `line_items[].category` or `income_category_id` on a paid invoice with **no in-UI warning** that monthly revenue-by-category reports for the paid-in period will retroactively re-slice.  The audit log remains the sole trail.  Operator explicitly accepted this trade-off.
+
+**Status:** CLOSED — reverted in the follow-up commit to `5ab10f247`.
