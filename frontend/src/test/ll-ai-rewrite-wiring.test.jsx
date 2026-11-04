@@ -37,7 +37,12 @@ describe("Ticket LL · Commit 3 wiring · MassTextModal (KK slot swap)", () => {
   it("renders <AiRewriteButton> inside the mass-text-rewrite-slot", () => {
     const slotIdx = SRC.indexOf('data-testid="mass-text-rewrite-slot"');
     expect(slotIdx).toBeGreaterThan(-1);
-    const slotBlock = SRC.slice(slotIdx, slotIdx + 800);
+    // TD-mass-text-merge-tag-toolbar · Feb-2026 — slot now also
+    // hosts the Insert-tag button (and its comment block) above
+    // <AiRewriteButton>, so widen the slice window.  Intent of
+    // this guard is unchanged: ensure AiRewriteButton + its
+    // canonical dataTestid live inside the slot container.
+    const slotBlock = SRC.slice(slotIdx, slotIdx + 2000);
     expect(slotBlock).toMatch(/<AiRewriteButton/);
     expect(slotBlock).toMatch(/dataTestid="mass-text-rewrite-btn"/);
   });

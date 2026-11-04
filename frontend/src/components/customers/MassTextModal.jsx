@@ -20,10 +20,11 @@
  *     sits in the textarea toolbar so Ticket LL can wire it in
  *     retroactively without re-shaping the modal's layout.
  */
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Modal, Button } from "@/components/ui-kit";
-import { Sparkles } from "lucide-react";
+import { Sparkles, Hash } from "lucide-react";
 import AiRewriteButton from "@/components/ai/AiRewriteButton";
+import { MergeTagPalette } from "@/components/marketing/MergeTagPalette";
 import { colors } from "@/theme";
 import { api } from "@/api";
 import { toast as sonnerToast } from "sonner";
@@ -55,6 +56,12 @@ export default function MassTextModal({ open, customerIds, onClose, onSent }) {
   const [templatesLoading, setTemplatesLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [confirmArmed, setConfirmArmed] = useState(false);
+  // TD-mass-text-merge-tag-toolbar · Feb-2026 — Insert-tag toolbar.
+  // Palette open/close is local to this modal. ``textareaRef`` lets
+  // the insert handler splice at the current selection instead of
+  // dumb-appending, so a mid-message insert is non-destructive.
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const textareaRef = useRef(null);
 
   const recipientCount = (customerIds || []).length;
   const estimate = useMemo(() => estimateSmsSegments(message), [message]);
@@ -66,6 +73,7 @@ export default function MassTextModal({ open, customerIds, onClose, onSent }) {
     setMessage("");
     setTemplateId("");
     setConfirmArmed(false);
+    setPaletteOpen(false);
   }, [open]);
 
   // Load SMS marketing templates (reused across the KK modal + the
@@ -94,6 +102,38 @@ export default function MassTextModal({ open, customerIds, onClose, onSent }) {
       setMessage((tpl.body || "").trim());
     }
   };
+
+  // TD-mass-text-merge-tag-toolbar · Feb-2026 — splice a merge-tag
+  // token (already ``{{WRAPPED}}`` by MergeTagPalette.onInsert) at
+  // the textarea's current selection. Falls back to appending when
+  // the ref isn't attached yet (shouldn't happen post-mount, but
+  // keeps the handler defensive). Refocuses the textarea and parks
+  // the caret immediately after the inserted token so the operator
+  // can keep typing.
+  const insertAtCursor = useCallback((wrappedToken) => {
+    if (typeof wrappedToken !== "string" || !wrappedToken) return;
+    setMessage((prev) => {
+      const el = textareaRef.current;
+      const prior = prev || "";
+      if (!el || typeof el.selectionStart !== "number") {
+        return prior + wrappedToken;
+      }
+      const start = el.selectionStart;
+      const end = el.selectionEnd;
+      const next = prior.slice(0, start) + wrappedToken + prior.slice(end);
+      const caret = start + wrappedToken.length;
+      // Restore focus + caret after React has flushed the new value.
+      requestAnimationFrame(() => {
+        if (textareaRef.current) {
+          textareaRef.current.focus();
+          try {
+            textareaRef.current.setSelectionRange(caret, caret);
+          } catch { /* jsdom / older browsers — non-fatal */ }
+        }
+      });
+      return next;
+    });
+  }, []);
 
   const canSend = recipientCount > 0 && (message || "").trim().length > 0 && !busy;
 
@@ -241,6 +281,27 @@ export default function MassTextModal({ open, customerIds, onClose, onSent }) {
               className="inline-flex items-center gap-1"
               data-testid="mass-text-rewrite-slot"
             >
+              {/* TD-mass-text-merge-tag-toolbar · Feb-2026 — Insert
+                  merge-tag opener.  Reuses the existing
+                  <MergeTagPalette> catalog (shared with email
+                  compose surfaces); on insert the handler splices
+                  the canonical ``{{UPPER_CASE_TAG}}`` at the
+                  textarea's current selection. */}
+              <button
+                type="button"
+                onClick={() => setPaletteOpen(true)}
+                disabled={busy}
+                className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full disabled:opacity-60"
+                style={{
+                  backgroundColor: colors.surfaceTertiary,
+                  color: colors.onSurfaceSecondary,
+                }}
+                data-testid="mass-text-insert-tag-btn"
+                aria-label="Insert merge tag"
+              >
+                <Hash className="w-3 h-3" />
+                Insert tag
+              </button>
               {/* Ticket LL · Feb-2026 — reserved rewrite slot now
                   carries the live <AiRewriteButton>.  Replaces the
                   Ticket KK inert placeholder.  Visual size matches
@@ -256,6 +317,7 @@ export default function MassTextModal({ open, customerIds, onClose, onSent }) {
           </div>
           <textarea
             id="mass-text-body"
+            ref={textareaRef}
             value={message}
             onChange={(e) => setMessage(e.target.value)}
             disabled={busy}
@@ -296,6 +358,18 @@ export default function MassTextModal({ open, customerIds, onClose, onSent }) {
             no-phone customers are skipped automatically.
           </div>
         ) : null}
+
+        {/* TD-mass-text-merge-tag-toolbar · Feb-2026 — shared
+            MergeTagPalette.  Conditionally mounted on ``paletteOpen``
+            so the catalog fetch only fires when the operator opts
+            in, and the Radix Dialog portal is torn down between
+            opens.  ``onInsert`` receives a pre-wrapped ``{{TOKEN}}``
+            string from the palette. */}
+        <MergeTagPalette
+          open={paletteOpen}
+          onOpenChange={setPaletteOpen}
+          onInsert={insertAtCursor}
+        />
       </div>
     </Modal>
   );
