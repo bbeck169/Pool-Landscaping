@@ -4426,3 +4426,21 @@ No code or test files modified in this ship. All three were verified pre-existin
   ```
 - **Note:** the readiness report also mentioned `REACT_APP_MAPS_PROVIDER` as a code consumer; recheck confirmed that key is set in `.env` but is NOT read anywhere in `frontend/src/`. Either it is a leftover from a prior provider-switch flag or it is consumed by craco config / build-time. Do not add it to `.env.example` without confirming a current consumer.
 - **Blocking signal:** none — missing-key defaults in CRA are empty string, which the SDK init layers tolerate by falling back to no-op / provider error.
+
+## TD-mobile-schedule-service-category-filter-remove · OPEN · P2 mobile · Feb-2026
+- **Reporter:** web ship `TD-schedule-service-category-filter-remove` (session HEAD TBD this commit).
+- **Owner:** `e1_expo_frontend_dev` — web agent does NOT touch `/app/mobile/`.
+- **Context:** the web Schedule page just dropped its Pool / Landscaping / Both / All service-category chip-group per operator directive (web commit this session). Mobile has an independent copy of the same filter that should mirror the removal once the operator confirms the web ship behaves as expected.
+- **Target files (verified via read-only grep from the web audit):**
+  - `/app/mobile/src/components/schedule/ServiceCategoryChips.tsx` — the chip component itself.
+  - `/app/mobile/src/lib/scheduleServiceCategory.ts` — helper library (`SERVICE_CATEGORY_KEY`, bucket normalization, URL + storage persistence).
+  - Mobile schedule page that renders the chips (grep `<ServiceCategoryChips` inside `/app/mobile/app/(app)/schedule/*`).
+- **Scope mirror (mobile side):**
+  1. Delete the chip component's mount in the mobile schedule page.
+  2. Drop the `?service_category=` query-string param from the mobile `/jobs` fetch.
+  3. Drop the refetch-on-change effect.
+  4. Delete `ServiceCategoryChips.tsx` and `scheduleServiceCategory.ts` if no other mobile surface imports them.
+  5. Delete the mobile vitest / detox cases that assert chip presence.
+  6. Keep the BE endpoint acceptance — same posture as web (BE untouched).
+- **Blocking signal:** **wait until operator confirms the web change renders cleanly in production** before touching mobile. If the web removal reveals an edge case (e.g., a tenant that was relying on the filter to hide a category-mismatched visit), the operator may ask for a different FE remediation on mobile.
+- **Priority rationale:** P2 (not P3) because leaving mobile and web filter behaviours inconsistent will confuse any tech using both surfaces on the same job — "why does web show all jobs today but my phone still has the Pool chip?"

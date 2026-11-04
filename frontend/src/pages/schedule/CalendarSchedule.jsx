@@ -318,12 +318,6 @@ export const isRecurring = (j) =>
   );
 
 const MODE_KEY = "aq-schedule-mode-v1";
-// Ticket Y · Feb-2026 — Service Category chip-group filter state.
-// Buckets: All (default; serialized as absence of URL param) /
-// Pool / Landscaping / Both. Mirrors MODE_KEY + VIEW_KEY session-
-// Storage pattern so the chip-group survives tab navigation.
-const SERVICE_CATEGORY_KEY = "aq-schedule-service-category-v1";
-const SERVICE_CATEGORY_BUCKETS = ["All", "Pool", "Landscaping", "Both"];
 // Feb-2026 · Batched Wave #2 — persistent show/hide of the
 // schedule map (grid mode). Key MUST match the mobile parity
 // storage key in ``mobile/app/(app)/schedule/calendar.tsx``
@@ -517,44 +511,6 @@ export default function CalendarSchedule() {
     setMode(m);
     try { sessionStorage.setItem(MODE_KEY, m); } catch {}
     setParam("mode", m);
-  };
-
-  // Ticket Y · Feb-2026 — Service Category chip-group filter.
-  // Reads URL first (?service_category=Pool deep-link), then
-  // sessionStorage, else defaults to "All". Normalises to the
-  // canonical title-case bucket label so the chip-group,
-  // sessionStorage, URL serialisation and fetch param all read
-  // from one source of truth.
-  const _normalizeBucket = (raw) => {
-    const s = String(raw || "").trim().toLowerCase();
-    if (s === "pool") return "Pool";
-    if (s === "landscaping") return "Landscaping";
-    if (s === "both") return "Both";
-    return "All";
-  };
-  const [serviceCategory, setServiceCategory] = useState(() => {
-    const fromUrl = params.get("service_category");
-    if (fromUrl) {
-      const norm = _normalizeBucket(fromUrl);
-      if (norm !== "All") return norm;
-    }
-    try {
-      const saved = sessionStorage.getItem(SERVICE_CATEGORY_KEY);
-      const norm = _normalizeBucket(saved);
-      if (norm !== "All") return norm;
-    } catch {}
-    return "All";
-  });
-  const setServiceCategoryPersist = (bucket) => {
-    const norm = _normalizeBucket(bucket);
-    setServiceCategory(norm);
-    try {
-      if (norm === "All") sessionStorage.removeItem(SERVICE_CATEGORY_KEY);
-      else sessionStorage.setItem(SERVICE_CATEGORY_KEY, norm);
-    } catch {}
-    // URL: default (All) is serialized as absence of the param so
-    // bookmarks stay clean (operator spec).
-    setParam("service_category", norm === "All" ? "" : norm);
   };
 
   // Feb-2026 · Batched Wave #2 — persistent map show/hide toggle.
@@ -932,17 +888,13 @@ export default function CalendarSchedule() {
         ? `&technician_id=${encodeURIComponent(techId)}`
         : "";
       // Ticket Y · Feb-2026 — Service Category server-side filter.
-      // Ships the lowercase enum value (``pool`` / ``landscaping``
-      // / ``both``) when a non-All bucket is active; omits the
-      // param otherwise so the "All" bucket pulls the full set
-      // (operator spec: default = no filter applied).  BE path
-      // chosen over FE-filter because /jobs does not denormalise
-      // ``customer.service_category`` onto the response (pre-audit
-      // confirmed).  Composes AS AND with ``technician_id`` /
-      // ``crew_id`` already on the wire.
-      const _svcCatScope = (serviceCategory && serviceCategory !== "All")
-        ? `&service_category=${encodeURIComponent(serviceCategory.toLowerCase())}`
-        : "";
+      // TD-schedule-service-category-filter-remove · Feb-2026 —
+      // Ticket Y's ``?service_category=`` deep-link filter was
+      // removed from the Schedule page toolbar per operator
+      // directive.  The backend ``/jobs`` endpoint still ACCEPTS
+      // the param (``routers/jobs.py:953``) so external API
+      // consumers aren't broken; the FE simply stops sending it
+      // here and all jobs render regardless of service category.
       const [j, t, cr] = await Promise.all([
         api.get(
           // Ticket OO · Feb-2026 — explicit ``&limit=5000`` (BE max
@@ -955,7 +907,7 @@ export default function CalendarSchedule() {
           // latent cap on Grid + Agenda — same exposure, less-
           // visible symptom.  Mirrors the mobile M3c fix (commit
           // ``090faf17f``) byte-for-byte.
-          `/jobs?start=${start}&end=${end}&limit=5000${crewId ? `&crew_id=${encodeURIComponent(crewId)}` : ""}${_techScope}${_svcCatScope}`,
+          `/jobs?start=${start}&end=${end}&limit=5000${crewId ? `&crew_id=${encodeURIComponent(crewId)}` : ""}${_techScope}`,
           SCHEDULE_LOAD_TIMEOUT_MS,
         ),
         api.get("/technicians", SCHEDULE_LOAD_TIMEOUT_MS).catch(() => []),
@@ -998,14 +950,6 @@ export default function CalendarSchedule() {
   // range and refetch. Same shape as the crew-change hook above.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load({ force: true }); }, [techId]);
-
-  // Ticket Y · Feb-2026 — refetch when the Service Category
-  // chip-group changes. Mirrors the techId refetch above
-  // (strongly-indexed server-side predicate; the Schedule
-  // response is bounded by date range + category so the cost
-  // profile matches a tech-scope refetch).
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { load({ force: true }); }, [serviceCategory]);
 
   // Phase P15 · Feb-2026 — re-hydrate on tenant-settings updates.
   // BusinessSettings.jsx dispatches ``tenant:settings-updated`` with
@@ -1887,49 +1831,13 @@ export default function CalendarSchedule() {
             );
           })}
         </div>
-        {/* Ticket Y · Feb-2026 — Service Category chip-group.
-            Lives right after the Calendar ↔ Grid mode switch so
-            the filter stays visible across all three Schedule
-            surfaces (grid / custom Month / RBC Agenda). Buckets:
-            All (default; serialized as absent URL param) / Pool
-            / Landscaping / Both. Strict customer-tag match
-            (operator-waived inclusive semantics on this
-            surface). Composes AS AND with every other filter;
-            fetch refetches on change via the ``serviceCategory``
-            useEffect above. */}
-        <div
-          className="inline-flex rounded-xl overflow-hidden"
-          style={{ border: `1px solid ${colors.border}`, background: colors.surface }}
-          data-testid="schedule-service-category-filter"
-          role="radiogroup"
-          aria-label="Service category filter"
-        >
-          {SERVICE_CATEGORY_BUCKETS.map((bucket) => {
-            const active = serviceCategory === bucket;
-            return (
-              <button
-                key={bucket}
-                type="button"
-                role="radio"
-                aria-checked={active}
-                onClick={() => setServiceCategoryPersist(bucket)}
-                data-testid={`schedule-service-category-${bucket.toLowerCase()}`}
-                data-active={active ? "true" : "false"}
-                style={{
-                  padding: "6px 12px",
-                  fontSize: 12,
-                  fontWeight: 700,
-                  background: active ? colors.brand : "transparent",
-                  color: active ? "#fff" : colors.onSurface,
-                  border: 0,
-                  cursor: "pointer",
-                }}
-              >
-                {bucket}
-              </button>
-            );
-          })}
-        </div>
+        {/* TD-schedule-service-category-filter-remove · Feb-2026 —
+            Ticket Y's Pool / Landscaping / Both / All chip-group
+            that lived here was removed per operator directive.
+            All jobs now render regardless of service category.
+            BE endpoint ``/jobs?service_category=`` still accepts
+            the param (``routers/jobs.py:953``) for external API
+            consumers; only the FE chip + wiring was removed. */}
         <Gate perm="Jobs" action="write">
           {canCreateJobs ? (
             <button
