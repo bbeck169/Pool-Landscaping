@@ -10,6 +10,7 @@ import { X, Plus, Trash2, AlertTriangle } from "lucide-react";
 import { colors, money } from "@/theme";
 import { Button, TextInput } from "@/components/ui-kit";
 import { api } from "@/api";
+import { useAuth } from "@/auth";
 import CategoryPicker from "@/components/income/CategoryPicker";
 // Phase P16.1 · Feb-2026 — Master Service combobox drop-in on the
 // per-line description field so the invoice inline edit modal
@@ -67,6 +68,28 @@ const EMPTY_ITEM = () => ({
 });
 
 export default function InvoiceEditModal({ invoice, signInfo, onClose, onSaved }) {
+  // TD-paid-invoice-admin-edit-unblock · Feb-2026 — admin + super_admin
+  // bypass on the line-item ``quantity`` / ``unit_price`` ``readOnly``
+  // gate for paid invoices.  Pre-ticket both inputs were hard-locked
+  // on paid status, making the BE's existing ack / typed-proof
+  // acceptance paths unreachable via this modal — admins who needed
+  // a line-item price correction were forced to void-and-reissue.
+  //
+  // Unlock lets the admin type a new value; Save still routes
+  // through the existing <EditLockConfirmDialog> which arms the
+  // ``acknowledged_lock_bypass`` flag + the typed invoice-number
+  // proof, so the BE gate (``routers/invoice_edit.py`` paths 1 + 2)
+  // is unchanged.  Manager / owner keep the existing lock (matches
+  // ``_require_staff``'s narrower role widening — those roles are
+  // bounded to category-only / date-only edits server-side).
+  //
+  // ``useAuth()`` returns ``null`` when rendered without an
+  // ``<AuthProvider>`` (test harness).  Safer default = treat as
+  // non-admin so no silent unlock in an un-authed context.
+  const _auth = useAuth();
+  const _role = (_auth && _auth.user && _auth.user.role) || "";
+  const isAdmin = _role === "admin" || _role === "super_admin";
+
   const status = String(invoice?.status || "draft").toLowerCase();
   const terminal = status === "void" || status === "cancelled";
   const sent = status === "sent";
@@ -546,14 +569,14 @@ export default function InvoiceEditModal({ invoice, signInfo, onClose, onSaved }
                           type="number" step="0.01"
                           className="w-full px-2 py-1 text-sm rounded text-right"
                           style={{
-                            background: paid ? "#F3F4F6" : colors.surface,
+                            background: paid && !isAdmin ? "#F3F4F6" : colors.surface,
                             border: `1px solid ${colors.border}`,
-                            cursor: paid ? "not-allowed" : "text",
+                            cursor: paid && !isAdmin ? "not-allowed" : "text",
                           }}
                           value={li.quantity}
                           onChange={(e) => patchItem(i, { quantity: e.target.value })}
-                          readOnly={paid}
-                          aria-readonly={paid ? "true" : undefined}
+                          readOnly={paid && !isAdmin}
+                          aria-readonly={paid && !isAdmin ? "true" : undefined}
                           data-testid={`invoice-edit-line-${i}-qty`}
                         />
                       </td>
@@ -562,14 +585,14 @@ export default function InvoiceEditModal({ invoice, signInfo, onClose, onSaved }
                           type="number" step="0.01"
                           className="w-full px-2 py-1 text-sm rounded text-right"
                           style={{
-                            background: paid ? "#F3F4F6" : colors.surface,
+                            background: paid && !isAdmin ? "#F3F4F6" : colors.surface,
                             border: `1px solid ${colors.border}`,
-                            cursor: paid ? "not-allowed" : "text",
+                            cursor: paid && !isAdmin ? "not-allowed" : "text",
                           }}
                           value={li.unit_price}
                           onChange={(e) => patchItem(i, { unit_price: e.target.value })}
-                          readOnly={paid}
-                          aria-readonly={paid ? "true" : undefined}
+                          readOnly={paid && !isAdmin}
+                          aria-readonly={paid && !isAdmin ? "true" : undefined}
                           data-testid={`invoice-edit-line-${i}-price`}
                         />
                       </td>

@@ -125,7 +125,10 @@ beforeEach(() => {
 
 
 describe("InvoiceEditModal β — paid metadata-only bypass", () => {
-  it("1. paid: description editable; qty + price readonly", () => {
+  it("1. admin on paid: description + qty + price ALL editable "
+     + "(TD-paid-invoice-admin-edit-unblock · Feb-2026 — the pre-"
+     + "ticket readOnly on qty/price was inverted to unlock the "
+     + "existing BE ack path for admin + super_admin)", () => {
     render(
       <InvoiceEditModal
         invoice={_mkInvoice("paid")}
@@ -134,14 +137,21 @@ describe("InvoiceEditModal β — paid metadata-only bypass", () => {
         onSaved={() => {}}
       />,
     );
+    // Auth mock in this file is a fixed ``admin`` role (see
+    // ``vi.mock("@/auth", ...)`` at the top).  Expected post-ticket
+    // state: qty + price inputs are writable for admins so the
+    // existing EditLockConfirmDialog ack path (acknowledged_lock_bypass
+    // + confirm_edit_paid_invoice_number) is reachable.  Manager /
+    // owner regression lock lives in src/test/invoice-edit-modal.test.jsx
+    // under the "TD-paid-invoice-admin-edit-unblock" describe block.
     const qty = screen.getByTestId("invoice-edit-line-0-qty");
     const price = screen.getByTestId("invoice-edit-line-0-price");
-    expect(qty.getAttribute("readOnly")).not.toBeNull();
-    expect(qty.getAttribute("aria-readonly")).toBe("true");
-    expect(price.getAttribute("readOnly")).not.toBeNull();
-    expect(price.getAttribute("aria-readonly")).toBe("true");
+    expect(qty.readOnly).toBe(false);
+    expect(price.readOnly).toBe(false);
+    expect(qty.getAttribute("aria-readonly")).toBeNull();
+    expect(price.getAttribute("aria-readonly")).toBeNull();
     // Description-equivalent input (``invoice-edit-line-0-desc``)
-    // stays interactive — no readOnly / aria-readonly attrs.
+    // was already interactive pre-ticket; still is.
     const desc = screen.getByTestId("invoice-edit-line-0-desc");
     expect(desc.getAttribute("readOnly")).toBeNull();
     expect(desc.getAttribute("aria-readonly")).toBeNull();

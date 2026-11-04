@@ -13,10 +13,17 @@ import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, cleanup, fireEvent, waitFor } from "@testing-library/react";
 
-const { patchSpy, getSpy, postSpy } = vi.hoisted(() => ({
+const { patchSpy, getSpy, postSpy, authRef } = vi.hoisted(() => ({
   patchSpy: vi.fn(),
   getSpy: vi.fn(),
   postSpy: vi.fn(),
+  // TD-paid-invoice-admin-edit-unblock · Feb-2026 — mutable auth
+  // context so individual tests can flip between admin / manager /
+  // null without a re-import.  Default = null (no AuthProvider) so
+  // the pre-ticket test cases retain their original behavior
+  // (``isAdmin === false``), keeping the shipped banner + ack-dialog
+  // flows unchanged.
+  authRef: { current: null },
 }));
 
 vi.mock("@/api", () => ({
@@ -27,6 +34,16 @@ vi.mock("@/api", () => ({
   },
 }));
 
+// TD-paid-invoice-admin-edit-unblock · Feb-2026 — ``@/auth`` mock.
+// ``useAuth`` is now consumed by InvoiceEditModal to gate the
+// line-item qty / unit_price readOnly on the admin role.  The mock
+// returns ``null`` by default (matches the pre-ticket
+// AuthProvider-less render); flip ``authRef.current`` before
+// render in tests that need an admin / manager identity.
+vi.mock("@/auth", () => ({
+  useAuth: () => authRef.current,
+}));
+
 beforeEach(() => {
   patchSpy.mockReset();
   getSpy.mockReset();
@@ -35,6 +52,10 @@ beforeEach(() => {
   // mount. Give the mock a benign default so its `.then()` doesn't
   // blow up unrelated tests. Individual specs can still override.
   getSpy.mockResolvedValue({ items: [] });
+  // TD-paid-invoice-admin-edit-unblock · Feb-2026 — reset auth to
+  // the pre-ticket baseline (``null`` = no AuthProvider) so each
+  // test opts in to admin / manager via ``authRef.current = ...``.
+  authRef.current = null;
 });
 afterEach(() => cleanup());
 
@@ -241,5 +262,101 @@ describe("InvoiceEditModal", () => {
     expect(payload.confirm_edit_paid_invoice_number).toBe("INV-2026-100");
     expect(payload.confirm_edit_sent).toBeUndefined();
     expect(onSaved).toHaveBeenCalled();
+  });
+
+  // ─────────────────────────────────────────────────────────────
+  // TD-paid-invoice-admin-edit-unblock · Feb-2026 — admin + super_admin
+  // can type into line-item qty / unit_price on paid invoices; Save
+  // still routes through the shared <EditLockConfirmDialog> which arms
+  // the ``acknowledged_lock_bypass`` + typed invoice-number proof.
+  // Manager / owner keep the existing readOnly lock (matches the BE
+  // ``_require_staff`` narrow-role-widening contract).
+  // ─────────────────────────────────────────────────────────────
+  describe("TD-paid-invoice-admin-edit-unblock", () => {
+    const paidInvoice = () => ({ ...draftInvoice(), status: "paid",
+                                 amount_paid: 150 });
+
+    it("admin: qty and unit_price inputs are NOT readOnly on paid", () => {
+      authRef.current = { user: { role: "admin", tenant_id: "t-1" } };
+      render(<InvoiceEditModal invoice={paidInvoice()}
+                               onClose={() => {}} onSaved={() => {}} />);
+      const qty = screen.getByTestId("invoice-edit-line-0-qty");
+      const price = screen.getByTestId("invoice-edit-line-0-price");
+      expect(qty.readOnly).toBe(false);
+      expect(price.readOnly).toBe(false);
+      expect(qty.getAttribute("aria-readonly")).toBeNull();
+      expect(price.getAttribute("aria-readonly")).toBeNull();
+    });
+
+    it("super_admin: qty and unit_price inputs are NOT readOnly on paid", () => {
+      authRef.current = { user: { role: "super_admin", tenant_id: "t-1" } };
+      render(<InvoiceEditModal invoice={paidInvoice()}
+                               onClose={() => {}} onSaved={() => {}} />);
+      expect(screen.getByTestId("invoice-edit-line-0-qty").readOnly).toBe(false);
+      expect(screen.getByTestId("invoice-edit-line-0-price").readOnly).toBe(false);
+    });
+
+    it("manager: qty and unit_price inputs ARE readOnly on paid "
+       + "(preserves BE _require_staff narrower role widening)", () => {
+      authRef.current = { user: { role: "manager", tenant_id: "t-1" } };
+      render(<InvoiceEditModal invoice={paidInvoice()}
+                               onClose={() => {}} onSaved={() => {}} />);
+      expect(screen.getByTestId("invoice-edit-line-0-qty").readOnly).toBe(true);
+      expect(screen.getByTestId("invoice-edit-line-0-price").readOnly).toBe(true);
+    });
+
+    it("owner: qty and unit_price inputs ARE readOnly on paid", () => {
+      authRef.current = { user: { role: "owner", tenant_id: "t-1" } };
+      render(<InvoiceEditModal invoice={paidInvoice()}
+                               onClose={() => {}} onSaved={() => {}} />);
+      expect(screen.getByTestId("invoice-edit-line-0-qty").readOnly).toBe(true);
+      expect(screen.getByTestId("invoice-edit-line-0-price").readOnly).toBe(true);
+    });
+
+    it("no-auth (null): qty and unit_price inputs ARE readOnly on paid "
+       + "(safer default — never silently unlock without an identity)", () => {
+      authRef.current = null;
+      render(<InvoiceEditModal invoice={paidInvoice()}
+                               onClose={() => {}} onSaved={() => {}} />);
+      expect(screen.getByTestId("invoice-edit-line-0-qty").readOnly).toBe(true);
+      expect(screen.getByTestId("invoice-edit-line-0-price").readOnly).toBe(true);
+    });
+
+    it("admin paid edit of unit_price routes through "
+       + "<EditLockConfirmDialog> with acknowledged_lock_bypass + "
+       + "typed invoice-number proof", async () => {
+      authRef.current = { user: { role: "admin", tenant_id: "t-1" } };
+      patchSpy.mockResolvedValue({ ok: true, changed: true, invoice: {} });
+      render(<InvoiceEditModal invoice={paidInvoice()}
+                               onClose={() => {}} onSaved={() => {}} />);
+      // Admin edits unit_price — the input is now writable.
+      fireEvent.change(screen.getByTestId("invoice-edit-line-0-price"), {
+        target: { value: "999.99" },
+      });
+      // Save routes through the shared confirm dialog (not the β
+      // metadata-only short-circuit — unit_price is a financial field).
+      fireEvent.click(screen.getByTestId("invoice-edit-save"));
+      expect(screen.getByTestId("edit-lock-confirm-dialog")).toBeTruthy();
+      fireEvent.click(screen.getByTestId("edit-lock-confirm-continue"));
+      await waitFor(() => expect(patchSpy).toHaveBeenCalledTimes(1));
+      const [path, payload] = patchSpy.mock.calls[0];
+      expect(path).toBe("/quotes/inv-e2e-1");
+      // BE ack path 1: acknowledged_lock_bypass=true
+      expect(payload.acknowledged_lock_bypass).toBe(true);
+      // BE ack path 2: typed invoice-number proof
+      expect(payload.confirm_edit_paid_invoice_number).toBe("INV-2026-100");
+      // The money change is carried in the payload.
+      const edited = (payload.line_items || [])
+        .find((li) => Number(li.unit_price) === 999.99);
+      expect(edited).toBeTruthy();
+    });
+
+    it("admin paid invoice still renders invoice-edit-banner-paid "
+       + "(soft warning preserved — not removed by this ticket)", () => {
+      authRef.current = { user: { role: "admin", tenant_id: "t-1" } };
+      render(<InvoiceEditModal invoice={paidInvoice()}
+                               onClose={() => {}} onSaved={() => {}} />);
+      expect(screen.getByTestId("invoice-edit-banner-paid")).toBeTruthy();
+    });
   });
 });
