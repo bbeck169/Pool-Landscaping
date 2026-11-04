@@ -4495,3 +4495,19 @@ No code or test files modified in this ship. All three were verified pre-existin
   1. `TD-mobile-estimate-public-decline-whole-remove` lands and the mobile client no longer posts to the route.
   2. One-day smoke confirmation that no external API consumer (admin tools, partner integrations, Zapier, etc.) is calling the route — verify via a production access-log grep for `POST /api/portal/quotes/via-token/*/decline` over 7-30 days.
 - **Priority rationale:** P3 — the route sits dormant and costs nothing to keep.  Retirement is pure code-hygiene cleanup once the blockers clear.
+
+---
+
+### TD-schedule-date-navigator-current-date-label-mobile-parity · N/A
+
+**Decision:** No mobile parity ship required.
+
+**Rationale:** The web ticket `TD-schedule-date-navigator-current-date-label` hoisted the GridPanel's dynamic `grid-day-label` into the `[prev][Today][next]` toolbar triad (removing a `flex-1` spacer + bumping the label to `text-base font-bold`).  Mobile has no equivalent surface:
+
+- `mobile/src/components/schedule/ScheduleMonthView.tsx:70` — standalone "Today" jump-to-today Pressable on the month view header.  Not a toolbar triad; no adjacent dynamic date-label to hoist.
+- `mobile/src/hooks/useBreadcrumbs.ts:29` — breadcrumb tag string `today: "Today"`.  Not a navigator.
+- `mobile/src/lib/scheduleRangePresets.ts:53` — range-preset key, unrelated.
+
+No mobile UI exhibits the `[←][Today][→]`-with-spatially-detached-date-label pattern that the web ticket fixed.  Logged for future-audit explicitness; no mobile follow-up to schedule.
+
+**Status:** CLOSED — N/A.

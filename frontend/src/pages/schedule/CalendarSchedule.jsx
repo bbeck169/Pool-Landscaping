@@ -2805,6 +2805,21 @@ export function GridPanel({
         >
           <ChevronRight size={16} />
         </button>
+        {/* TD-schedule-date-navigator-current-date-label · Feb-2026 —
+            day label hoisted INTO the triad cluster so the actual
+            viewed date sits adjacent to [prev][Today][next] instead
+            of being pushed to the far right by a ``flex-1`` spacer.
+            Pre-ticket layout read as "always says Today" on wide
+            viewports because the dynamic date was visually detached.
+            text-base font-bold gives the date dominance over the
+            Today CTA (text-xs font-bold) without shouting. */}
+        <div
+          className="text-base font-bold ml-2"
+          style={{ color: colors.onSurface }}
+          data-testid="grid-day-label"
+        >
+          {dayLabel}
+        </div>
         {/* Feb-2026 · Batch #4 · Item 3 (continuation) — the refresh
             affordance was hoisted to the CalendarSchedule top-level
             toolbar so it renders on Calendar (month/agenda) modes
@@ -2813,9 +2828,6 @@ export function GridPanel({
             leaves the GridPanel without its own local refresh — one
             testid per page, no ambiguity for automation. */}
         <div className="flex-1" />
-        <div className="text-sm font-semibold" style={{ color: colors.onSurface }} data-testid="grid-day-label">
-          {dayLabel}
-        </div>
       </div>
 
       {/* Bulk-action pill row — Feb-2026 HOTFIX (user report, live):
