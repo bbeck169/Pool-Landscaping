@@ -97,6 +97,7 @@ describe("InvoiceEditModal", () => {
   it("renders all editable fields for a draft invoice", () => {
     render(<InvoiceEditModal invoice={draftInvoice()} onClose={() => {}} onSaved={() => {}} />);
     expect(screen.getByTestId("invoice-edit-modal")).toBeTruthy();
+    expect(screen.getByTestId("invoice-edit-title-input")).toBeTruthy();
     expect(screen.getByTestId("invoice-edit-customer-id")).toBeTruthy();
     expect(screen.getByTestId("invoice-edit-invoice-number")).toBeTruthy();
     expect(screen.getByTestId("invoice-edit-line-items")).toBeTruthy();
@@ -544,6 +545,86 @@ describe("InvoiceEditModal", () => {
       )).toBeNull();
       // PATCH never fired.
       expect(patchSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────
+  // TD-paid-invoice-admin-edit-title-field · Feb-2026
+  // Top-level ``title`` editor (mirrors Quote.title in
+  // backend/models.py).  Editable at all times; BE whitelists it
+  // in _EDITABLE_FIELDS + _METADATA_ONLY_TOP_FIELDS so a title-
+  // only edit on a paid invoice rides the β bypass with zero FE
+  // friction.
+  // ─────────────────────────────────────────────────────────────
+  describe("TD-paid-invoice-admin-edit-title-field", () => {
+    const paidInv = () => ({
+      ...draftInvoice(),
+      status: "paid",
+      tax_rate: 0,
+      discount_amount: 0,
+      amount_paid: 150,
+      total: 150,
+      title: "Pre-existing title",
+    });
+
+    it("renders the title input defaulted from inv.title", () => {
+      render(<InvoiceEditModal
+        invoice={{ ...draftInvoice(), title: "Spring opening" }}
+        onClose={() => {}} onSaved={() => {}} />);
+      const titleInput = screen.getByTestId("invoice-edit-title-input");
+      expect(titleInput).toBeTruthy();
+      // TextInput's data-testid lands on the inner <input>, so the
+      // ``.value`` reflects the defaulted form state.
+      expect(titleInput.value).toBe("Spring opening");
+    });
+
+    it("renders empty string when inv.title is undefined", () => {
+      render(<InvoiceEditModal invoice={draftInvoice()}
+                               onClose={() => {}} onSaved={() => {}} />);
+      expect(screen.getByTestId("invoice-edit-title-input").value).toBe("");
+    });
+
+    it("edit title on a draft invoice -> PATCH body carries "
+       + "the new title", async () => {
+      patchSpy.mockResolvedValue({ ok: true, changed: true, invoice: {} });
+      render(<InvoiceEditModal
+        invoice={{ ...draftInvoice(), title: "old" }}
+        onClose={() => {}} onSaved={() => {}} />);
+      fireEvent.change(screen.getByTestId("invoice-edit-title-input"), {
+        target: { value: "Renamed invoice" },
+      });
+      fireEvent.click(screen.getByTestId("invoice-edit-save"));
+      await waitFor(() => expect(patchSpy).toHaveBeenCalledTimes(1));
+      const [path, payload] = patchSpy.mock.calls[0];
+      expect(path).toBe("/quotes/inv-e2e-1");
+      expect(payload.title).toBe("Renamed invoice");
+    });
+
+    it("edit title on a PAID invoice -> PATCH fires directly, "
+       + "no EditLockConfirmDialog, no StatusReversionWarning, "
+       + "no category dialog (β metadata-only bypass)", async () => {
+      authRef.current = { user: { role: "admin", tenant_id: "t-1" } };
+      patchSpy.mockResolvedValue({ ok: true, changed: true, invoice: {} });
+      render(<InvoiceEditModal invoice={paidInv()}
+                               onClose={() => {}} onSaved={() => {}} />);
+      fireEvent.change(screen.getByTestId("invoice-edit-title-input"), {
+        target: { value: "Paid-invoice retitle" },
+      });
+      fireEvent.click(screen.getByTestId("invoice-edit-save"));
+      // Zero friction — no dialogs in the DOM.
+      expect(screen.queryByTestId("edit-lock-confirm-dialog")).toBeNull();
+      expect(screen.queryByTestId(
+        "invoice-edit-status-reversion-warning-dialog",
+      )).toBeNull();
+      expect(screen.queryByTestId(
+        "invoice-edit-category-change-confirm-dialog",
+      )).toBeNull();
+      await waitFor(() => expect(patchSpy).toHaveBeenCalledTimes(1));
+      const [, payload] = patchSpy.mock.calls[0];
+      expect(payload.title).toBe("Paid-invoice retitle");
+      // β metadata-only bypass: no ack flag attached.
+      expect(payload.acknowledged_lock_bypass).toBeUndefined();
+      expect(payload.confirm_edit_paid_invoice_number).toBeUndefined();
     });
   });
 });

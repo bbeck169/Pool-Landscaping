@@ -136,6 +136,14 @@ export default function InvoiceEditModal({ invoice, signInfo, onClose, onSaved }
     terms: invoice?.terms || "",
     currency: invoice?.currency || "USD",
     invoice_number: invoice?.invoice_number || "",
+    // TD-paid-invoice-admin-edit-title-field · Feb-2026 — top-level
+    // invoice display title.  Mirrors ``Quote.title`` from
+    // ``backend/models.py``; renders as the invoice page header in
+    // ``QuoteInvoiceDetail.jsx``.  Editable at all times (not paid-
+    // gated); BE whitelists it in ``_EDITABLE_FIELDS`` +
+    // ``_METADATA_ONLY_TOP_FIELDS`` so a title-only edit on a paid
+    // invoice rides the β bypass with zero friction.
+    title: invoice?.title || "",
     reason: "",
   }));
 
@@ -532,6 +540,20 @@ export default function InvoiceEditModal({ invoice, signInfo, onClose, onSaved }
               link and generate a new one. The old link URL will stop working.
             </div>
           ) : null}
+
+          {/* TD-paid-invoice-admin-edit-title-field · Feb-2026 —
+              top-level invoice display title (mirrors Quote.title
+              in backend/models.py).  Editable at all times for
+              admin+super_admin; BE whitelists it in
+              _METADATA_ONLY_TOP_FIELDS so a title-only edit on a
+              paid invoice rides the β bypass with zero FE friction. */}
+          <TextInput
+            label="Title"
+            value={form.title}
+            onChange={(e) => set("title", e.target.value)}
+            testid="invoice-edit-title-input"
+            placeholder="e.g. Pool opening — 123 Main St"
+          />
 
           {/* Customer + Invoice number */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

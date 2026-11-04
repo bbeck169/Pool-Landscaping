@@ -67,6 +67,13 @@ _EDITABLE_FIELDS = [
     "customer_id", "line_items", "discount_amount", "discount_type",
     "promo_code", "tax_rate", "due_date", "notes", "memo",
     "private_notes", "terms", "currency", "invoice_number",
+    # TD-paid-invoice-admin-edit-title-field · Feb-2026 — top-level
+    # invoice ``title`` (mirrors Quote.title; renders as the invoice
+    # page header on QuoteInvoiceDetail).  Money-neutral; audit-diff
+    # captures it.  Treated as metadata-only in
+    # ``_METADATA_ONLY_TOP_FIELDS`` so a title-only edit on a paid
+    # invoice fires with zero FE friction per operator directive.
+    "title",
     # K48 verify-hotfix · Feb-2026 — invoice-level Business Unit tag.
     # Money-NEUTRAL (subtotal / tax / total unchanged), so PATCH can
     # carry a BU-only payload without a ``line_items`` array.  Written
@@ -104,6 +111,14 @@ class InvoiceEditBody(BaseModel):
     terms: Optional[str] = None
     currency: Optional[str] = None
     invoice_number: Optional[str] = None
+    # TD-paid-invoice-admin-edit-title-field · Feb-2026 — top-level
+    # invoice display title (mirrors Quote.title in
+    # ``backend/models.py``).  Editable at all times for the
+    # admin+super_admin role whitelist; treated as metadata-only in
+    # ``_METADATA_ONLY_TOP_FIELDS`` so a title-only edit on a paid
+    # invoice rides the β bypass without an ack prompt.  Money-
+    # neutral; audit-diff writes it to ``invoice_edit_history``.
+    title: Optional[str] = None
     # K48 verify-hotfix · Feb-2026 — invoice-level Business Unit tag
     # written by the Revenue-by-Category drill-down.  Money-neutral;
     # the router applies via ``$set`` and does NOT require a
@@ -155,6 +170,13 @@ _METADATA_ONLY_TOP_FIELDS = {
     "business_unit", "business_unit_id",
     "category",  # forward-compat; not in InvoiceEditBody today
     "notes", "memo", "private_notes",
+    # TD-paid-invoice-admin-edit-title-field · Feb-2026 — top-level
+    # ``title`` field (invoice display name, mirrors Quote.title in
+    # backend/models.py).  Treated as metadata so a title-only edit
+    # on a paid invoice rides the β bypass with zero FE friction,
+    # per operator directive ("edit categoryies descriptions titles
+    # on all paid invoices with no block").
+    "title",
 }
 # Legacy aliases — same contents as the metadata sets. Preserves
 # the shipped name for any external caller that imports them, and
