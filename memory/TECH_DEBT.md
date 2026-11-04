@@ -4597,3 +4597,39 @@ The web ticket's scope (line-item qty + unit_price unlock, category-change retro
 Removing the dialog means admins can change `line_items[].category` or `income_category_id` on a paid invoice with **no in-UI warning** that monthly revenue-by-category reports for the paid-in period will retroactively re-slice.  The audit log remains the sole trail.  Operator explicitly accepted this trade-off.
 
 **Status:** CLOSED — reverted in the follow-up commit to `5ab10f247`.
+
+---
+
+### TD-invoice-edit-paid-bypass-be-tests-stale-assertions · P3 BE test hygiene
+
+**Status:** OPEN — not blocking any ship.
+
+**Failing cases:**
+- `backend/tests/test_invoice_edit.py::test_edit_paid_without_number_returns_409`
+- `backend/tests/test_invoice_edit.py::test_edit_paid_with_wrong_number_returns_409`
+
+**Root cause:**
+Both tests assert that a `notes`-only PATCH to a paid invoice without a `confirm_edit_paid_invoice_number` (or with a wrong one) returns **409 `financial_edit_locked_on_paid`**.  The Feb-2026 β metadata-only bypass that shipped in `routers/invoice_edit.py:452-495` intentionally short-circuits the 409 gate when `_is_metadata_only_diff(provided, inv)` returns `True`.  Because `notes` is in `_METADATA_ONLY_TOP_FIELDS`, a notes-only PATCH legitimately returns **200**, not 409.
+
+The test assertions were written for the pre-β policy and were not updated when the β bypass shipped.  They are stale, not regressions.
+
+**Verification of pre-existing status:**
+Confirmed via stash-and-rerun on both current ticket commits (`b1f00f961` + `88df784fc`):
+```
+git stash push backend/routers/invoice_edit.py
+pytest tests/test_invoice_edit.py::test_edit_paid_without_number_returns_409
+→ FAIL (same AssertionError: 200 == 409)
+git stash pop
+```
+Both failures reproduce identically with this session's BE changes stashed = unrelated pre-existing drift.
+
+**Fix shape (not in scope for this ticket — follow-up):**
+1. Re-author `test_edit_paid_without_number_returns_409` to assert that a notes-only PATCH on paid returns **200** and the audit log captures the change (β bypass behavior).  Rename to `test_edit_paid_metadata_only_notes_bypasses_409`.
+2. Re-author `test_edit_paid_with_wrong_number_returns_409` similarly — wrong number should still succeed if the diff is metadata-only (the number is only checked on financial-field diffs).  Rename to `test_edit_paid_metadata_only_wrong_number_still_bypasses`.
+3. Add a sibling case `test_edit_paid_financial_field_without_ack_still_409` that PATCHes a `line_items[].unit_price` without ack or typed proof and asserts the 409 gate is intact.  This protects the ack-path behavior preserved under `TD-paid-invoice-admin-edit-unblock`.
+
+**Priority rationale:** P3 — test hygiene only.  Zero production impact.  BE routes behave correctly; only the tests' expectations are stale.  Not blocking any ship.
+
+**Related tickets:**
+- `TD-paid-invoice-admin-edit-unblock` (`2b46d3058` / `5ab10f247` / `b1f00f961`)
+- `TD-paid-invoice-admin-edit-title-field` (`88df784fc`)
