@@ -539,14 +539,12 @@ class _SessionUpsertIn(BaseModel):
 
 
 def _assert_handoff_supported(slug: str) -> None:
-    # Phase 55-b · Aug-2026 — the Homeworks (Copilot CRM) importer
-    # rides on the same challenge-handoff plumbing (session store,
-    # bookmarklet, import-token JWT) as the wholesale suppliers even
-    # though ``homeworks`` isn't a wholesale connector. Whitelist the
-    # slug here so the operator's bookmarklet can POST cookies into
-    # ``supplier_sessions`` without a wholesale-supplier registration.
-    if slug == "homeworks":
-        return
+    # TD-homeworks-connection-remove-audit · Feb-2026 — the Phase
+    # 55-b "homeworks" whitelist branch was removed as part of the
+    # K55 integration sunset follow-up.  The importer that used
+    # this plumbing was removed in K55.b; the slug now falls
+    # through to the standard unknown-supplier path and returns
+    # 404, which is correct post-sunset behavior.
     connector = CONNECTORS.get(slug)
     if connector is None:
         raise HTTPException(404, {"error": "unknown_supplier",
@@ -607,10 +605,12 @@ async def upsert_supplier_session(
     _require_session_role(user)
     tenant_id = _require_tenant(user)
     _assert_handoff_supported(slug)
-    # Phase 55-b · Aug-2026 — the ``homeworks`` slug rides the same
-    # session upload path but has no row in ``pricebook_suppliers``.
-    if slug != "homeworks":
-        await _get_supplier_or_404(tenant_id, slug)
+    # TD-homeworks-connection-remove-audit · Feb-2026 — the Phase
+    # 55-b ``slug != "homeworks"`` escape hatch was removed with the
+    # K55 integration sunset follow-up.  _assert_handoff_supported()
+    # now rejects "homeworks" with 404 before we reach here, so the
+    # supplier lookup runs unconditionally.
+    await _get_supplier_or_404(tenant_id, slug)
 
     normalized: List[Dict[str, Any]] = []
     for c in body.cookies:
