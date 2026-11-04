@@ -18,8 +18,9 @@ Design contract:
     Only INSERTs into ``db.payments``, ``db.invoices``, and
     ``db.stripe_subscriptions``. Invoices minted here NEVER touch
     ``db.quotes`` (canonical) — they land in the ancillary
-    ``db.invoices`` collection (matches the Homeworks importer
-    pattern in ``services/homeworks_mcp/active_customers_importer.py``).
+    ``db.invoices`` collection (same side-collection pattern that
+    the retired Homeworks importer used; see K55.b sunset
+    tombstones in server.py for context).
   * **Historical only** — no receipt fires, no dashboard-revenue
     recalc side effects, no email/SMS. Every write is silent.
   * **Rate limited** to 50 concurrent Stripe API calls (matches the
