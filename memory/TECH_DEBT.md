@@ -4511,3 +4511,26 @@ No code or test files modified in this ship. All three were verified pre-existin
 No mobile UI exhibits the `[←][Today][→]`-with-spatially-detached-date-label pattern that the web ticket fixed.  Logged for future-audit explicitness; no mobile follow-up to schedule.
 
 **Status:** CLOSED — N/A.
+
+---
+
+### TD-pricebook-homeworks-costs-sunset-decision · P3 · follow-up from TD-homeworks-connection-remove-audit
+
+**Status:** OPEN — blocked on operator survey.
+
+**Context:**
+During `TD-homeworks-connection-remove-audit` (Feb-2026) the audit identified that `routers/pricebook_manual_pricing.py` still actively reads the historical `homeworks_costs` field on pricebook items and exposes `homeworks_costs_summary` on the `GET /pricebook/items` response (lines 14, 271, 327, 345).
+
+Per the K55.b sunset contract ("Historical `homeworks_*` audit fields on customers / jobs / invoices / quotes / pricebook_items / properties / suppliers are preserved intact"), the audit explicitly deferred this surface and operator agreed to hold until a usage survey is complete.
+
+**Current usage:**
+The `_classify_bucket()` helper at :269-275 returns a "hydratable" bucket classification when a pricebook item has `homeworks_costs` with non-zero signal values (`materialCost`, `wholesaleCost`, `equipmentCost`, `subcontractCost`, or `markup`).  This feeds a UI bucket that offers to backfill `supplier_prices` from the historical HW import data.
+
+**Decision needed from operator:**
+1. Are any live tenants still using the "hydratable from HW costs" bucket to backfill supplier prices, or is the data effectively archival?
+2. If archival: propose follow-up ticket to rename the field to a generic name (`import_cost_snapshot` or similar) OR remove the read/exposure entirely while preserving the Mongo data at rest.
+3. If still used: leave in place; promote this ticket to CLOSED (preservation confirmed).
+
+**Blocker:** Operator survey of pricebook consumers across tenants.  Do NOT touch the field, the read path, or the response envelope until this survey is complete — removal could silently break a backfill flow.
+
+**Priority rationale:** P3 — purely cosmetic debt (naming + sunset tombstones).  Zero bug impact.  No deadline.
