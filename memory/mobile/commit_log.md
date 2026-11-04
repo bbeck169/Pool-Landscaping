@@ -2504,3 +2504,10 @@
 - **Changes**: new OutstandingInvoicesTile; lifted /payments/summary feeds tile + RevenueChart pill; manager standalone display-only row; invoices.tsx ?filter param. Filed P3s: manager-invoices-403-fallback, action-cards-status-param-dead.
 - **Files modified**: mobile/app/(app)/index.tsx, mobile/app/invoices.tsx, mobile/src/components/dashboard/OutstandingInvoicesTile.tsx, mobile/__tests__/outstanding-invoices-tile.test.tsx
 - **Web files referenced**: frontend/src/components/dashboard/OutstandingInvoicesTile.jsx, frontend/src/pages/admin/Dashboard.jsx (563-605)
+
+## Iteration 198 — Schedule service-category chip filter removed (web 5b97b57b3 parity)
+- **Commit**: `44e540e2d` · this doc commit
+- **Date**: 2026-11-04
+- **Changes**: deleted chips component + lib + hook; calendar jobsUrl/month scope crew/tech only; crew write-through guard inlined; m3a suite → schedule-filters-declutter (declutter D1–D5 + crew write-through preserved).
+- **Files modified**: mobile/app/(app)/schedule/calendar.tsx, mobile/__tests__/schedule-filters-declutter.test.tsx (renamed from m3a-…), mobile/__tests__/m3c-schedule-month-view.test.tsx; deleted mobile/src/components/schedule/ServiceCategoryChips.tsx, mobile/src/lib/scheduleServiceCategory.ts, mobile/src/hooks/useScheduleServiceCategory.ts
+- **Web files referenced**: frontend/src/pages/schedule/CalendarSchedule.jsx (5b97b57b3 diff)

@@ -4444,3 +4444,16 @@ No code or test files modified in this ship. All three were verified pre-existin
   6. Keep the BE endpoint acceptance — same posture as web (BE untouched).
 - **Blocking signal:** **wait until operator confirms the web change renders cleanly in production** before touching mobile. If the web removal reveals an edge case (e.g., a tenant that was relying on the filter to hide a category-mismatched visit), the operator may ask for a different FE remediation on mobile.
 - **Priority rationale:** P2 (not P3) because leaving mobile and web filter behaviours inconsistent will confuse any tech using both surfaces on the same job — "why does web show all jobs today but my phone still has the Pool chip?"
+
+## TD-mobile-schedule-service-category-filter-remove · SHIPPED `44e540e2d` · Nov-2026 (mobile parity for 5b97b57b3)
+- Deleted `src/components/schedule/ServiceCategoryChips.tsx`, `src/lib/scheduleServiceCategory.ts`, and (not in the
+  ticket list) `src/hooks/useScheduleServiceCategory.ts`. `calendar.tsx`: imports / state / mount / forced-refetch
+  effect / load() dep removed; `jobsUrl` + `monthScopeQuery` = crew / tech only; TD breadcrumbs at 3 sites. BE untouched.
+- Entanglement handled: `canWriteThroughJobs` also carried the crew-filter offline cache-replace guard → kept inline
+  (`writeThroughOk = !crewFiltered`). The old m3a suite also held unrelated Schedule-declutter D1–D5 locks + crew
+  write-through tests → `git mv` to `schedule-filters-declutter.test.tsx`, chip tests dropped, R1–R3 removal locks added.
+  m3c W9 re-pointed to crew scope. Mobile has no MonthCustomGrid; m3b MarkOpen suite untouched + green.
+- Post-edit grep: 0 refs in app/ + src/; tests only assert absence. Live (admin, Expo web): no chip row,
+  `/jobs?start=2026-10-28&end=2026-11-18` (no service_category), header "663 jobs in window".
+- Residue (harmless, not cleaned): devices that had picked a bucket keep an orphan AsyncStorage key
+  `schedule.service_category`; nothing reads it any more.
