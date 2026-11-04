@@ -4372,3 +4372,57 @@ Context triage pass filing the three P3 entries above (`TD-dashboard-property-co
 `TD-customer-portal-slice3-service-request-minimal-payload`) so they survive context compaction.
 No code or test files modified in this ship. All three were verified pre-existing via scoped
 `git stash` + rerun on a clean tree in prior sessions.
+
+## TD-main-bundle-code-split · OPEN · P3 FE perf · Feb-2026
+- **Reporter:** Deployment-readiness health check (session HEAD `c47d6c807`, build log at build time 2026-11-03).
+- **Current:** `yarn build` emits `build/static/js/main.c4971992.js` = **500.98 KB** (1 KB over the 500 KB soft-flag the readiness checklist uses). Second largest is `2019.81962c7b.chunk.js` = 140.23 KB; the next three chunks are 95-110 KB each.
+- **Why it matters:** the main chunk is loaded synchronously on every first paint. 500+ KB of JS gzipped + parse time penalizes cold admin loads on 3G/4G, and the mobile web portal (which shares the same bundle unless split per-entry) inherits the weight.
+- **Fix shape (lazy-load low-traffic routes):**
+  1. `grep -rn "import.*from.*@/pages/admin" frontend/src/App.jsx frontend/src/routes.*` to enumerate currently eager imports.
+  2. Promote low-traffic admin pages to `React.lazy` + `<Suspense fallback={<Skeleton/>}>`: start with `/reports/*`, `/admin/ai-*`, `/admin/diagnostics/*`, `/onboarding/*`, `/widget-embed/*`, `/settings/ai-credits`.
+  3. Rebuild + confirm each split lands as a `p-*` chunk and the main chunk shrinks. Target: main ≤ 400 KB; two or three new route-level chunks around 50-100 KB each.
+  4. Keep the `verify-no-stale-chunks` post-build gate green.
+- **Expected impact:** main chunk into the 300-400 KB range; first-paint JS payload drops ~20%; every route-split page adds a one-time deferred network hop on first visit.
+- **Blocking signal:** none (deploy-safe at current size); a natural `App.jsx` or routes touch folds this in.
+
+## TD-fleet-tests-pythonpath-fix · OPEN · P3 BE test hygiene · Feb-2026
+- **Reporter:** Deployment-readiness health check (session HEAD `c47d6c807`). Running `pytest backend/tests/` from `/app/backend` produces 6 collection errors; running from `/app` with `PYTHONPATH=/app` works.
+- **Observed symptom:** `ModuleNotFoundError: No module named 'backend'` on these six files:
+  - `tests/test_fleet_board.py`
+  - `tests/test_fleet_checkin.py`
+  - `tests/test_fleet_membership.py`
+  - `tests/test_fleet_notification_dedup.py`
+  - `tests/test_fleet_ping_ingestion.py`
+  - `tests/test_hard_delete_preview_cascade.py`
+  All six share the pattern `from backend.tests._fleet_helpers import …`.
+- **Root cause:** `backend/pytest.ini` sets `pythonpath = .` (which resolves to `/app/backend` when pytest is invoked from there). The fleet helpers live at `backend/tests/_fleet_helpers.py` and the test files try to import them via the fully-qualified `backend.tests._fleet_helpers` path, which only resolves when `pythonpath` includes `/app`.
+- **Fix shape (pick the lower-blast-radius option):**
+  - **(a) recommended:** rewrite the six imports to `from tests._fleet_helpers import …` — zero config change, keeps the current `pythonpath = .` convention. One-line edit per file.
+  - **(b) alternative:** add `rootdir = ..` + `pythonpath = . ..` to `pytest.ini` so both `/app` and `/app/backend` roots resolve. Risk: changes resolution order for every other test file in the suite.
+- **Blocking signal:** none at runtime — these tests run fine under CI with the correct invocation; the ambiguity only bites a human running `pytest backend/tests/` from inside `backend/`.
+
+## TD-frontend-env-example-sync · OPEN · P3 docs · Feb-2026
+- **Reporter:** Deployment-readiness health check (session HEAD `c47d6c807`).
+- **Observed gap:** `frontend/.env.example` documents **2** of the **6** `REACT_APP_*` keys that `frontend/src/` actually reads (verified by `grep -rhoE "process\.env\.REACT_APP_[A-Z_]+" frontend/src/`).
+- **Current `frontend/.env.example` contains:**
+  - `REACT_APP_BACKEND_URL`
+  - `REACT_APP_GOOGLE_API_KEY`
+  - `WDS_SOCKET_PORT` (not a code consumer — CRA quirk)
+- **Keys the code reads but the example omits:**
+  - `REACT_APP_GOOGLE_MAPS_API_KEY` — Google Maps JS SDK key (map tiles + Directions). Separate from `REACT_APP_GOOGLE_API_KEY` in current code; both are read.
+  - `REACT_APP_HERE_API_KEY` — HERE Maps fallback / provider pivot.
+  - `REACT_APP_PUBLIC_ENV` — surfaced on the admin footer / diagnostics; "preview" vs "production" string.
+  - `REACT_APP_STRIPE_PUBLISHABLE_KEY` — Stripe.js publishable key (invoice payment widget).
+- **Fix shape (docs-only, ~10 lines):** append the four keys to `frontend/.env.example` with placeholder values and one-line inline comments describing where each is consumed. No code change, no commit requires test. Suggested block:
+  ```
+  # Google Maps JS SDK (separate from REACT_APP_GOOGLE_API_KEY above; both are read)
+  REACT_APP_GOOGLE_MAPS_API_KEY=
+  # HERE Maps fallback / provider pivot
+  REACT_APP_HERE_API_KEY=
+  # Public environment string surfaced on admin footer and diagnostics
+  REACT_APP_PUBLIC_ENV=preview
+  # Stripe.js publishable key (invoice payment widget)
+  REACT_APP_STRIPE_PUBLISHABLE_KEY=
+  ```
+- **Note:** the readiness report also mentioned `REACT_APP_MAPS_PROVIDER` as a code consumer; recheck confirmed that key is set in `.env` but is NOT read anywhere in `frontend/src/`. Either it is a leftover from a prior provider-switch flag or it is consumed by craco config / build-time. Do not add it to `.env.example` without confirming a current consumer.
+- **Blocking signal:** none — missing-key defaults in CRA are empty string, which the SDK init layers tolerate by falling back to no-op / provider error.
