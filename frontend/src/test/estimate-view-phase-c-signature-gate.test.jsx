@@ -131,14 +131,20 @@ describe("EstimateView · Phase C · signature-before-approve gate", () => {
       .toBeNull();
   });
 
-  it("Decline is NEVER gated by signature", async () => {
+  it("Decline is NEVER gated by signature (now: Decline absent entirely)", async () => {
+    // TD-estimate-public-decline-whole-remove-plus-reason-optional ·
+    // Feb-2026 — the whole-estimate Decline CTA was removed from the
+    // customer surface; the invariant of "Decline is never gated by
+    // signature" collapses to "Decline is not rendered at all", so
+    // the signature-gate hint on Approve remains the only user-
+    // visible blocker.
     await renderView({
       require_signature_before_approve: true,
       signature_status: null,
     });
-    const declineBtn =
-      screen.getByTestId("estimate-toolbar-customer-decline");
-    expect(declineBtn.disabled).toBe(false);
+    expect(
+      screen.queryByTestId("estimate-toolbar-customer-decline"),
+    ).toBeNull();
   });
 
   it("Sign-now CTA dispatches open-signature-flow with estimate + token",

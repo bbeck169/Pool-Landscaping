@@ -28,14 +28,6 @@ import {
 } from "lucide-react";
 import { api, TOKEN_KEY } from "@/api";
 import "@/components/InvoiceView.css";
-// PORTAL-QUOTE-DECLINE-REQUIRE-REASON · Feb-2026 — shared enum +
-// bounds for the required decline-reason contract.  Sibling file:
-// ``backend/services/quote_decline_reasons.py``.
-import {
-  DECLINE_REASON_CATEGORIES,
-  DECLINE_REASON_TEXT_MIN_LEN,
-  DECLINE_REASON_TEXT_MAX_LEN,
-} from "@/pages/portal/quoteDeclineReasons";
 import "./EstimateView.css";
 import "@/components/documents/docMobile.css";
 // Phase 7C · Feb-2026 — runtime template loader + style helper.
@@ -107,12 +99,13 @@ export default function EstimateView({
   const [busy, setBusy] = useState(false);
   const [changesOpen, setChangesOpen] = useState(false);
   const [changesMsg, setChangesMsg] = useState("");
-  const [declineOpen, setDeclineOpen] = useState(false);
-  const [declineMsg, setDeclineMsg] = useState("");
-  // PORTAL-QUOTE-DECLINE-REQUIRE-REASON · Feb-2026 — new structured
-  // category state; shared across both render surfaces (Flipbook +
-  // classic ModalScrim) via the common ``submitDecline`` handler.
-  const [declineCategory, setDeclineCategory] = useState("");
+  // TD-estimate-public-decline-whole-remove-plus-reason-optional ·
+  // Feb-2026 — the whole-estimate ``decline`` flow was removed per
+  // operator directive.  Customer-facing surfaces no longer expose
+  // an Approve-vs-Decline toolbar; declines happen per-line only.
+  // The BE route ``POST /portal/quotes/via-token/{token}/decline``
+  // is intentionally LEFT INTACT in ``routers/estimate_viewer.py``
+  // until mobile parity lands + the P3 sibling ticket retires it.
   const [toast, setToast] = useState("");
   // Feb-2026 · Phase A — per-line decline UX state. Hooks live at
   // the top of the component so they're never conditionally called.
@@ -178,37 +171,10 @@ export default function EstimateView({
   const accept = () => {
     if (!window.confirm("Approve this estimate?")) return;
     // Feb-2026 · Phase A — customer path uses the new path-based
-    // token endpoint (approve/decline), which is idempotent + emits
+    // token endpoint (approve), which is idempotent + emits
     // ``quote_accepted`` for downstream Phase-B notification wiring.
     if (token) call2(`/portal/quotes/via-token/${encodeURIComponent(token)}/approve`);
     else call(`/quotes/${estimateId}/accept`);
-  };
-  const submitDecline = () => {
-    // PORTAL-QUOTE-DECLINE-REQUIRE-REASON · Feb-2026 — structured
-    // payload only.  Mirror server-side validation client-side so
-    // the submit button stays correctly disabled; redundant trim +
-    // length check here is defense-in-depth against stale state.
-    const cat = (declineCategory || "").trim();
-    const txt = (declineMsg || "").trim();
-    if (!cat) return;
-    if (txt.length < DECLINE_REASON_TEXT_MIN_LEN) return;
-    if (txt.length > DECLINE_REASON_TEXT_MAX_LEN) return;
-    const body = {
-      decline_reason_category: cat,
-      decline_reason_text: txt,
-    };
-    if (token) {
-      // Phase A path-based token endpoint (no ``?token=`` query).
-      call2(
-        `/portal/quotes/via-token/${encodeURIComponent(token)}/decline`,
-        body,
-      );
-    } else {
-      call(`/quotes/${estimateId}/decline`, body);
-    }
-    setDeclineOpen(false);
-    setDeclineMsg("");
-    setDeclineCategory("");
   };
   const submitChanges = () => {
     if (!changesMsg.trim()) return;
@@ -439,7 +405,6 @@ export default function EstimateView({
         <EstimateFlipbook
           data={data}
           onAccept={accept}
-          onDeclineClick={() => setDeclineOpen(true)}
           onDownloadPdf={openPdf}
           signatureGateBlocked={signatureGateBlocked}
           onSignNow={openSignNowFlow}
@@ -448,26 +413,12 @@ export default function EstimateView({
           toast={toast}
           magicToken={token || null}
         />
-        {/* Decline modal remains owned by the classic
-            EstimateView because the flipbook accept page only
-            needs to trigger it.  PORTAL-QUOTE-DECLINE-REQUIRE-
-            REASON · Feb-2026 — now rendered via the shared
-            ``<EstimateDeclineModal>`` component so the Flipbook
-            + classic surfaces stay byte-identical in UX. */}
-        <EstimateDeclineModal
-          open={declineOpen}
-          category={declineCategory}
-          text={declineMsg}
-          onCategoryChange={setDeclineCategory}
-          onTextChange={setDeclineMsg}
-          onCancel={() => {
-            setDeclineOpen(false);
-            setDeclineMsg("");
-            setDeclineCategory("");
-          }}
-          onSubmit={submitDecline}
-          busy={busy}
-        />
+        {/* TD-estimate-public-decline-whole-remove-plus-reason-
+            optional · Feb-2026 — the shared whole-estimate
+            ``<EstimateDeclineModal>`` that used to sit here was
+            removed with the Flipbook Decline CTA.  Per-line
+            declines (``estimate-line-item-decline-*``) still
+            render on the classic branch below. */}
       </div>
     );
   }
@@ -492,8 +443,7 @@ export default function EstimateView({
             signatureGateBlocked ? "Sign to enable Approve" : null
           }
           onSignNow={signatureGateBlocked ? openSignNowFlow : undefined}
-          onDecline={locked || !actionable
-            ? undefined : () => setDeclineOpen(true)}
+          onDecline={undefined}
           onRequestChanges={locked || !actionable
             ? undefined : () => setChangesOpen(true)}
           hideActions={locked || !actionable}
@@ -568,7 +518,31 @@ export default function EstimateView({
                       </button>
                       <button
                         className="iv-btn ev-btn-decline"
-                        onClick={() => setDeclineOpen(true)}
+                        onClick={async () => {
+                          // TD-estimate-public-decline-whole-remove-plus-
+                          // reason-optional · Feb-2026 — admin toolbar
+                          // Decline is intentionally preserved (ADMIN
+                          // surface only, different BE route).  Simple
+                          // window.confirm + direct POST to the admin
+                          // ``/quotes/{id}/decline`` endpoint.  The
+                          // customer-facing whole-estimate decline modal
+                          // (which previously supplied the structured
+                          // reason + category form here too) was
+                          // removed with the rest of the customer
+                          // whole-estimate decline flow.
+                          if (!window.confirm("Decline this estimate?")) return;
+                          try {
+                            setBusy(true);
+                            await api.post(`/quotes/${estimateId}/decline`, {});
+                            await load();
+                            setToast("Declined");
+                          } catch (e) {
+                            setToast(e?.message || "Failed");
+                          } finally {
+                            setBusy(false);
+                            setTimeout(() => setToast(""), 2500);
+                          }
+                        }}
                         disabled={busy}
                         data-testid="estimate-toolbar-decline-btn"
                       >
@@ -633,15 +607,13 @@ export default function EstimateView({
                 >
                   <Check size={14}/> Approve
                 </button>
-                <button
-                  className="iv-btn ev-btn-decline"
-                  onClick={() => setDeclineOpen(true)}
-                  disabled={busy}
-                  data-testid="estimate-toolbar-customer-decline"
-                  data-legacy-testid="estimate-toolbar-decline-btn"
-                >
-                  <XIcon size={14}/> Decline
-                </button>
+                {/* TD-estimate-public-decline-whole-remove-plus-reason-
+                    optional · Feb-2026 — whole-estimate Decline CTA
+                    was removed per operator directive.  Approve +
+                    Request Changes remain inside the sticky wrapper.
+                    Per-line Decline buttons (``estimate-line-item-
+                    decline-*``) still render on each row as the
+                    customer's only decline surface. */}
                 {signatureGateBlocked ? (
                   <div
                     className="ev-signature-gate-hint"
@@ -682,13 +654,15 @@ export default function EstimateView({
             ) : null}
             {/* Feb-2026 · Phase A — legacy testid preservation. Any
                 caller still querying the old ``estimate-toolbar-accept
-                -btn`` / ``estimate-toolbar-decline-btn`` testids will
-                hit these hidden spans (display: none) so lookups don't
-                silently fail. Delete when Phase C ships. */}
+                -btn`` testid will hit this hidden span (display: none)
+                so lookups don't silently fail.  Delete when Phase C
+                ships.  The sibling ``estimate-toolbar-decline-btn``
+                alias was removed alongside the whole-estimate Decline
+                CTA in TD-estimate-public-decline-whole-remove-plus-
+                reason-optional (Feb-2026). */}
             {showCustomerToolbar && !locked && actionable ? (
               <>
                 <span style={{ display: "none" }} data-testid="estimate-toolbar-accept-btn" aria-hidden />
-                <span style={{ display: "none" }} data-testid="estimate-toolbar-decline-btn" aria-hidden />
               </>
             ) : null}
 
@@ -1416,31 +1390,12 @@ export default function EstimateView({
         )}
       />
 
-      {/* Feb-2026 · Grouped-layout LOCK-ON ship — single bottom-of-
-          view Decline button for customer-facing surfaces. Replaces
-          the per-line decline buttons (which are now dead code on
-          the customer view since grouped layout is always on).
-          Admin + printable + locked + non-actionable states hide it. */}
-      {as_customer && actionable && !locked && !isAdmin && !printable ? (
-        <div
-          className="ev-bottom-actions"
-          style={{
-            marginTop: 16,
-            display: "flex",
-            justifyContent: "flex-end",
-          }}
-          data-testid="estimate-bottom-actions"
-        >
-          <button
-            className="iv-btn ev-btn-decline"
-            onClick={() => setDeclineOpen(true)}
-            disabled={busy}
-            data-testid="estimate-bottom-decline-quote-btn"
-          >
-            <XIcon size={14}/> Decline Quote
-          </button>
-        </div>
-      ) : null}
+      {/* TD-estimate-public-decline-whole-remove-plus-reason-
+          optional · Feb-2026 — the customer-facing bottom-of-view
+          "Decline Quote" button that previously lived here was
+          removed per operator directive.  Per-line decline cells
+          (``estimate-line-item-decline-*``) remain the only
+          customer decline surface on the grouped layout. */}
 
       {/* Modals for decline/request-changes */}
       {/* Feb-2026 · Phase A — per-line decline confirm dialog. */}
@@ -1456,7 +1411,21 @@ export default function EstimateView({
             adjust automatically. You can undo this until you approve or
             decline the whole estimate.
           </p>
+          {/* TD-estimate-public-decline-whole-remove-plus-reason-
+              optional · Feb-2026 — visible ``<label>`` promoted
+              from the placeholder for a11y.  Reason stays STRICTLY
+              OPTIONAL — no ``required`` attribute, no ``minLength``,
+              the submit button is not empty-gated.  Placeholder is
+              kept as a secondary hint. */}
+          <label
+            htmlFor="estimate-line-item-decline-reason"
+            className="block text-xs font-semibold mt-2 mb-1"
+            data-testid="estimate-line-item-decline-reason-label"
+          >
+            Optional reason
+          </label>
           <textarea
+            id="estimate-line-item-decline-reason"
             rows={2}
             placeholder="Optional reason"
             value={lineDeclineReason}
@@ -1479,22 +1448,13 @@ export default function EstimateView({
           </div>
         </ModalScrim>
       ) : null}
-      {/* PORTAL-QUOTE-DECLINE-REQUIRE-REASON · Feb-2026 — classic
-          decline modal now rendered via the shared component. */}
-      <EstimateDeclineModal
-        open={declineOpen}
-        category={declineCategory}
-        text={declineMsg}
-        onCategoryChange={setDeclineCategory}
-        onTextChange={setDeclineMsg}
-        onCancel={() => {
-          setDeclineOpen(false);
-          setDeclineMsg("");
-          setDeclineCategory("");
-        }}
-        onSubmit={submitDecline}
-        busy={busy}
-      />
+      {/* TD-estimate-public-decline-whole-remove-plus-reason-
+          optional · Feb-2026 — the shared whole-estimate
+          ``<EstimateDeclineModal>`` mount that used to sit here
+          was removed with the sticky-footer Decline CTA.  BE
+          route ``POST /portal/quotes/via-token/{token}/decline``
+          is intentionally LEFT INTACT (dormant) until mobile
+          parity lands + the P3 sibling retires it. */}
       {changesOpen ? (
         <ModalScrim onClose={() => setChangesOpen(false)}>
           <h3 className="ev-modal-title">Request changes</h3>
@@ -1523,8 +1483,11 @@ export default function EstimateView({
       {/* Feb-2026 · Theme Refresh — sticky mobile action bar.
           Visible only below 768px (via CSS media query on the wrapper)
           and only when the quote is actionable + the customer hasn't
-          locked in a decision. Approve + Decline are the primary
-          customer actions on the magic-link surface. */}
+          locked in a decision.
+          TD-estimate-public-decline-whole-remove-plus-reason-optional
+          · Feb-2026 — the Decline button that used to sit next to
+          Approve was removed per operator directive.  Approve stays
+          as the full-width mobile primary action. */}
       {token && !printable && actionable && !locked ? (
         <div
           className="ev-mobile-action-bar md:hidden flex items-stretch"
@@ -1548,21 +1511,6 @@ export default function EstimateView({
             zIndex: 45,
           }}
         >
-          <button
-            type="button"
-            onClick={() => setDeclineOpen(true)}
-            className="iv-btn ev-btn-decline"
-            style={{
-              flex: 1, minHeight: 40,
-              border: `1px solid ${_branding?.brand_secondary_hex || "#DC2626"}`,
-              color: _branding?.brand_secondary_hex || "#DC2626",
-              background: "#FFFFFF",
-              fontWeight: 600,
-            }}
-            data-testid="estimate-mobile-decline-btn"
-          >
-            Decline
-          </button>
           <button
             type="button"
             onClick={() => call2(`/quotes/${estimateId || ""}/accept`)}
@@ -1602,105 +1550,4 @@ function ModalScrim({ children, onClose }) {
   );
 }
 
-
-// ═══════════════════════════════════════════════════════════════════
-// PORTAL-QUOTE-DECLINE-REQUIRE-REASON · Feb-2026 — shared decline
-// modal.  Replaces both the raw-Tailwind Flipbook variant (lines
-// 427-460 pre-ship) and the classic ``<ModalScrim>`` variant (lines
-// 1427-1445 pre-ship) with a single ``<EstimateDeclineModal>`` call
-// so the two surfaces stay in UX lock-step.
-//
-// Required inputs (both must be set + valid before submit enables):
-//   • category — one of ``DECLINE_REASON_CATEGORIES`` values.
-//   • text     — 10-500 chars after trim.
-//
-// Testids are stable across surfaces so one vitest covers both.
-// ═══════════════════════════════════════════════════════════════════
-function EstimateDeclineModal({
-  open, category, text,
-  onCategoryChange, onTextChange, onCancel, onSubmit, busy,
-}) {
-  if (!open) return null;
-  const trimmed = (text || "").trim();
-  const tooShort = trimmed.length < DECLINE_REASON_TEXT_MIN_LEN;
-  const tooLong = trimmed.length > DECLINE_REASON_TEXT_MAX_LEN;
-  const canSubmit = Boolean(category) && !tooShort && !tooLong && !busy;
-  return (
-    <ModalScrim onClose={onCancel}>
-      <div data-testid="estimate-decline-modal">
-        <h3 className="ev-modal-title">Decline this estimate</h3>
-        <p className="ev-modal-help">
-          Please share more so we can improve.  Both fields are required.
-        </p>
-        <label
-          className="block text-xs font-semibold mt-2 mb-1"
-          htmlFor="estimate-decline-category-select"
-        >
-          Reason category
-        </label>
-        <select
-          id="estimate-decline-category-select"
-          value={category}
-          onChange={(e) => onCategoryChange(e.target.value)}
-          className="ev-modal-input"
-          data-testid="estimate-decline-category-select"
-        >
-          <option value="">Select a reason…</option>
-          {DECLINE_REASON_CATEGORIES.map((c) => (
-            <option key={c.value} value={c.value}>{c.label}</option>
-          ))}
-        </select>
-        <label
-          className="block text-xs font-semibold mt-3 mb-1"
-          htmlFor="estimate-decline-text"
-        >
-          Please share more
-        </label>
-        <textarea
-          id="estimate-decline-text"
-          rows={4}
-          value={text}
-          onChange={(e) => onTextChange(e.target.value)}
-          placeholder={
-            `Please share a few details (at least `
-            + `${DECLINE_REASON_TEXT_MIN_LEN} characters) `
-            + `so we can improve.`
-          }
-          className="ev-modal-input"
-          maxLength={DECLINE_REASON_TEXT_MAX_LEN}
-          data-testid="estimate-decline-text"
-        />
-        <div
-          className="text-xs mt-1"
-          style={{ color: tooShort || tooLong ? "#B91C1C" : "#64748B" }}
-          data-testid="estimate-decline-char-count"
-        >
-          {trimmed.length} / {DECLINE_REASON_TEXT_MAX_LEN}
-          {tooShort
-            ? ` — ${DECLINE_REASON_TEXT_MIN_LEN - trimmed.length} more required`
-            : ""}
-        </div>
-        <div className="ev-modal-actions">
-          <button
-            type="button"
-            className="iv-btn"
-            onClick={onCancel}
-            data-testid="estimate-decline-cancel"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            className="iv-btn ev-btn-decline"
-            onClick={onSubmit}
-            disabled={!canSubmit}
-            data-testid="estimate-decline-submit"
-          >
-            Decline proposal
-          </button>
-        </div>
-      </div>
-    </ModalScrim>
-  );
-}
 

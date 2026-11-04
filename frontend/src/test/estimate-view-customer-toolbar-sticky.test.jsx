@@ -104,13 +104,16 @@ describe("EstimateView · sticky customer toolbar", () => {
     // Inline style keys the sticky-footer promotion depends on.
     expect(sticky.style.position).toBe("sticky");
     expect(sticky.style.bottom).toBe("0px");
-    // All three CTA testids survive the wrapper.
+    // Approve + Request Changes CTA testids survive the wrapper.
+    // TD-estimate-public-decline-whole-remove-plus-reason-optional ·
+    // Feb-2026 — the ``estimate-toolbar-customer-decline`` sibling
+    // was removed with the whole-estimate decline flow.
     expect(
       within(sticky).getByTestId("estimate-toolbar-customer-approve"),
     ).toBeTruthy();
     expect(
-      within(sticky).getByTestId("estimate-toolbar-customer-decline"),
-    ).toBeTruthy();
+      within(sticky).queryByTestId("estimate-toolbar-customer-decline"),
+    ).toBeNull();
     expect(
       within(sticky).getByTestId("estimate-toolbar-request-changes-btn"),
     ).toBeTruthy();

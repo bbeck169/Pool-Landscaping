@@ -325,21 +325,21 @@ describe("<EstimateFlipbook /> — CTAs", () => {
     expect(onDownloadPdf).toHaveBeenCalledTimes(1);
   });
 
-  it("accept + decline CTAs fire the correct handlers", () => {
+  it("accept CTA fires the handler (TD-decline-whole-remove: Decline CTA no longer present)", () => {
     const onAccept = vi.fn();
-    const onDeclineClick = vi.fn();
     render(
       <EstimateFlipbook
         data={_minPayload()}
-        onAccept={onAccept} onDeclineClick={onDeclineClick}
+        onAccept={onAccept}
         onDownloadPdf={vi.fn()} onSignNow={vi.fn()}
         actionable={true} busy={false}
       />,
     );
     fireEvent.click(screen.getByTestId("flipbook-accept-btn"));
-    fireEvent.click(screen.getByTestId("flipbook-decline-btn"));
     expect(onAccept).toHaveBeenCalledTimes(1);
-    expect(onDeclineClick).toHaveBeenCalledTimes(1);
+    // TD-estimate-public-decline-whole-remove-plus-reason-optional
+    // · Feb-2026 — sign-page Decline CTA removed.
+    expect(screen.queryByTestId("flipbook-decline-btn")).toBeNull();
   });
 
   it("accept CTA is disabled when signature gate blocks + Sign-now surfaces", () => {
@@ -347,7 +347,7 @@ describe("<EstimateFlipbook /> — CTAs", () => {
     render(
       <EstimateFlipbook
         data={_minPayload()}
-        onAccept={vi.fn()} onDeclineClick={vi.fn()}
+        onAccept={vi.fn()}
         onDownloadPdf={vi.fn()} onSignNow={onSignNow}
         actionable={true} busy={false}
         signatureGateBlocked={true}
@@ -366,14 +366,17 @@ describe("<EstimateFlipbook /> — CTAs", () => {
           status: "accepted", decision: "accepted",
           accepted_at: "2026-02-14",
         })}
-        onAccept={vi.fn()} onDeclineClick={vi.fn()}
+        onAccept={vi.fn()}
         onDownloadPdf={vi.fn()} onSignNow={vi.fn()}
         actionable={false} busy={false}
       />,
     );
     expect(screen.getByTestId("flipbook-accept-btn").disabled).toBe(true);
-    expect(screen.getByTestId("flipbook-decline-btn").disabled).toBe(true);
     expect(screen.getByTestId("flipbook-decision-accepted")).toBeTruthy();
+    // TD-estimate-public-decline-whole-remove-plus-reason-optional ·
+    // Feb-2026 — Decline CTA gone; the ``flipbook-decline-btn``
+    // testid no longer renders on any state.
+    expect(screen.queryByTestId("flipbook-decline-btn")).toBeNull();
   });
 });
 

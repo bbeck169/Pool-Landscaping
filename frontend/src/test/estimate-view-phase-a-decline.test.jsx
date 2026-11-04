@@ -167,13 +167,17 @@ describe("EstimateView · Phase A · per-line decline", () => {
 
 
 describe("EstimateView · Phase A · top-level approve / decline", () => {
-  it("renders new approve/decline testids on a sent doc", async () => {
+  it("renders Approve testid on a sent doc; Decline removed per TD-decline-whole-remove", async () => {
     await renderView();
     expect(screen.getByTestId("estimate-toolbar-customer-approve")).toBeTruthy();
-    expect(screen.getByTestId("estimate-toolbar-customer-decline")).toBeTruthy();
-    // Legacy testids still queryable via hidden-span aliases.
+    // TD-estimate-public-decline-whole-remove-plus-reason-optional ·
+    // Feb-2026 — whole-estimate Decline CTA + its hidden
+    // ``estimate-toolbar-decline-btn`` legacy-alias span were both
+    // removed from the customer surface.  Approve + its legacy
+    // ``estimate-toolbar-accept-btn`` alias remain.
+    expect(screen.queryByTestId("estimate-toolbar-customer-decline")).toBeNull();
     expect(screen.getByTestId("estimate-toolbar-accept-btn")).toBeTruthy();
-    expect(screen.getByTestId("estimate-toolbar-decline-btn")).toBeTruthy();
+    expect(screen.queryByTestId("estimate-toolbar-decline-btn")).toBeNull();
   });
 
   it("Approve fires POST to the new path-based endpoint", async () => {
@@ -186,37 +190,7 @@ describe("EstimateView · Phase A · top-level approve / decline", () => {
       .toBe("/portal/quotes/via-token/tok-abc/approve");
   });
 
-  it("Decline fires POST to the new path-based endpoint with structured reason fields", async () => {
-    // PORTAL-QUOTE-DECLINE-REQUIRE-REASON · Feb-2026 — updated to
-    // the new required-reason modal.  Legacy ``reason`` field is
-    // gone; the handler now sends ``decline_reason_category`` +
-    // ``decline_reason_text``.  Testids migrated to the shared
-    // ``<EstimateDeclineModal>`` scheme.
-    postSpy.mockResolvedValue(samplePayload({ decision: "declined",
-                                                 status: "declined" }));
-    await renderView();
-    fireEvent.click(screen.getByTestId("estimate-toolbar-customer-decline"));
-    fireEvent.change(
-      screen.getByTestId("estimate-decline-category-select"),
-      { target: { value: "too_expensive" } },
-    );
-    fireEvent.change(
-      screen.getByTestId("estimate-decline-text"),
-      { target: { value: "This is too pricey for our budget cycle." } },
-    );
-    fireEvent.click(screen.getByTestId("estimate-decline-submit"));
-    await waitFor(() => expect(postSpy).toHaveBeenCalledTimes(1));
-    expect(postSpy.mock.calls[0][0])
-      .toBe("/portal/quotes/via-token/tok-abc/decline");
-    const body = postSpy.mock.calls[0][1];
-    expect(body.decline_reason_category).toBe("too_expensive");
-    expect(body.decline_reason_text).toBe(
-      "This is too pricey for our budget cycle.",
-    );
-    expect(body.reason).toBeUndefined();
-  });
-
-  it("hides approve/decline once status is off-window (draft)", async () => {
+  it("hides approve once status is off-window (draft); Decline never renders", async () => {
     await renderView({ status: "draft" });
     expect(screen.queryByTestId("estimate-toolbar-customer-approve")).toBeNull();
     expect(screen.queryByTestId("estimate-toolbar-customer-decline")).toBeNull();
@@ -246,5 +220,76 @@ describe("EstimateView · Phase A · totals block", () => {
     expect(screen.getByTestId("estimate-totals-adjusted-row")).toBeTruthy();
     expect(screen.getByTestId("estimate-totals-original").textContent).toMatch(/220/);
     expect(screen.getByTestId("estimate-totals-adjusted").textContent).toMatch(/110/);
+  });
+});
+
+
+// ─── TD-estimate-public-decline-whole-remove-plus-reason-optional ──
+// Feb-2026 — regression locks for the two requirements of the ticket:
+//   (1) the whole-estimate Decline CTA is ABSENT from every
+//       customer-visible surface on the classic branch.
+//   (2) the per-line decline modal carries a VISIBLE ``<label>``
+//       element ("Optional reason") wired to the textarea via
+//       ``htmlFor`` + ``id``.  Reason stays STRICTLY OPTIONAL — no
+//       ``required`` attribute, the Decline-this-line submit button
+//       is NOT empty-gated.
+describe("EstimateView · TD-decline-whole-remove", () => {
+  it("whole-estimate Decline is absent from every customer surface", async () => {
+    await renderView();
+    for (const testid of [
+      "estimate-toolbar-customer-decline",
+      "estimate-toolbar-decline-btn",     // hidden legacy alias
+      "estimate-bottom-decline-quote-btn",// grouped-layout bottom CTA
+      "estimate-mobile-decline-btn",      // sticky mobile action bar
+      "flipbook-decline-btn",             // flipbook sign page
+      "estimate-decline-modal",           // whole-estimate modal root
+      "estimate-decline-submit",          // whole-estimate submit
+      "estimate-decline-category-select", // whole-estimate category
+      "estimate-decline-text",            // whole-estimate reason
+    ]) {
+      expect(screen.queryByTestId(testid)).toBeNull();
+    }
+  });
+
+  it("per-line decline modal renders a visible <label htmlFor> element", async () => {
+    await renderView({
+      line_items: [
+        { description: "Pool clean", total: 100, quantity: 1,
+          unit_price: 100, customer_status: "pending" },
+      ],
+    });
+    fireEvent.click(screen.getByTestId("estimate-line-item-decline-0"));
+    const label = screen.getByTestId(
+      "estimate-line-item-decline-reason-label",
+    );
+    expect(label).toBeTruthy();
+    expect(label.tagName).toBe("LABEL");
+    expect(label.textContent.trim()).toBe("Optional reason");
+    expect(label.getAttribute("for"))
+      .toBe("estimate-line-item-decline-reason");
+    const textarea = screen.getByTestId("estimate-line-item-decline-reason");
+    expect(textarea.id).toBe("estimate-line-item-decline-reason");
+    // STRICTLY optional — no required attribute, no minLength.
+    expect(textarea.hasAttribute("required")).toBe(false);
+    expect(textarea.getAttribute("minlength")).toBeNull();
+    // Confirm submit is NOT empty-gated — only busy-gated.
+    const submit = screen.getByTestId("estimate-line-item-decline-confirm");
+    expect(submit.disabled).toBe(false);
+  });
+
+  it("per-line decline posts with empty reason body when customer leaves it blank", async () => {
+    postSpy.mockResolvedValue(samplePayload({}));
+    await renderView({
+      line_items: [
+        { description: "Pool clean", total: 100, quantity: 1,
+          unit_price: 100, customer_status: "pending" },
+      ],
+    });
+    fireEvent.click(screen.getByTestId("estimate-line-item-decline-0"));
+    fireEvent.click(screen.getByTestId("estimate-line-item-decline-confirm"));
+    await waitFor(() => expect(postSpy).toHaveBeenCalledTimes(1));
+    expect(postSpy.mock.calls[0][0])
+      .toBe("/portal/quotes/via-token/tok-abc/line-items/0/decline");
+    expect(postSpy.mock.calls[0][1]).toEqual({ reason: "" });
   });
 });

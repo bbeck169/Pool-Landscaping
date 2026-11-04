@@ -156,19 +156,20 @@ describe("EstimateView · grouped-layout LOCK-ON", () => {
     expect(screen.queryByTestId("estimate-line-item-decline-2")).toBeNull();
   });
 
-  it("renders exactly ONE bottom 'Decline Quote' button on an "
-        + "actionable customer doc", async () => {
+  it("renders NO whole-estimate Decline button on the customer view "
+        + "(TD-decline-whole-remove)", async () => {
+    // TD-estimate-public-decline-whole-remove-plus-reason-optional ·
+    // Feb-2026 — every whole-estimate Decline CTA was removed from
+    // the customer surface.  The grouped-layout per-group decline
+    // buttons at ``:856+`` remain as the customer's only decline
+    // path on this surface.
     await _renderMagicLink();
-    const bottomDecline = screen.getByTestId(
-      "estimate-bottom-decline-quote-btn",
-    );
-    expect(bottomDecline).toBeTruthy();
-    expect(bottomDecline.textContent).toContain("Decline Quote");
-    // No accidental duplication — only one bottom-actions block.
-    const all = screen.queryAllByTestId(
-      "estimate-bottom-decline-quote-btn",
-    );
-    expect(all).toHaveLength(1);
+    expect(screen.queryByTestId("estimate-bottom-decline-quote-btn"))
+      .toBeNull();
+    expect(screen.queryByTestId("estimate-toolbar-customer-decline"))
+      .toBeNull();
+    expect(screen.queryByTestId("estimate-mobile-decline-btn"))
+      .toBeNull();
   });
 
   it("hides the bottom Decline button once the doc is locked "

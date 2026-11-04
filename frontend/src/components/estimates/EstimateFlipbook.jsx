@@ -32,7 +32,7 @@
  * file swap.
  */
 import React, { useMemo, useRef, useState } from "react";
-import { Download, ChevronRight, Loader2, Check, X } from "lucide-react";
+import { Download, ChevronRight, Loader2, Check } from "lucide-react";
 
 import Flipbook from "@/components/estimates/FlipbookShim";
 import { useProposalAnalytics } from "@/lib/proposalAnalytics";
@@ -218,7 +218,7 @@ const FlipPage = React.forwardRef(function FlipPage(
 
 
 export function EstimateFlipbook({
-  data, onAccept, onDeclineClick, onDownloadPdf,
+  data, onAccept, onDownloadPdf,
   signatureGateBlocked, onSignNow, actionable,
   busy, toast, magicToken,
 }) {
@@ -680,20 +680,12 @@ export function EstimateFlipbook({
                     {busy ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
                     Approve
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (magicToken) _analytics.fireEvent("click",
-                        { button_id: "decline" });
-                      onDeclineClick?.();
-                    }}
-                    disabled={!actionable || busy}
-                    className="inline-flex items-center gap-2 px-6 py-3 rounded-full font-semibold disabled:opacity-50"
-                    style={{ border: "2px solid #0f172a", color: "#0f172a", backgroundColor: "transparent" }}
-                    data-testid="flipbook-decline-btn"
-                  >
-                    <X size={16} /> Decline
-                  </button>
+                  {/* TD-estimate-public-decline-whole-remove-plus-
+                      reason-optional · Feb-2026 — the Flipbook sign-
+                      page Decline CTA was removed per operator
+                      directive.  Approve remains the sole whole-
+                      estimate decision CTA on this surface; per-line
+                      declines are handled on the group pages. */}
                 </div>
                 {data?.decision ? (
                   <div

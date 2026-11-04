@@ -79,8 +79,9 @@ describe("Batch #4 · Item 1 · magic-link EstimateView", () => {
     api.get.mockResolvedValue(VIA_TOKEN_PAYLOAD);
   });
 
-  it("renders grouped layout + top approve/decline + bottom Decline "
-        + "Quote button on a valid actionable token", async () => {
+  it("renders grouped layout + top Approve CTA on a valid actionable "
+        + "token (TD-decline-whole-remove: all whole-estimate Decline "
+        + "CTAs absent)", async () => {
     render(
       <MemoryRouter>
         <EstimateView token="tok-abc" isAdmin={false} />
@@ -92,18 +93,24 @@ describe("Batch #4 · Item 1 · magic-link EstimateView", () => {
       expect(screen.getByTestId("estimate-toolbar-customer-approve"))
         .toBeTruthy();
     });
-    expect(screen.getByTestId("estimate-toolbar-customer-decline"))
-      .toBeTruthy();
+    // TD-estimate-public-decline-whole-remove-plus-reason-optional ·
+    // Feb-2026 — the whole-estimate Decline CTA was removed from
+    // every customer surface.  All four known testids must be null.
+    expect(screen.queryByTestId("estimate-toolbar-customer-decline"))
+      .toBeNull();
+    expect(screen.queryByTestId("estimate-bottom-decline-quote-btn"))
+      .toBeNull();
+    expect(screen.queryByTestId("estimate-mobile-decline-btn"))
+      .toBeNull();
+    expect(screen.queryByTestId("estimate-decline-modal")).toBeNull();
 
     // Feb-2026 · grouped-lock — customer view always renders the
-    // grouped table (no more per-line decline UX on the customer
-    // surface). The single "Decline Quote" button lives at the
-    // bottom of the doc.
+    // grouped table.  Per-row decline (``estimate-line-item-decline-
+    // *``) is now the only decline surface; the grouped layout
+    // itself does not unmount it, but the per-line test is owned by
+    // ``estimate-view-phase-a-decline.test.jsx`` so this smoke
+    // simply asserts the grouped row exists.
     expect(screen.getByTestId("estimate-grouped-row-other")).toBeTruthy();
-    expect(screen.queryByTestId("estimate-line-item-decline-0")).toBeNull();
-    expect(screen.queryByTestId("estimate-line-item-decline-1")).toBeNull();
-    expect(screen.getByTestId("estimate-bottom-decline-quote-btn"))
-      .toBeTruthy();
 
     // Regression: no "Invalid estimate link" banner.
     expect(screen.queryByText(/Invalid estimate link/i)).toBeNull();

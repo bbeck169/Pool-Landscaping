@@ -4457,3 +4457,41 @@ No code or test files modified in this ship. All three were verified pre-existin
   `/jobs?start=2026-10-28&end=2026-11-18` (no service_category), header "663 jobs in window".
 - Residue (harmless, not cleaned): devices that had picked a bucket keep an orphan AsyncStorage key
   `schedule.service_category`; nothing reads it any more.
+
+## TD-mobile-estimate-public-decline-whole-remove · OPEN · P2 mobile · Feb-2026
+- **Reporter:** web ship `TD-estimate-public-decline-whole-remove-plus-reason-optional` (session HEAD TBD this commit).
+- **Owner:** `e1_expo_frontend_dev` — web agent does NOT touch `/app/mobile/`.
+- **Context:** the web Flipbook sign-page + sticky toolbar + bottom-of-view + mobile-action-bar + `<EstimateDeclineModal>` all lost the whole-estimate Decline CTA + its reason + category form.  Per-line decline is preserved.  Mobile has an independent copy of the whole-estimate decline flow that must mirror the removal before the BE route is retired.
+- **Target files (verified via read-only grep from the web audit):**
+  - `/app/mobile/src/api/estimatesFull.ts:104` — client wrapper calling `POST /portal/quotes/via-token/{token}/decline`.
+  - `/app/mobile/app/estimate-view/[id].tsx` — mobile estimate viewer page; likely renders a whole-estimate Decline button + reason form parallel to `EstimateDeclineModal`.
+  - Any sibling reason-form screen / modal component used by the above page.
+  - Mobile detox / vitest cases asserting Decline CTA presence.
+- **Scope mirror (mobile side):**
+  1. Remove the whole-estimate Decline button mounts (any Flipbook equivalent, sticky action bar, admin-impersonated preview surface).
+  2. Delete the reason + category form screen / modal.
+  3. Drop the `POST /portal/quotes/via-token/{token}/decline` client call at `estimatesFull.ts:104`.
+  4. Keep per-line decline flow intact (any per-row Decline UI + `/line-items/{index}/decline` call stays).
+  5. Delete the mobile tests asserting whole-estimate Decline CTA presence; keep per-line coverage.
+  6. Keep the BE endpoint accepting — same posture as web (BE untouched).
+- **Blocking signal:** **wait until operator confirms the web change renders cleanly in production** before touching mobile.  If the web removal reveals a tenant that was relying on the whole-estimate decline path, the mobile remediation may need to be adjusted.
+- **Priority rationale:** P2 because an inconsistent web-vs-mobile decline surface will confuse customers on the same magic link — "why can I decline the whole estimate in the email app but not in my browser?"
+
+## TD-estimate-public-whole-decline-be-route-retire · OPEN · P3 BE · Feb-2026
+- **Reporter:** web ship `TD-estimate-public-decline-whole-remove-plus-reason-optional` (session HEAD TBD this commit).
+- **Context:** the customer-facing web FE just stopped calling `POST /api/portal/quotes/via-token/{token}/decline`.  Mobile still calls it (see sibling `TD-mobile-estimate-public-decline-whole-remove`).  The route + its request model + its dedicated test file are kept intact as a **dormant guard** until mobile parity lands and no external consumer is calling the endpoint.
+- **Target files when retirement lands:**
+  - `backend/routers/estimate_viewer.py`
+    - Delete route handler `phase_a_decline_via_token` at `:1448-1495`.
+    - Delete request model `_PhaseATopLevelDeclineIn` at `:1253`.
+    - Delete helper `_write_portal_decline_audit` at `:1473-1478` (only consumed by the whole-estimate route; per-line declines do NOT write an audit row by design).
+  - `backend/tests/test_portal_quote_decline_required_reason.py`
+    - Delete the entire file.
+  - `frontend/src/pages/portal/quoteDeclineReasons.js` (web-side category/bounds file)
+    - If zero FE consumers remain after mobile parity, delete.  Already unused on web as of this ticket.
+  - `backend/services/quote_decline_reasons.py` (BE-side mirror)
+    - Delete if zero route consumers remain.
+- **Blocking signals (both must be clear before retirement):**
+  1. `TD-mobile-estimate-public-decline-whole-remove` lands and the mobile client no longer posts to the route.
+  2. One-day smoke confirmation that no external API consumer (admin tools, partner integrations, Zapier, etc.) is calling the route — verify via a production access-log grep for `POST /api/portal/quotes/via-token/*/decline` over 7-30 days.
+- **Priority rationale:** P3 — the route sits dormant and costs nothing to keep.  Retirement is pure code-hygiene cleanup once the blockers clear.
